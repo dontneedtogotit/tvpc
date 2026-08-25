@@ -8,56 +8,82 @@ echo ">> tvpc install-extras using repo root: $REPO_ROOT"
 
 # 1. Verify VA-API on Broadwell (i5-7260U / HD 620)
 echo "== VA-API verification =="
-vainfo 2>/dev/null || echo "vainfo failed — driver may need reboot"
+if command -v vainfo >/dev/null; then
+  vainfo 2>/dev/null && echo "VA-API OK" || echo "VA-API probe failed (expected before reboot)"
+else
+  echo "vainfo not installed yet"
+fi
 
-# 2. Set Intel GPU performance governor (persist across reboots)
-#    powersave = best for idle; performance = better for 4K decode
-#    We choose 'powersave' as default (idle ~6W); user can override
-if [[ -d /sys/class/drm/card0/device ]]; then
-  echo "powersave" > /sys/class/drm/card0/device/power_dpm_force_performance_level 2>/dev/null || true
+# 2. Intel GPU power: use TLP/powertop instead of manual sysfs writes
+#    Broadwell power states are managed by i915 + TLP; no manual DPM needed.
+#    Leave GPU in default powersave mode via TLP config.
+if [[ -f /etc/tlp.d/99-tvpc-gpu.conf ]]; then
+  echo "TLP GPU config already exists"
+else
+  mkdir -p /etc/tlp.d
+  cat >/etc/tlp.d/99-tvpc-gpu.conf <<'EOF'
+# NUC7i5BNH Broadwell: prefer powersave for idle, let TLP handle it
+# Remove this file to restore default TLP behaviour
+DEVICES_TO_DISABLE_ON_BAT_NOT_IN_USE="airplane"
+EOF
 fi
 
 # 3. NUC blue LED off at night (optional; requires i2c-tools + I2C access)
-#    LED is on ISL94202 controller at 0x64 on I2C bus 0 (NUC7)
-#    Comment out if your NUC revision differs.
-if command -v i2ctransfer >/dev/null; then
-  # LED off: write 0x00 to register 0x04
+#    LED is on ISL94202 controller at 0x64 on I2C bus 0 (NUC7 confirmed)
+#    Only affects the front panel LED; BIOS setting overrides this on reboot.
+#    Guard with /etc/default/tvpc-led to allow override.
+if [[ ! -f /etc/default/tvpc-led ]] && command -v i2ctransfer >/dev/null 2>&1; then
+  # Attempt LED off; if it fails silently (NUC revision mismatch), that's fine
   i2ctransfer -y 0 w2@0x64 0x04 0x00 2>/dev/null || true
+  echo "NUC LED off attempted (disable: touch /etc/default/tvpc-led)"
 fi
 
-# 4. NetworkManager: prefer wired, disable Wi-Fi if no antenna
-#    (Create a connection profile if not present)
-if ! nmcli -t -f TYPE con show | grep -q ethernet; then
-  nmcli con add type ethernet ifname eno1 con-name "NUC-Wired" ipv4.method auto 2>/dev/null || true
+# 4. NetworkManager: prefer wired, disable Wi-Fi (NUC has no Wi-Fi card by default)
+#    Create wired connection if none exists
+if command -v nmcli >/dev/null 2>&1; then
+  if ! nmcli -t -f TYPE,STATE con show | grep -q "ethernet:activated"; then
+    nmcli con add type ethernet ifname eno1 con-name "NUC-Wired" ipv4.method auto 2>/dev/null || true
+  fi
+  # Disable Wi-Fi radio if no adapters detected (avoids radio noise / power waste)
+  nmcli radio wifi off 2>/dev/null || true
 fi
-nmcli radio wifi off 2>/dev/null || true
 
-# 5. Volume step size: Samsung remote sends large jumps → map to 2%
+# 5. Volume step size: Samsung remote sends large jumps → use 2% increments
+mkdir -p /usr/local/bin
 cat >/usr/local/bin/htpc-volume-step <<'EOF'
 #!/usr/bin/env bash
-# Called by Plasma Mobile keybindings instead of default volume keys
-pactl set-sink-volume @DEFAULT_SINK@ "$1"
+# Called by Plasma Mobile keybindings instead of default volume keys.
+# Usage: htpc-volume-step +2  or  htpc-volume-step -2
+STEP="${1:-+2}%"
+pactl set-sink-volume @DEFAULT_SINK@ "$STEP"
 EOF
 chmod +x /usr/local/bin/htpc-volume-step
 
-# 6. Disable Plymouth (faster boot; uncomment in grub if desired)
-#    Already done in install.sh via grub cmdline 'quiet splash' only.
-
-# 7. Autostart VacuumTube (pinned to favorites handled by Plasma config)
-#    Create .desktop entry for auto-launch on login (optional)
+# 6. Autostart VacuumTube (pinned to favorites handled by Plasma config in customize.sh)
 mkdir -p /home/htpc/.config/autostart
 cat >/home/htpc/.config/autostart/vacuumtube.desktop <<'EOF'
 [Desktop Entry]
 Type=Application
 Name=VacuumTube
-Exec=flatpak run io.github.vacuumtube.VacuumTube --enable-features=VaapiVideoDecoder --use-gl=egl
-X-GNOME-Autostart-enabled=true
+Comment=YouTube client with hardware video decode
+Exec=flatpak run io.github.vacuumtube.VacuumTube --enable-features=VaapiVideoDecoder
+X-KDE-autostart-after=plasma-desktop
+X-KDE-autostart-phase=1
 EOF
 chown htpc:htpc /home/htpc/.config/autostart/vacuumtube.desktop
 
+# 7. Flatpak: grant VacuumTube VA-API access via portal override
+mkdir -p /var/lib/flatpak/overrides
+cat >/var/lib/flatpak/overrides/global <<'EOF'
+[Context]
+devices=dri
+sockets=wayland;x11;pulseaudio;fallback-x11;ipc;
+filesystems=xdg-videos:ro;xdg-music:ro;xdg-pictures:ro;home;
+EOF
+
 # 8. Apply repo overlays again in case install.sh added new ones
 if [[ -d "$REPO_ROOT/overlays" ]]; then
-  rsync -a "$REPO_ROOT/overlays/" /
+  rsync -a --no-perms "$REPO_ROOT/overlays/" /
   echo "Re-applied repo overlays"
 fi
 

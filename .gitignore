@@ -1,0 +1,13 @@
+# Logs
+*.log
+/var/log/
+
+# Local config that should not be committed
+overlays/etc/sddm.conf.d/autologin.conf.bak
+overlays/etc/pipewire/pipewire-pulse.d/99-htpc.conf.bak
+
+# Temporary
+*.swp
+*.tmp
+tmp/
+/tmp/
