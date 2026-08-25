@@ -1,0 +1,126 @@
+#cloud-config
+autoinstall:
+  version: 1
+  locale: en_US.UTF-8
+  keyboard:
+    layout: us
+    variant: ""
+  network:
+    network:
+      version: 2
+      ethernets:
+        eno1:
+          dhcp4: true
+          dhcp6: false
+  apt:
+    geoip: true
+    preserve_sources_list: false
+    primary:
+      - arches: [amd64]
+        uri: http://archive.ubuntu.com/ubuntu
+      - arches: [default]
+        uri: http://ports.ubuntu.com/ubuntu-ports
+    sources:
+      ubuntu.sources:
+        types: [deb, deb-src]
+        uris:
+          - http://archive.ubuntu.com/ubuntu
+        suites:
+          - noble
+          - noble-updates
+          - noble-backports
+          - noble-security
+        components:
+          - main
+          - restricted
+          - universe
+          - multiverse
+  storage:
+    layout:
+      name: lvm
+      sizing_policy: all
+    swap:
+      size: 0
+    config:
+      - type: disk
+        id: disk0
+        match:
+          size: max
+        ptable: gpt
+        wipe: superblock-recursive
+        grub_device: true
+      - type: partition
+        id: boot-partition
+        device: disk0
+        size: 1G
+        flag: boot
+        number: 1
+      - type: partition
+        id: root-partition
+        device: disk0
+        size: -1
+        number: 2
+      - type: lvm_volgroup
+        id: vg0
+        name: vg0
+        devices: [root-partition]
+      - type: lvm_partition
+        id: root-lv
+        name: root
+        volgroup: vg0
+        size: -1
+      - type: format
+        id: root-fs
+        fstype: ext4
+        volume: root-lv
+      - type: mount
+        id: root-mount
+        device: root-fs
+        path: /
+      - type: format
+        id: boot-fs
+        fstype: ext4
+        volume: boot-partition
+      - type: mount
+        id: boot-mount
+        device: boot-fs
+        path: /boot
+  identity:
+    hostname: tvpc
+    username: htpc
+    password: "$6$rounds=656000$5salt5salt5sal$T0cPl47E5BcPl47E5BcPl47E5BcPl47E5BcPl47E5BcPl47E5BcPl47E5BcPl47E5"
+    realname: HTPC User
+    groups: [adm, cdrom, dip, plugdev, lxd, sudo, video, render, audio, input]
+    shell: /bin/bash
+  ssh:
+    allow-pw: true
+    install-server: true
+  packages:
+    - linux-firmware
+    - linux-generic-hwe-24.04
+    - intel-microcode
+    - iucode-tool
+    - thermald
+    - lm-sensors
+    - curl
+    - wget
+    - git
+    - rsync
+    - ca-certificates
+    - gnupg
+    - software-properties-common
+    - unattended-upgrades
+    - chrony
+    - ethtool
+  late-commands:
+    - curtin in-target --target=/target -- sed -i 's/^GRUB_CMDLINE_LINUX_DEFAULT=.*/GRUB_CMDLINE_LINUX_DEFAULT="quiet splash i915.enable_guc=2 intel_iommu=igfx_off"/' /etc/default/grub
+    - curtin in-target --target=/target -- update-grub
+    - curtin in-target --target=/target -- systemctl enable chronyd
+    - curtin in-target --target=/target -- systemctl disable --now tracker-miner-fs-3 2>/dev/null || true
+    - curtin in-target --target=/target -- systemctl mask tracker-miner-fs-3 2>/dev/null || true
+    - curtin in-target --target=/target -- systemctl disable --now tracker-store 2>/dev/null || true
+    - curtin in-target --target=/target -- systemctl mask tracker-store 2>/dev/null || true
+    - curtin in-target --target=/target -- echo "HandleLidSwitch=ignore" >> /etc/systemd/logind.conf
+    - curtin in-target --target=/target -- echo "HandleLidSwitchExternalPower=ignore" >> /etc/systemd/logind.conf
+    - curtin in-target --target=/target -- echo "HandleLidSwitchDocked=ignore" >> /etc/systemd/logind.conf
+  shutdown: reboot

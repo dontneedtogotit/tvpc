@@ -1,21 +1,12 @@
 # tvpc — Android-like HTPC Linux (Ubuntu 24.04 + Plasma Mobile + VacuumTube)
 
-A one-script, reproducible build for turning an **Intel NUC7i5BNH** into a
-TV/HTPC appliance that feels like an Android tablet on a **2013 Samsung ~80" TV**:
+This repo provides **two methods** to build your HTPC:
 
-- **Plasma Mobile** as the default session (phone/tablet-style app grid)
-- **VacuumTube** (Flatpak) as the first-class YouTube client with VA-API HW decode
-- **CEC** for TV remote passthrough + auto power-on at boot (fails gracefully)
-- **HDMI audio** forced to LPCM 2.0 (hdmi-stereo-extra) via `htpc-audio.service`
-- **Auto-login** — boots straight to the home screen
-- **Unattended-upgrades** + **Flatpak auto-update** for security patches
-- **Broadwell GPU tuning**: i915 GuC/HuC, TearFree, VA-API decode
-- **ZRAM swap**, **TLP** power tuning (~6W idle), tracker/indexer disabled
-
-## Quick start
+## Method 1: One-shot installer on existing Ubuntu Server
+Use this if you already have Ubuntu 24.04 Server (minimal) installed on your NUC.
 
 ```bash
-# On a fresh Ubuntu 24.04 Server (minimal) install on the NUC:
+# On fresh Ubuntu 24.04 Server install:
 sudo apt-get update && sudo apt-get upgrade -y
 sudo apt-get install -y git
 git clone https://github.com/dontneedtogotit/tvpc.git
@@ -24,44 +15,49 @@ sudo ./install.sh
 sudo reboot
 ```
 
-After reboot:
-- TV powers on via CEC and switches to the NUC's HDMI input
-- You land on the Plasma Mobile home screen at 1080p UI scale
-- **VacuumTube** is pinned in the favorites bar (bottom dock)
-- Audio routes over HDMI to the Samsung TV via `htpc-audio.service`
-- Broadwell VA-API decode is active (`vainfo` shows H.264/HEVC entrypoints)
+## Method 2: Autoinstall USB (Recommended for fresh installs)
+Use this for a completely unattended install from scratch on bare metal.
 
-## Repo layout
+```bash
+# From any Linux/macOS machine:
+git clone https://github.com/dontneedtogotit/tvpc.git
+cd tvpc
 
-```
-tvpc/
-├── install.sh                    # One-shot installer (run as root)
-├── scripts/
-│   ├── customize.sh              # Idempotent post-install tweaks
-│   ├── cec-tv-poweron.sh         # CEC power-on + active source (fails safely)
-│   └── install-extras.sh         # HW verification + NUC tuneables
-├── overlays/                     # Files copied verbatim onto the target
-│   └── etc/
-│       ├── sddm.conf.d/autologin.conf
-│       ├── pipewire/pipewire-pulse.d/99-htpc.conf
-│       ├── pipewire/pipewire.conf.d/90-hdmi-pin.conf
-│       ├── modules-load.d/i915.conf
-│       ├── default/grub.d/tvpc.cfg
-│       ├── NetworkManager/conf.d/90-tvpc-nuc.conf
-│       ├── systemd/logind.conf
-│       ├── systemd/system/htpc-audio.service
-│       └── X11/xorg.conf.d/20-intel.conf
-├── Makefile                      # Convenience targets
-├── README.md
-└── .gitignore
+# 1. Find your USB device (WARNING: will be erased!)
+lsblk
+
+# 2. Create bootable installer (replace /dev/sdX with your USB)
+sudo ./scripts/install-ubuntu-server.sh /dev/sdX
+
+# 3. Boot the NUC from USB, let it auto-install
+#    (takes ~10-15 minutes depending on USB speed)
+
+# 4. After reboot, SSH into the fresh install:
+ssh htpc@tvpc.local   # password: htpc (change immediately!)
+
+# 5. Run the final HTPC setup:
+cd tvpc && sudo ./install.sh
+sudo reboot
 ```
 
-## Customizing
+---
 
-Edit `scripts/customize.sh` or add new files under `overlays/` and
-re-run `./scripts/customize.sh` (safe to run multiple times).
+## What you get
 
-## Hardware-specific notes
+After both methods complete, you'll have:
+
+- **Plasma Mobile** as the default session (phone/tablet-style app grid)
+- **VacuumTube** (Flatpak) as the first-class YouTube client with VA-API HW decode
+- **CEC** for TV remote passthrough + auto power-on at boot
+- **HDMI audio** forced to LPCM 2.0 (hdmi-stereo-extra) via `htpc-audio.service`
+- **Auto-login** — boots straight to the home screen
+- **Unattended-upgrades** + **Flatpak auto-update** for security patches
+- **Broadwell GPU tuning**: i915 GuC/HuC, TearFree, VA-API decode
+- **ZRAM swap**, **TLP** power tuning (~6W idle), tracker/indexer disabled
+
+---
+
+## Hardware-specific notes (Intel NUC7i5BNH + 2013 Samsung TV)
 
 | Component | Setting | Why |
 |-----------|---------|-----|
@@ -72,6 +68,8 @@ re-run `./scripts/customize.sh` (safe to run multiple times).
 | **Swap** | ZRAM (50% RAM, zstd) | Silent, fast, saves SSD wear |
 | **Power** | TLP + powertop auto-tune | Idle ~6W on NUC7 |
 | **Wi-Fi** | Disabled via NM | Wired GbE preferred for 4K streaming |
+
+---
 
 ## Post-reboot verification
 
@@ -84,6 +82,8 @@ systemctl status htpc-audio          # HDMI audio profile service
 flatpak run io.github.vacuumtube.VacuumTube --enable-features=VaapiVideoDecoder
 ```
 
+---
+
 ## Troubleshooting
 
 - **No audio**: `systemctl restart htpc-audio`
@@ -91,6 +91,8 @@ flatpak run io.github.vacuumtube.VacuumTube --enable-features=VaapiVideoDecoder
 - **VacuumTube stutters**: ensure `vainfo` shows `VAEntrypointVLD` for H.264
 - **UI too small**: edit `~/.config/plasma-desktop-appletsrc` Scale=1.2 → 1.5
 - **VA-API not working**: reboot after first install; GuC firmware loads at boot
+
+---
 
 ## Optional additions
 
