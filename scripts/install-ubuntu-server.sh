@@ -4,76 +4,107 @@ set -euo pipefail
 # install-ubuntu-server.sh — Create a bootable Ubuntu 24.04 Server USB
 # with autoinstall config for Intel NUC7i5BNH.
 #
+# Requires: internet for ISO download. 7z or xorriso for ISO extraction.
+#
 # Usage:
-#   ./scripts/install-ubuntu-server.sh /dev/sdX
+#   sudo ./scripts/install-ubuntu-server.sh /dev/sdX
 #
-# Where /dev/sdX is your USB drive (will be wiped).
-#
-# The resulting USB will automatically install Ubuntu 24.04 minimal +
-# base HTPC tuning, then reboot into a fresh `htpc` user session.
-# Run ./install.sh afterward (or copy it to the USB for auto-run).
+# After install: SSH to tvpc.local (htpc/htpc) then run tvpc-install.
 
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+AUTOINSTALL_DIR="$REPO_ROOT/autoinstall"
+USB_DEV="${1:-}"
 ISO_URL="https://releases.ubuntu.com/24.04/ubuntu-24.04.2-live-server-amd64.iso"
 ISO_FILE="/tmp/ubuntu-24.04.2-live-server-amd64.iso"
-AUTOINSTALL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/autoinstall"
+WORK_DIR="/tmp/tvpc-usb.$$"
 
-if [[ $# -ne 1 ]]; then
-  echo "Usage: $0 /dev/sdX   (the USB device path)"
+usage() {
+  echo "Usage: $0 /dev/sdX"
   echo ""
-  echo "Example:"
-  echo "  lsblk                  # find your USB drive"
-  echo "  $0 /dev/sdX"
+  echo "  /dev/sdX   USB device (will be wiped)"
+  echo ""
+  echo "Prerequisites: apt install p7zip-full xorriso wget"
   exit 1
+}
+
+if [[ -z "$USB_DEV" ]]; then
+  usage
 fi
 
-USB_DEV="$1"
 if [[ ! -b "$USB_DEV" ]]; then
   echo "Error: $USB_DEV is not a block device"
   exit 1
 fi
 
-echo "USB device: $USB_DEV"
-echo "WARNING: All data on $USB_DEV will be destroyed!"
-read -rp "Type 'yes' to confirm: " CONFIRM
-[[ "$CONFIRM" == "yes" ]] || exit 1
-
-# Download ISO if not present
-if [[ ! -f "$ISO_FILE" ]]; then
-  echo "Downloading Ubuntu 24.04 Server ISO..."
-  wget -q "$ISO_URL" -O "$ISO_FILE"
+if [[ $EUID -ne 0 ]]; then
+  echo "Run as root (sudo $0)"
+  exit 1
 fi
 
-# Write ISO + seed
-echo "Creating bootable USB..."
+echo "=== tvpc USB installer ==="
+echo "Target: $USB_DEV  (will be wiped!)"
+read -rp "Type 'YES' to confirm: " C
+[[ "$C" == "YES" ]] || { echo "Aborted."; exit 1; }
+
+# Cleanup trap
+trap 'rm -rf "$WORK_DIR"' EXIT
+
+mkdir -p "$WORK_DIR"
+cd "$WORK_DIR"
+
+# 1. Download ISO
+if [[ ! -f "$ISO_FILE" ]]; then
+  echo "[1/5] Downloading Ubuntu 24.04 Server ISO..."
+  wget --progress=dot:giga "$ISO_URL" -O "$ISO_FILE"
+else
+  echo "[1/5] Using cached ISO: $ISO_FILE"
+fi
+
+# 2. Extract ISO
+echo "[2/5] Extracting ISO..."
+if command -v 7z >/dev/null; then
+  7z x "$ISO_FILE" -o"$WORK_DIR/extracted" -y >/dev/null
+elif command -v xorriso >/dev/null; then
+  mkdir -p "$WORK_DIR/extracted"
+  xorriso -osirrox on -indev "$ISO_FILE" -extract / "$WORK_DIR/extracted" >/dev/null
+else
+  echo "ERROR: Install p7zip-full or xorriso:  apt install p7zip-full"
+  exit 1
+fi
+
+# 3. Copy autoinstall config
+echo "[3/5] Adding autoinstall config..."
+mkdir -p "$WORK_DIR/extracted/autoinstall"
+cp "$AUTOINSTALL_DIR/user-data" "$WORK_DIR/extracted/autoinstall/user-data"
+cp "$AUTOINSTALL_DIR/meta-data" "$WORK_DIR/extracted/autoinstall/meta-data"
+
+# 4. Copy tvpc repo
+echo "[4/5] Copying tvpc repo to USB..."
+cp -r "$REPO_ROOT" "$WORK_DIR/extracted/tvpc"
+
+# 5. Write to USB
+echo "[5/5] Writing to USB..."
+sudo umount "${USB_DEV}"* 2>/dev/null || true
+sync
 sudo dd if="$ISO_FILE" of="$USB_DEV" bs=4M status=progress oflag=sync
+sync
 
-# Mount the USB ESP and add autoinstall
-echo "Adding autoinstall cloud-init config..."
-mkdir -p /mnt/tmp-usb
-sudo mount "${USB_DEV}1" /mnt/tmp-usb
-sudo mkdir -p /mnt/tmp-usb/datasources/unified
-sudo cp "$AUTOINSTALL_DIR/user-data" /mnt/tmp-usb/datasources/unified/user-data
-sudo cp "$AUTOINSTALL_DIR/meta-data" /mnt/tmp-usb/datasources/unified/meta-data
-sudo umount /mnt/tmp-usb
-rmdir /mnt/tmp-usb
+# Mount and add custom files
+sudo mkdir -p /mnt/usb
+sudo mount "${USB_DEV}1" /mnt/usb 2>/dev/null || sudo mount "${USB_DEV}2" /mnt/usb
+cp -r "$WORK_DIR/extracted/autoinstall" /mnt/usb/
+cp -r "$WORK_DIR/extracted/tvpc" /mnt/usb/
+cat > /mnt/usb/README.txt <<'EOF'
+tvpc Installer
+==============
+tvpc repo is at /tvpc/
+After install:  ssh htpc@tvpc.local  (password: htpc)
+Then run:       cd /tvpc && sudo ./install.sh && sudo reboot
+EOF
+sync
+sudo umount /mnt/usb
 
-# Write repo to USB for post-install
-echo "Copying tvpc repo to USB for post-install use..."
-sudo mkdir -p "/mnt/tmp-usb2"
-sudo mount "${USB_DEV}1" "/mnt/tmp-usb2"
-sudo cp -r "$(dirname "${BASH_SOURCE[0]}")/.." "/mnt/tmp-usb2/tvpc-postinstall"
-sudo umount "/mnt/tmp-usb2"
-rmdir /mnt/tmp-usb2
-
-echo "============================================"
-echo " Bootable Ubuntu 24.04 Server USB with"
-echo " auto-install config for Intel NUC7i5BNH"
-echo " is ready: $USB_DEV"
-echo ""
-echo " Insert into the NUC, boot, and let it install."
-echo " After install, SSH to tvpc.local (or find it via"
-echo " the network) and run:"
-echo "     scp -r /tvpc-postinstall htpc@tvpc.local:/home/htpc/tvpc"
-echo "     ssh htpc@tvpc.local"
-echo "     cd tvpc && sudo ./install.sh"
-echo "============================================"
+echo "=== Done! ==="
+echo "Insert USB into NUC, boot from USB, let it install."
+echo "After install: ssh htpc@tvpc.local  password: htpc"
+echo "Then: cd tvpc && sudo ./install.sh && sudo reboot"
