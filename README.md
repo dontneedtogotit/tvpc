@@ -120,6 +120,32 @@ flatpak run io.github.vacuumtube.VacuumTube --enable-features=VaapiVideoDecoder
 
 ---
 
+## Remote control (Samsung Anynet+ via CEC)
+
+```bash
+sudo ./scripts/enhance-cec.sh    # one-time install
+```
+
+Maps your Samsung TV remote to the desktop — Wayland-safe (playerctl/ydotool, no xdotool needed):
+
+| Button | Action |
+|--------|--------|
+| Play / Pause | play-pause in VacuumTube (MPRIS) |
+| Stop / FF / RW | stop / next / previous |
+| Vol +/− , Mute | system volume (2% steps) |
+| OK, arrows, Exit | Enter, arrows, Esc |
+| Root menu | Home (app grid) |
+
+## Health check
+
+```bash
+make doctor        # or: ./scripts/tvpc-doctor.sh
+```
+
+Checks GPU/VA-API, HDMI audio sink, CEC adapter + listener, Wi-Fi, SSH, swap, and Flatpak updates in one pass.
+
+---
+
 ## Troubleshooting
 
 - **No audio** → `sudo systemctl restart htpc-audio`

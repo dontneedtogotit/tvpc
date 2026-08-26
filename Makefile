@@ -1,4 +1,4 @@
-.PHONY: help install customize postboot check-updates clean
+.PHONY: help install customize postboot doctor cec-remote cec-poweron check-updates clean
 
 help:
 	@echo "tvpc — Android-like HTPC Linux (Intel NUC7i5BNH + 2013 Samsung TV)"
@@ -6,6 +6,9 @@ help:
 	@echo "  make install          Run the full installer (sudo, online)"
 	@echo "  make customize        Apply idempotent UI/theme tweaks"
 	@echo "  make postboot         Post-boot: SSH + Wi-Fi + polish"
+	@echo "  make doctor           Run full health check"
+	@echo "  make cec-remote       Install Samsung remote button mapping"
+	@echo "  make cec-poweron      Power on Samsung TV via CEC now"
 	@echo "  make check-updates    Check Flatpak/OS updates"
 	@echo "  make offline-usb      Create offline USB installer"
 	@echo "  make clean            Remove downloaded logs"
@@ -17,7 +20,16 @@ customize:
 	sudo ./scripts/customize.sh
 
 postboot:
-	sudo ./tvpc-postboot.sh
+	sudo ./scripts/tvpc-postboot.sh
+
+doctor:
+	bash ./scripts/tvpc-doctor.sh
+
+cec-remote:
+	sudo ./scripts/enhance-cec.sh
+
+cec-poweron:
+	sudo ./scripts/cec-tv-poweron.sh
 
 check-updates:
 	flatpak update

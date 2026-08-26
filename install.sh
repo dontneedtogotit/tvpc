@@ -29,6 +29,7 @@ apt-get install -y \
   libcec6 cec-utils libva2 libva-drm2 \
   intel-media-va-driver i965-va-driver vainfo \
   i2c-tools tlp powertop zram-tools \
+  playerctl ydotool \
   curl wget git rsync
 
 # 2. Flatpak + Flathub
@@ -175,6 +176,11 @@ fi
 # 19. Run post-install extras (HW decode verification, NUC tuneables)
 if [[ -x "$REPO_ROOT/scripts/install-extras.sh" ]]; then
   "$REPO_ROOT/scripts/install-extras.sh" || true
+fi
+
+# 19b. Enhanced CEC remote mapping (playerctl + ydotool, Wayland-safe)
+if [[ -x "$REPO_ROOT/scripts/enhance-cec.sh" ]]; then
+  "$REPO_ROOT/scripts/enhance-cec.sh" || true
 fi
 
 # 20. Final message
