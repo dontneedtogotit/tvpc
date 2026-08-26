@@ -23,7 +23,7 @@ export DEBIAN_FRONTEND=noninteractive
 apt-get update
 apt-get upgrade -y
 apt-get install -y \
-  flatpak software-properties-common \
+  flatpak software-properties-common openssh-server \
   plasma-mobile plasma-desktop kwin-wayland sddm \
   pipewire pipewire-pulse wireplumber pipewire-jack \
   libcec6 cec-utils libva2 libva-drm2 \
@@ -31,6 +31,9 @@ apt-get install -y \
   i2c-tools tlp powertop zram-tools \
   playerctl ydotool \
   curl wget git rsync
+
+# 1b. Ensure SSH is enabled for remote management
+systemctl enable --now ssh 2>/dev/null || true
 
 # 2. Flatpak + Flathub
 flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
