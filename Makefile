@@ -1,4 +1,4 @@
-.PHONY: help install customize postboot doctor cec-remote cec-poweron check-updates clean
+.PHONY: help install customize postboot doctor cec-remote cec-poweron check-updates check offline-usb clean
 
 help:
 	@echo "tvpc — Android-like HTPC Linux (Intel NUC7i5BNH + 2013 Samsung TV)"
@@ -10,7 +10,8 @@ help:
 	@echo "  make cec-remote       Install Samsung remote button mapping"
 	@echo "  make cec-poweron      Power on Samsung TV via CEC now"
 	@echo "  make check-updates    Check Flatpak/OS updates"
-	@echo "  make offline-usb      Create offline USB installer"
+	@echo "  make check            Lint all shell scripts"
+	@echo "  make offline-usb USB=/dev/sdX  Create offline USB installer"
 	@echo "  make clean            Remove downloaded logs"
 
 install:
@@ -36,7 +37,11 @@ check-updates:
 	sudo apt update && sudo apt list --upgradable
 
 offline-usb:
-	sudo ./scripts/make-offline-usb.sh /dev/sdX
+	sudo ./scripts/make-offline-usb.sh $(USB)
+
+check:
+	@bash -n install.sh scripts/*.sh && echo "bash syntax OK"
+	@command -v shellcheck >/dev/null && shellcheck -x -S warning install.sh scripts/*.sh || echo "shellcheck not installed (skipping)"
 
 clean:
 	rm -f /var/log/tvpc-install.log

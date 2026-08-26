@@ -107,6 +107,7 @@ Restart=always
 RestartSec=5
 User=htpc
 Environment=XDG_RUNTIME_DIR=/run/user/%U
+Environment=DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/%U/bus
 
 [Install]
 WantedBy=graphical.target

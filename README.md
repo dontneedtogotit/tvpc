@@ -32,7 +32,7 @@ sudo ./scripts/prepare-ventoy-data.sh /dev/sdXN   # prep data partition
 ## Post-install: Run once after first boot
 
 ```bash
-sudo ./tvpc-postboot.sh
+sudo ./scripts/tvpc-postboot.sh
 ```
 
 This enables SSH, fixes Wi-Fi, installs recommended packages, and guides you through password changes.
@@ -57,8 +57,8 @@ This enables SSH, fixes Wi-Fi, installs recommended packages, and guides you thr
 ```
 tvpc/
 ├── install.sh                       # One-shot installer (online)
-├── tvpc-postboot.sh                # Run once after first boot (SSH, Wi-Fi, polish)
 ├── scripts/
+│   ├── tvpc-postboot.sh            # Run once after first boot (SSH, Wi-Fi, polish)
 │   ├── make-offline-usb.sh         # Full offline USB creator
 │   ├── prepare-ventoy-data.sh      # Ventoy data partition prep
 │   ├── install-ubuntu-server.sh    # Simple USB builder

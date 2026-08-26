@@ -57,10 +57,13 @@ case "${1:-}" in
         log "Setting audio profile to: $PROFILE"
         if pactl set-card-profile alsa_card.pci-0000_00_1f.3 "$PROFILE"; then
             log "Profile set successfully"
-            # Also set as default sink if it's a sink profile
-            if [[ "$PROFILE" == *"output"* ]]; then
-                pactl set-default-sink "$PROFILE"
-                log "Set as default sink: $PROFILE"
+            # set-default-sink needs a sink NAME, not a profile name.
+            # Derive the matching sink from the profile (e.g. output:hdmi-stereo-extra
+            # -> alsa_output.pci-...hdmi-stereo-extra).
+            SINK=$(pactl list short sinks 2>/dev/null | awk '{print $2}' | grep "${PROFILE#output:}" | head -1)
+            if [[ -n "$SINK" ]]; then
+                pactl set-default-sink "$SINK"
+                log "Set as default sink: $SINK"
             fi
         else
             log "Failed to set profile: $PROFILE"

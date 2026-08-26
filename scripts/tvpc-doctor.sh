@@ -26,7 +26,11 @@ if vainfo >/dev/null 2>&1; then
 else
   bad "vainfo failed — GuC/HuC or driver problem (reboot may fix)"
 fi
-dmesg 2>/dev/null | grep -qi "guc.*loaded\|HuC" && ok "i915 GuC/HuC firmware loaded" || warn "GuC load not confirmed in dmesg"
+if journalctl -k 2>/dev/null | grep -qi "guc.*loaded\|HuC"; then
+  ok "i915 GuC/HuC firmware loaded"
+else
+  warn "GuC load not confirmed in kernel log (try: sudo journalctl -k | grep -i guc)"
+fi
 
 hr "Audio"
 DEFAULT_SINK=$(pactl get-default-sink 2>/dev/null || true)
@@ -36,11 +40,15 @@ else
   bad "default sink is not HDMI ('$DEFAULT_SINK')"
 fi
 systemctl is-active pipewire >/dev/null 2>&1 && ok "pipewire running" || bad "pipewire not running"
+systemctl is-active htpc-audio >/dev/null 2>&1 && ok "htpc-audio service active" \
+  || warn "htpc-audio not active (run: sudo systemctl restart htpc-audio)"
 
 hr "CEC"
 cec-client -l >/dev/null 2>&1 && ok "CEC adapter detected" || bad "no CEC adapter found"
 systemctl is-active tvpc-cec-remote >/dev/null 2>&1 && ok "remote listener running" \
   || warn "tvpc-cec-remote not installed/running (run scripts/enhance-cec.sh)"
+systemctl is-active htpc-startup >/dev/null 2>&1 && ok "htpc-startup (TV power-on) active" \
+  || warn "htpc-startup not active (TV won't auto power-on)"
 
 hr "Network"
 ip route get 1.1.1.1 >/dev/null 2>&1 && ok "default route exists" || bad "no network connectivity"
@@ -59,12 +67,16 @@ hr "Maintenance"
 systemctl is-active unattended-upgrades >/dev/null 2>&1 || systemctl is-enabled apt-daily-upgrade.timer >/dev/null 2>&1 \
   && ok "unattended upgrades enabled" || warn "automatic updates not confirmed"
 systemctl is-active zramswap >/dev/null 2>&1 && ok "zram swap active" || warn "zramswap not active"
-systemctl is-enabled flatpak-update.timer >/dev/null 2>&1 && ok "flatpak auto-update timer enabled" || warn "flatpak timer missing"
+systemctl is-enabled flatpak-user-update.timer >/dev/null 2>&1 && ok "flatpak auto-update timer enabled" || warn "flatpak timer missing"
 
 hr "Flatpaks"
 if command -v flatpak >/dev/null; then
   flatpak list --app 2>/dev/null | head -5
-  flatpak update --no-deps 2>/dev/null | grep -q "Nothing to do" && ok "all flatpaks up to date" || warn "updates available"
+  if flatpak list --updates 2>/dev/null | grep -q .; then
+    warn "flatpak updates available (run: flatpak update)"
+  else
+    ok "all flatpaks up to date"
+  fi
 else
   bad "flatpak not installed"
 fi

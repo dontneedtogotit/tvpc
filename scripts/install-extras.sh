@@ -59,18 +59,8 @@ pactl set-sink-volume @DEFAULT_SINK@ "$STEP"
 EOF
 chmod +x /usr/local/bin/htpc-volume-step
 
-# 6. Autostart VacuumTube (pinned to favorites handled by Plasma config in customize.sh)
-mkdir -p /home/htpc/.config/autostart
-cat >/home/htpc/.config/autostart/vacuumtube.desktop <<'EOF'
-[Desktop Entry]
-Type=Application
-Name=VacuumTube
-Comment=YouTube client with hardware video decode
-Exec=flatpak run io.github.vacuumtube.VacuumTube --enable-features=VaapiVideoDecoder
-X-KDE-autostart-after=plasma-desktop
-X-KDE-autostart-phase=1
-EOF
-chown htpc:htpc /home/htpc/.config/autostart/vacuumtube.desktop
+# 6. Autostart + favorites for VacuumTube are owned by customize.sh
+#    (writes to both /etc/skel and the live HTPC home, with native Wayland + VA-API flags)
 
 # 7. Flatpak: grant VacuumTube VA-API access via portal override
 mkdir -p /var/lib/flatpak/overrides

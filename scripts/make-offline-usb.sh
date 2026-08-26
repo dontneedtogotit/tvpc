@@ -303,7 +303,7 @@ sudo cp extracted/autoinstall/meta-data /mnt/usb/meta-data
 sudo cp -r extracted/tvpc /mnt/usb/tvpc
 
 # Add offline note
-sudo cat > /mnt/usb/README-OFFLINE.txt <<'READMEEOF'
+sudo tee /mnt/usb/README-OFFLINE.txt > /dev/null <<'READMEEOF'
 tvpc Offline Installer
 ======================
 

@@ -9,7 +9,9 @@ autoinstall:
     network:
       version: 2
       ethernets:
-        eno1:
+        default:
+          match:
+            name: e*
           dhcp4: true
           dhcp6: false
   apt:
@@ -88,7 +90,7 @@ autoinstall:
   identity:
     hostname: tvpc
     username: htpc
-    password: "$6$rounds=656000$5salt5salt5sal$T0cPl47E5BcPl47E5BcPl47E5BcPl47E5BcPl47E5BcPl47E5BcPl47E5BcPl47E5"
+    password: "$6$tvpcnuc$filixBovOOq.9RTSlPavpykmFcSDuEaeB9nZdxUVGMMR0PsN6uZYWAhv9zm.ubViRolPf/jHkU3eg3to.5xA11"
     realname: HTPC User
     groups: [adm, cdrom, dip, plugdev, lxd, sudo, video, render, audio, input]
     shell: /bin/bash

@@ -83,16 +83,14 @@ if ! grep -q "i915.enable_guc" /etc/default/grub; then
 fi
 update-grub
 
-# 9. CEC daemon for Samsung Anynet+ remote
-systemctl enable --now cec-daemon 2>/dev/null || true
-
-# 10. Power-on the Samsung TV + make NUC the active source at boot
+# 9. Power-on the Samsung TV + make NUC the active source at boot
+#    (There is no 'cec-daemon' systemd unit on Ubuntu; CEC is driven
+#    directly by cec-client in cec-tv-poweron.sh, so no Requires= here.)
 install -m 0755 "$REPO_ROOT/scripts/cec-tv-poweron.sh" /usr/local/bin/cec-tv-poweron.sh
 cat >/etc/systemd/system/htpc-startup.service <<'EOF'
 [Unit]
 Description=Power on Samsung TV via CEC and switch input
-After=multi-user.target pipewire.service network-online.target cec-daemon.service
-Requires=cec-daemon.service
+After=multi-user.target pipewire.service network-online.target
 
 [Service]
 Type=oneshot
@@ -141,9 +139,9 @@ Description=Weekly Flatpak update for HTPC user
 
 [Service]
 Type=oneshot
-ExecStart=flatpak update --user --noninteractive
+ExecStart=flatpak update --noninteractive
 EOF
-systemctl enable flatpak-user-update.timer
+systemctl enable --now flatpak-user-update.timer
 systemctl enable flatpak-user-update.service
 
 # 15. Boot-time lid/sleep hardening
@@ -181,6 +179,11 @@ fi
 # 19b. Enhanced CEC remote mapping (playerctl + ydotool, Wayland-safe)
 if [[ -x "$REPO_ROOT/scripts/enhance-cec.sh" ]]; then
   "$REPO_ROOT/scripts/enhance-cec.sh" || true
+fi
+
+# 19c. Apply UI/theme tweaks (Plasma Mobile scaling, favorites, autostart)
+if [[ -x "$REPO_ROOT/scripts/customize.sh" ]]; then
+  "$REPO_ROOT/scripts/customize.sh" || true
 fi
 
 # 20. Final message

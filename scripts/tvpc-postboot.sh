@@ -106,6 +106,11 @@ echo "You should change it immediately for security:"
 echo "  passwd"
 echo ""
 
+# Force a password change on next login (appliance hardening)
+if id htpc >/dev/null 2>&1; then
+    chage -d 0 htpc 2>/dev/null && echo "Forced password change for 'htpc' on next login." || true
+fi
+
 # Enable automatic updates if not already done
 if ! systemctl is-enabled unattended-upgrades >/dev/null 2>&1; then
     echo "Enabling automatic security updates..."
