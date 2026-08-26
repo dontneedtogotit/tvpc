@@ -1,9 +1,20 @@
-.PHONY: help install customize postboot doctor cec-remote cec-poweron check-updates check offline-usb clean
+.PHONY: help install update update-check repair check-boot logs session \
+        customize postboot doctor cec-remote cec-poweron check-updates check \
+        offline-usb clean
 
 help:
 	@echo "tvpc — Android-like HTPC Linux (Intel NUC7i5BNH + 2013 Samsung TV)"
 	@echo ""
+	@echo "  Black screen at boot? Start here:"
+	@echo "    make check-boot       Diagnose without changing anything"
+	@echo "    make repair           Apply the fixes, then reboot"
+	@echo "    make logs             Dump the logs that explain the failure"
+	@echo ""
 	@echo "  make install          Run the full installer (sudo, online)"
+	@echo "  make update           Converge to the intended state + update packages"
+	@echo "  make update-check     Report what is done and what is not"
+	@echo "  make session S=plasma Session: auto|plasma|plasma-mobile|plasma-x11|kiosk"
+	@echo "                        opt-in: bigscreen|bigscreen-x11|phosh"
 	@echo "  make customize        Apply idempotent UI/theme tweaks"
 	@echo "  make postboot         Post-boot: SSH + Wi-Fi + polish"
 	@echo "  make doctor           Run full health check"
@@ -16,6 +27,24 @@ help:
 
 install:
 	sudo ./install.sh
+
+update:
+	sudo ./scripts/tvpc-update.sh
+
+update-check:
+	sudo ./scripts/tvpc-update.sh --check
+
+repair:
+	sudo ./scripts/tvpc-repair.sh
+
+check-boot:
+	sudo ./scripts/tvpc-repair.sh --check
+
+logs:
+	sudo ./scripts/tvpc-repair.sh --logs
+
+session:
+	sudo ./scripts/tvpc-session.sh $(or $(S),auto)
 
 customize:
 	sudo ./scripts/customize.sh

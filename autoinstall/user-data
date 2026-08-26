@@ -37,56 +37,19 @@ autoinstall:
           - restricted
           - universe
           - multiverse
+
+  # The previous version supplied BOTH `layout` and an explicit `config` list.
+  # They are mutually exclusive, and the explicit list created a 1G ext4
+  # partition flagged boot with no EFI system partition — on a NUC7, which
+  # boots UEFI, that produces an unbootable disk. `layout` builds the ESP,
+  # /boot and LVM correctly on its own.
   storage:
     layout:
       name: lvm
-      sizing_policy: all
+      sizing-policy: all
     swap:
       size: 0
-    config:
-      - type: disk
-        id: disk0
-        match:
-          size: max
-        ptable: gpt
-        wipe: superblock-recursive
-        grub_device: true
-      - type: partition
-        id: boot-partition
-        device: disk0
-        size: 1G
-        flag: boot
-        number: 1
-      - type: partition
-        id: root-partition
-        device: disk0
-        size: -1
-        number: 2
-      - type: lvm_volgroup
-        id: vg0
-        name: vg0
-        devices: [root-partition]
-      - type: lvm_partition
-        id: root-lv
-        name: root
-        volgroup: vg0
-        size: -1
-      - type: format
-        id: root-fs
-        fstype: ext4
-        volume: root-lv
-      - type: mount
-        id: root-mount
-        device: root-fs
-        path: /
-      - type: format
-        id: boot-fs
-        fstype: ext4
-        volume: boot-partition
-      - type: mount
-        id: boot-mount
-        device: boot-fs
-        path: /boot
+
   identity:
     hostname: tvpc
     username: htpc
@@ -114,15 +77,17 @@ autoinstall:
     - unattended-upgrades
     - chrony
     - ethtool
+
   late-commands:
-    - curtin in-target --target=/target -- sed -i 's/^GRUB_CMDLINE_LINUX_DEFAULT=.*/GRUB_CMDLINE_LINUX_DEFAULT="quiet splash i915.enable_guc=2 intel_iommu=igfx_off"/' /etc/default/grub
+    # Kernel command line: no "splash" (plymouth otherwise hides a failed
+    # graphical session behind a black screen), and none of the GuC/IOMMU
+    # parameters that were picked for Broadwell — this is Kaby Lake.
+    - curtin in-target --target=/target -- sed -i 's/^GRUB_CMDLINE_LINUX_DEFAULT=.*/GRUB_CMDLINE_LINUX_DEFAULT="quiet"/' /etc/default/grub
     - curtin in-target --target=/target -- update-grub
-    - curtin in-target --target=/target -- systemctl enable chronyd
-    - curtin in-target --target=/target -- systemctl disable --now tracker-miner-fs-3 2>/dev/null || true
-    - curtin in-target --target=/target -- systemctl mask tracker-miner-fs-3 2>/dev/null || true
-    - curtin in-target --target=/target -- systemctl disable --now tracker-store 2>/dev/null || true
-    - curtin in-target --target=/target -- systemctl mask tracker-store 2>/dev/null || true
-    - curtin in-target --target=/target -- echo "HandleLidSwitch=ignore" >> /etc/systemd/logind.conf
-    - curtin in-target --target=/target -- echo "HandleLidSwitchExternalPower=ignore" >> /etc/systemd/logind.conf
-    - curtin in-target --target=/target -- echo "HandleLidSwitchDocked=ignore" >> /etc/systemd/logind.conf
+    - curtin in-target --target=/target -- systemctl enable chrony
+    # Never act on a lid that does not exist, never idle-suspend a TV box.
+    # (The old form used `-- echo ... >> file`, where the shell applied the
+    # redirection outside the target, so nothing reached the installed system.)
+    - curtin in-target --target=/target -- mkdir -p /etc/systemd/logind.conf.d
+    - curtin in-target --target=/target -- sh -c 'printf "[Login]\nHandleLidSwitch=ignore\nHandleLidSwitchExternalPower=ignore\nHandleLidSwitchDocked=ignore\nIdleAction=ignore\n" > /etc/systemd/logind.conf.d/10-tvpc.conf'
   shutdown: reboot

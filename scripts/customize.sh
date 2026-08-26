@@ -1,117 +1,146 @@
 #!/usr/bin/env bash
-# tvpc customize.sh — Idempotent tweaks you can re-run safely.
-# Run from the repo root:  ./scripts/customize.sh
+# customize.sh — idempotent UI tweaks for couch use. Safe to re-run.
+#   sudo ./scripts/customize.sh
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-HTPC_USER="${HTPC_USER:-htpc}"
+# shellcheck source=/dev/null
+if [[ -r /etc/default/tvpc ]]; then . /etc/default/tvpc; fi
+HTPC_USER="${TVPC_USER:-${HTPC_USER:-htpc}}"
 echo ">> tvpc customize using repo root: $REPO_ROOT (user: $HTPC_USER)"
 
-# --- Skel defaults (applied to any newly created user) ---
-mkdir -p /etc/skel/.config
+SKEL=/etc/skel
+mkdir -p "$SKEL/.config" "$SKEL/.config/autostart"
 
-# 1. Theme: Breeze dark
-cat >/etc/skel/.config/kdeglobals <<'EOF'
+# --- Theme and 10-foot type -------------------------------------------------
+# Scaling is applied at runtime by tvpc-display-setup (TVPC_SCALE); larger
+# fonts are set here because they work regardless of scale and cannot take the
+# display down if they are wrong.
+cat >"$SKEL/.config/kdeglobals" <<'EOF'
 [General]
 ColorScheme=BreezeDark
 Name=Breeze Dark
 widgetStyle=Breeze
+font=Noto Sans,13,-1,5,50,0,0,0,0,0
+fixed=Noto Sans Mono,12,-1,5,50,0,0,0,0,0
+menuFont=Noto Sans,13,-1,5,50,0,0,0,0,0
+smallestReadableFont=Noto Sans,11,-1,5,50,0,0,0,0,0
+toolBarFont=Noto Sans,12,-1,5,50,0,0,0,0,0
 
 [KDE]
 LookAndFeelPackage=org.kde.breezedark.desktop
 EOF
 
-# 2. Disable screen locking (HTPC = TV, no lockscreen)
-cat >/etc/skel/.config/kscreenlockerrc <<'EOF'
+# --- No lock screen on a TV -------------------------------------------------
+cat >"$SKEL/.config/kscreenlockerrc" <<'EOF'
 [Daemon]
 Autolock=false
 LockGrace=0
+LockOnResume=false
 EOF
 
-# 3. Disable KRunner (not needed on HTPC)
-cat >/etc/skel/.config/krunnerrc <<'EOF'
+# --- Never blank or suspend -------------------------------------------------
+# Without this the TV goes black after ~5 minutes idle, which looks exactly
+# like the boot failure this build was suffering from. Large idle times rather
+# than 0: powerdevil treats 0 as "immediately" for some actions.
+cat >"$SKEL/.config/powermanagementprofilesrc" <<'EOF'
+[AC][DPMSControl]
+idleTime=86400
+lockBeforeTurnOff=0
+
+[AC][DimDisplay]
+idleTime=86400
+
+[AC][SuspendSession]
+idleTime=86400
+suspendType=0
+
+[AC][HandleButtonEvents]
+lidAction=0
+powerButtonAction=1
+EOF
+
+# --- Turn off the desktop search stack --------------------------------------
+cat >"$SKEL/.config/baloorc" <<'EOF'
+[Basic Settings]
+Indexing-Enabled=false
+EOF
+cat >"$SKEL/.config/krunnerrc" <<'EOF'
 [General]
-autoloadModules=false
+FreeFloating=false
 EOF
 
-# 4. Plasma Mobile UI scaling for 80" 1080p TV viewed from couch
-cat >/etc/skel/.config/plasma-desktop-appletsrc <<'EOF'
-[Screen Scales]
-HDMI-1=1.2
-EOF
-
-# 5. Force 1920x1080@60 via kwinrules (Wayland-compatible)
-cat >/etc/skel/.config/kwinrulesrc <<'EOF'
+# --- KWin rules -------------------------------------------------------------
+# The old rule tried to set the screen resolution here. KWin rules apply to
+# windows, not outputs, so it could never have worked; the display mode is
+# handled by tvpc-display-setup via kscreen-doctor. What is left is a real
+# window rule: start VacuumTube fullscreen.
+cat >"$SKEL/.config/kwinrulesrc" <<'EOF'
 [General]
-useUtility=false
+count=1
+rules=tvpc-vacuumtube
 
-[1]
-description=Samsung 80 inch 1080p
-fullscreen=false
-geometry=true
-maximize=apply
-minimize=apply
-monitor=HDMI-1
-position=0,0
-priority=1
-refreshrate=60
-resistlocation=false
-screen=0
-size=1920,1080
-strictgeometry=false
-types=4
-zvalue=0
+[tvpc-vacuumtube]
+Description=VacuumTube starts fullscreen on the TV
+wmclass=vacuumtube
+wmclassmatch=2
+wmclasscomplete=false
+fullscreen=true
+fullscreenrule=3
 EOF
 
-# 6. VacuumTube pinned to favorites (plasma-mobile homescreen)
-mkdir -p /etc/skel/.local/share/plasma-mobile/favorites
-cat >/etc/skel/.local/share/plasma-mobile/favorites/applications.list <<'EOF'
-io.github.vacuumtube.VacuumTube.desktop
-org.kde.dolphin.desktop
+# --- Autostart --------------------------------------------------------------
+cat >"$SKEL/.config/autostart/tvpc-display-setup.desktop" <<'EOF'
+[Desktop Entry]
+Type=Application
+Name=tvpc display setup
+Comment=Apply TV scale/mode from /etc/default/tvpc
+Exec=/usr/local/bin/tvpc-display-setup
+X-KDE-autostart-phase=1
+NoDisplay=true
 EOF
 
-# 7. Autostart VacuumTube with native Wayland + VA-API HW decode
-mkdir -p /etc/skel/.config/autostart
-cat >/etc/skel/.config/autostart/vacuumtube.desktop <<'EOF'
+cat >"$SKEL/.config/autostart/vacuumtube.desktop" <<'EOF'
 [Desktop Entry]
 Type=Application
 Name=VacuumTube
 Comment=YouTube client with hardware video decode
-Exec=flatpak run io.github.vacuumtube.VacuumTube --enable-features=VaapiVideoDecoder --ozone-platform=wayland --use-gl=egl
-X-KDE-autostart-after=plasma-desktop
-X-KDE-autostart-phase=1
+Exec=flatpak run io.github.vacuumtube.VacuumTube --enable-features=VaapiVideoDecoder --ozone-platform-hint=auto
+X-KDE-autostart-phase=2
 EOF
 
-# 8. Disable baloo file indexer (HTPC doesn't need search indexing)
-cat >/etc/skel/.config/baloorc <<'EOF'
-[Basic Settings]
-Indexing-Enabled=false
-EOF
-
-# 9. Seed the existing HTPC user home (so tweaks apply now, not just to new users)
-HOME_DIR=$(getent passwd "$HTPC_USER" | cut -d: -f6 || true)
-if [[ -n "$HOME_DIR" && -d "$HOME_DIR" ]]; then
-  for f in .config/kdeglobals .config/kscreenlockerrc .config/krunnerrc \
-           .config/plasma-desktop-appletsrc .config/kwinrulesrc \
-           .config/baloorc .config/autostart/vacuumtube.desktop; do
-    src="/etc/skel/$f"
-    [[ -f "$src" ]] || continue
-    mkdir -p "$HOME_DIR/$(dirname "$f")"
-    cp "$src" "$HOME_DIR/$f"
-  done
-  mkdir -p "$HOME_DIR/.local/share/plasma-mobile/favorites"
-  cp /etc/skel/.local/share/plasma-mobile/favorites/applications.list \
-     "$HOME_DIR/.local/share/plasma-mobile/favorites/applications.list" 2>/dev/null || true
-  chown -R "$HTPC_USER:$HTPC_USER" "$HOME_DIR/.config" "$HOME_DIR/.local" 2>/dev/null || true
+# --- Seed the live user, not just future ones -------------------------------
+HOME_DIR="$(getent passwd "$HTPC_USER" | cut -d: -f6 || true)"
+if [[ -n ${HOME_DIR:-} && -d $HOME_DIR ]]; then
+  while IFS= read -r rel; do
+    mkdir -p "$HOME_DIR/$(dirname "$rel")"
+    cp "$SKEL/$rel" "$HOME_DIR/$rel"
+  done < <(cd "$SKEL" && find .config -type f -printf '%p\n')
+  chown -R "$HTPC_USER:$HTPC_USER" "$HOME_DIR/.config" 2>/dev/null || true
+  [[ -d "$HOME_DIR/.local" ]] && chown -R "$HTPC_USER:$HTPC_USER" "$HOME_DIR/.local" 2>/dev/null || true
   echo "Seeded $HOME_DIR with tvpc config"
 else
   echo "Home dir for $HTPC_USER not found; skel-only (applies on next user creation)"
 fi
 
-# 10. Apply repo overlays if any new ones were added
+# Remove settings written by older versions of this script that pointed at
+# keys Plasma does not read.
+if [[ -n ${HOME_DIR:-} && -d $HOME_DIR ]]; then
+  rm -f "$HOME_DIR/.config/plasma-desktop-appletsrc.tvpc-bak"
+  if grep -q '^\[Screen Scales\]' "$HOME_DIR/.config/plasma-desktop-appletsrc" 2>/dev/null; then
+    mv "$HOME_DIR/.config/plasma-desktop-appletsrc" \
+       "$HOME_DIR/.config/plasma-desktop-appletsrc.tvpc-bak"
+    echo "Moved aside a plasma-desktop-appletsrc containing the bogus [Screen Scales] block"
+  fi
+  rm -rf "$HOME_DIR/.local/share/plasma-mobile/favorites"
+fi
+rm -f "$SKEL/.config/plasma-desktop-appletsrc"
+rm -rf "$SKEL/.local/share/plasma-mobile"
+
+# --- Overlays ---------------------------------------------------------------
 if [[ -d "$REPO_ROOT/overlays" ]]; then
   rsync -a --no-perms "$REPO_ROOT/overlays/" /
   echo "Applied repo overlays from $REPO_ROOT/overlays"
 fi
 
-echo ">> customize done. Log out/in to see changes."
+echo ">> customize done. Log out and back in to see the changes."

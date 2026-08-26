@@ -1,16 +1,19 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# tvpc-install.sh — One-shot Android-like HTPC setup for Ubuntu 24.04 minimal
-# Target: Intel NUC7i5BNH + 2013 Samsung ~80" TV
-# Repo: https://github.com/dontneedtogotit/tvpc  (clone here and run ./install.sh)
+# install.sh — Android-like HTPC setup for Ubuntu 24.04 (server base)
+# Target: Intel NUC7i5BNH (Core i5-7260U "Kaby Lake", Iris Plus 640)
+#         + 2013 Samsung ~80" TV over HDMI
+# Repo: https://github.com/dontneedtogotit/tvpc
+#
+# Safe to re-run. Re-running on a machine that boots to a black screen will
+# repair it; see also scripts/tvpc-repair.sh for the fix-only path.
 
 LOG="/var/log/tvpc-install.log"
 exec > >(tee -a "$LOG") 2>&1
 
 echo "=== tvpc installer started $(date) ==="
 
-# 0. Must be root
 if [[ $EUID -ne 0 ]]; then
   echo "Run as root (sudo ./install.sh)"
   exit 1
@@ -18,82 +21,203 @@ fi
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# 1. Base packages
+# ---------------------------------------------------------------------------
+# 1. Configuration
+# ---------------------------------------------------------------------------
+# Single place to change the session, user and TV scaling. Created once and
+# then left alone, so your edits survive a re-run.
+if [[ ! -f /etc/default/tvpc ]]; then
+  cat >/etc/default/tvpc <<'EOF'
+# tvpc appliance settings — sourced by the tvpc scripts.
+
+# Login user for the TV session.
+TVPC_USER=htpc
+
+# Graphical session: auto | plasma | plasma-mobile | plasma-x11 | kiosk
+#   auto          first of the above that is actually installed
+#   plasma        Plasma Wayland desktop (default, tested on this hardware)
+#   plasma-mobile KDE's touchscreen shell — needs TVPC_INSTALL_PLASMA_MOBILE=1
+#                 and is hard to drive from a TV remote
+#   kiosk         kwin_wayland + one app, the "nothing else works" fallback
+TVPC_SESSION=auto
+
+# Plasma global scale for couch viewing. 1 disables scaling.
+TVPC_SCALE=1.5
+
+# Force a display mode, e.g. 1920x1080@60. Empty = trust the TV's EDID.
+TVPC_MODE=
+
+# Set to 1 to also install Plasma Mobile (large download, optional).
+TVPC_INSTALL_PLASMA_MOBILE=0
+
+# Set to 1 on wired-only installs to power down the Wi-Fi radio.
+TVPC_WIRED_ONLY=0
+EOF
+  echo "Wrote /etc/default/tvpc"
+fi
+# shellcheck source=/dev/null
+. /etc/default/tvpc
+HTPC_USER="${TVPC_USER:-htpc}"
+
+# ---------------------------------------------------------------------------
+# 2. Packages
+# ---------------------------------------------------------------------------
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
 apt-get upgrade -y
-apt-get install -y \
-  flatpak software-properties-common openssh-server \
-  plasma-mobile plasma-desktop kwin-wayland sddm \
-  pipewire pipewire-pulse wireplumber pipewire-jack \
-  libcec6 cec-utils libva2 libva-drm2 \
-  intel-media-va-driver i965-va-driver vainfo \
-  i2c-tools tlp powertop zram-tools \
-  playerctl ydotool \
+
+# Install what is available and report what is not, rather than aborting the
+# whole run — a half-configured appliance is worse than a noisy log.
+apt_install() {
+  local want=("$@") have=() missing=()
+  local p
+  for p in "${want[@]}"; do
+    if apt-cache show "$p" >/dev/null 2>&1; then have+=("$p"); else missing+=("$p"); fi
+  done
+  if [[ ${#missing[@]} -gt 0 ]]; then echo "!! not available, skipping: ${missing[*]}"; fi
+  if [[ ${#have[@]} -gt 0 ]]; then apt-get install -y "${have[@]}"; fi
+}
+
+# Display stack. plasma-workspace-wayland is what provides
+# /usr/share/wayland-sessions/plasmawayland.desktop — without it there is no
+# Wayland session to log in to at all.
+apt_install \
+  sddm sddm-theme-breeze \
+  plasma-workspace plasma-workspace-wayland plasma-desktop kwin-wayland \
+  plasma-nm plasma-pa powerdevil kscreen systemsettings kde-cli-tools \
+  breeze breeze-icon-theme qtwayland5 \
+  xwayland xserver-xorg-core xserver-xorg-input-libinput
+
+# Audio (PipeWire; pulseaudio-utils supplies pactl)
+apt_install pipewire pipewire-pulse pipewire-alsa wireplumber pulseaudio-utils
+
+# Video decode. iHD is the right VA-API driver for Kaby Lake; i965 stays as a
+# fallback. No GuC/HuC kernel flags are needed for decode on gen9.
+apt_install intel-media-va-driver i965-va-driver mesa-va-drivers \
+  libva2 libva-drm2 vainfo
+
+# CEC + remote control. ydotoold is a SEPARATE package on Ubuntu: the ydotool
+# package ships only the client, and the client is useless without the daemon.
+apt_install cec-utils libcec6 playerctl ydotool ydotoold
+
+# System
+apt_install flatpak software-properties-common openssh-server network-manager \
+  tlp powertop zram-tools i2c-tools unattended-upgrades \
   curl wget git rsync
 
-# 1b. Ensure SSH is enabled for remote management
+# Plasma Mobile is opt-in: it is a touchscreen shell, it pulls in an on-screen
+# keyboard, and on Ubuntu 24.04 its shell failing to start is the classic cause
+# of a black screen with a cursor.
+if [[ "${TVPC_INSTALL_PLASMA_MOBILE:-0}" == "1" || "${TVPC_SESSION:-auto}" == "plasma-mobile" ]]; then
+  echo "== Installing Plasma Mobile (opt-in) =="
+  apt_install plasma-mobile plasma-nano
+fi
+
 systemctl enable --now ssh 2>/dev/null || true
 
-# 2. Flatpak + Flathub
+# ---------------------------------------------------------------------------
+# 3. Remove configuration that is known to break the display
+# ---------------------------------------------------------------------------
+# Earlier versions of this repo shipped these. They are the reason an install
+# could come up as a black screen, so clear them out before anything else.
+echo "== Clearing known-bad configuration from previous installs =="
+
+# Xorg was told to use Driver "intel" (xserver-xorg-video-intel). That driver
+# is not installed on Ubuntu 24.04 and is not even part of
+# xserver-xorg-video-all any more, so Xorg exited with "no screens found" and
+# SDDM had nothing to display. modesetting handles Kaby Lake correctly with no
+# configuration at all.
+rm -f /etc/X11/xorg.conf.d/20-intel.conf /etc/X11/xorg.conf
+
+# This asked PipeWire to load a module that does not exist
+# (libpipewire-module-alsa-sink), which stopped PipeWire from starting.
+rm -f /etc/pipewire/pipewire.conf.d/90-hdmi-pin.conf
+rm -f /etc/pipewire/pipewire-pulse.d/99-htpc.conf
+
+# Ran pactl as root from a system unit, where there is no PipeWire to talk to.
+if systemctl list-unit-files htpc-audio.service >/dev/null 2>&1; then
+  systemctl disable --now htpc-audio.service 2>/dev/null || true
+fi
+rm -f /etc/systemd/system/htpc-audio.service
+
+# Superseded by /etc/sddm.conf.d/10-tvpc.conf, written only after the session
+# file has been confirmed to exist.
+rm -f /etc/sddm.conf.d/autologin.conf
+
+systemctl daemon-reload
+
+# ---------------------------------------------------------------------------
+# 4. Flatpak + VacuumTube
+# ---------------------------------------------------------------------------
 flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
+flatpak install -y flathub io.github.vacuumtube.VacuumTube || \
+  echo "!! VacuumTube install failed (no network?) — rerun: flatpak install flathub io.github.vacuumtube.VacuumTube"
 
-# 3. VacuumTube (YouTube client)
-flatpak install -y flathub io.github.vacuumtube.VacuumTube
-
-# 4. Optional media apps (uncomment what you want)
-# flatpak install -y flathub com.github.vkrinic.flatflix
+# Optional media apps:
 # flatpak install -y flathub com.github.iwalton3.jellyfin-media-player
+# flatpak install -y flathub tv.plex.PlexHTPC
 
-# 5. Create HTPC user (added 'input' for remotes)
-HTPC_USER="htpc"
+# ---------------------------------------------------------------------------
+# 5. HTPC user
+# ---------------------------------------------------------------------------
 if ! id "$HTPC_USER" &>/dev/null; then
   useradd -m -G video,render,audio,plugdev,input -s /bin/bash "$HTPC_USER"
   echo "$HTPC_USER:htpc" | chpasswd
   echo "Created user $HTPC_USER (password: htpc — change it!)"
+else
+  usermod -aG video,render,audio,plugdev,input "$HTPC_USER"
 fi
 
-# 6. Auto-login into Plasma Mobile (Wayland)
-mkdir -p /etc/sddm.conf.d
-cat >/etc/sddm.conf.d/autologin.conf <<EOF
-[Autologin]
-User=$HTPC_USER
-Session=plasma-mobile.desktop
+# ---------------------------------------------------------------------------
+# 6. Overlays, then GRUB
+# ---------------------------------------------------------------------------
+# Overlays first: they contain /etc/default/grub.d/tvpc.cfg, so running
+# update-grub before this (as the old script did) meant the kernel command line
+# never actually changed.
+if [[ -d "$REPO_ROOT/overlays" ]]; then
+  rsync -a --no-perms "$REPO_ROOT/overlays/" /
+  echo "Applied repo overlays from $REPO_ROOT/overlays"
+fi
 
-[Theme]
-Current=breeze
-EOF
-
-# 7. Force HDMI audio on boot (Broadwell HDMI, stereo-extra for 2013 Samsung)
-mkdir -p /etc/pipewire/pipewire-pulse.d
-cat >/etc/pipewire/pipewire-pulse.d/99-htpc.conf <<'EOF'
-# Force HDMI output (NUC7i5BNH Broadwell)
-# 'hdmi-stereo-extra' uses LPCM that 2013 Samsung TVs accept reliably
-# NOTE: This only sets the default sink name; actual card profile switching
-# happens via htpc-audio.service (systemd) which runs after pipewire starts.
-pulse.cmd = [
-  { cmd = "set-default-sink"  args = "alsa_output.pci-0000_00_1f.3.hdmi-stereo-extra" }
-]
-EOF
-
-# 8. Load i915 kernel module with GuC/HuC firmware for Broadwell HW decode
-cat >/etc/modules-load.d/i915.conf <<'EOF'
-i915
-EOF
-# Append kernel params robustly (handles empty/default lines, avoids duplicate params)
-if ! grep -q "i915.enable_guc" /etc/default/grub; then
-  sed -i 's/^GRUB_CMDLINE_LINUX_DEFAULT="[^"]*"$/GRUB_CMDLINE_LINUX_DEFAULT="quiet splash i915.enable_guc=2 intel_iommu=igfx_off"/' /etc/default/grub
+# Strip the old parameters from any /etc/default/grub edited by a previous run.
+if grep -q 'i915.enable_guc\|intel_iommu=igfx_off' /etc/default/grub 2>/dev/null; then
+  sed -i -e 's/ *i915\.enable_guc=[0-9-]*//g' -e 's/ *intel_iommu=igfx_off//g' /etc/default/grub
+  echo "Removed stale i915/IOMMU kernel parameters from /etc/default/grub"
 fi
 update-grub
 
-# 9. Power-on the Samsung TV + make NUC the active source at boot
-#    (There is no 'cec-daemon' systemd unit on Ubuntu; CEC is driven
-#    directly by cec-client in cec-tv-poweron.sh, so no Requires= here.)
-install -m 0755 "$REPO_ROOT/scripts/cec-tv-poweron.sh" /usr/local/bin/cec-tv-poweron.sh
+# ---------------------------------------------------------------------------
+# 7. Helper programs
+# ---------------------------------------------------------------------------
+install -m 0755 "$REPO_ROOT/scripts/cec-tv-poweron.sh"     /usr/local/bin/cec-tv-poweron.sh
+install -m 0755 "$REPO_ROOT/scripts/tvpc-hdmi-audio.sh"    /usr/local/bin/tvpc-hdmi-audio
+install -m 0755 "$REPO_ROOT/scripts/tvpc-display-setup.sh" /usr/local/bin/tvpc-display-setup
+install -m 0755 "$REPO_ROOT/scripts/tvpc-doctor.sh"        /usr/local/bin/tvpc-doctor
+install -m 0755 "$REPO_ROOT/scripts/tvpc-repair.sh"        /usr/local/bin/tvpc-repair
+install -m 0755 "$REPO_ROOT/scripts/tvpc-session.sh"       /usr/local/bin/tvpc-session
+install -m 0755 "$REPO_ROOT/scripts/tvpc-update.sh"        /usr/local/bin/tvpc-update
+
+# ---------------------------------------------------------------------------
+# 8. Session + autologin
+# ---------------------------------------------------------------------------
+# This verifies the session's .desktop file exists before writing autologin,
+# enables sddm, and switches the default systemd target to graphical.target
+# (an Ubuntu Server base defaults to multi-user.target, where a display
+# manager can be installed and enabled and still never start).
+"$REPO_ROOT/scripts/tvpc-session.sh" "${TVPC_SESSION:-auto}"
+
+# ---------------------------------------------------------------------------
+# 9. Audio: HDMI selection inside the user session
+# ---------------------------------------------------------------------------
+systemctl --global enable tvpc-audio.service 2>/dev/null || true
+
+# ---------------------------------------------------------------------------
+# 10. CEC: power on the TV and claim the HDMI input at boot
+# ---------------------------------------------------------------------------
 cat >/etc/systemd/system/htpc-startup.service <<'EOF'
 [Unit]
 Description=Power on Samsung TV via CEC and switch input
-After=multi-user.target pipewire.service network-online.target
+After=systemd-modules-load.service
 
 [Service]
 Type=oneshot
@@ -101,33 +225,46 @@ ExecStart=/usr/local/bin/cec-tv-poweron.sh
 RemainAfterExit=yes
 
 [Install]
-WantedBy=default.target
+WantedBy=multi-user.target
 EOF
 systemctl enable htpc-startup.service
 
-# 11. TLP + powertop auto-tune for NUC idle power (~6W)
-systemctl enable tlp.service
-powertop --auto-tune || true
+# ---------------------------------------------------------------------------
+# 11. Power, swap, indexers
+# ---------------------------------------------------------------------------
+systemctl enable tlp.service 2>/dev/null || true
+powertop --auto-tune >/dev/null 2>&1 || true
 
-# 12. ZRAM swap (silent, fast; better than disk swap on NUC SSD)
 cat >/etc/default/zramswap <<'EOF'
 ALGO=zstd
 PERCENT=50
 PRIORITY=100
 EOF
-systemctl enable --now zramswap
+systemctl enable --now zramswap 2>/dev/null || true
 
-# 13. Disable trackers / indexers (reduces SSD writes + CPU)
-systemctl disable --now tracker-miner-fs-3.service 2>/dev/null || true
-systemctl mask    tracker-miner-fs-3.service 2>/dev/null || true
-systemctl disable --now tracker-store.service     2>/dev/null || true
-systemctl mask    tracker-store.service     2>/dev/null || true
+for unit in tracker-miner-fs-3.service tracker-store.service; do
+  systemctl disable --now "$unit" 2>/dev/null || true
+  systemctl mask "$unit" 2>/dev/null || true
+done
 
-# 14. Auto-update Flatpaks weekly (timer + service)
-mkdir -p /etc/systemd/system/flatpak-user-update.timer.d
-cat >/etc/systemd/system/flatpak-user-update.timer <<'EOF'
+# ---------------------------------------------------------------------------
+# 12. Maintenance
+# ---------------------------------------------------------------------------
+dpkg-reconfigure -f noninteractive unattended-upgrades || true
+
+cat >/etc/systemd/system/flatpak-update.service <<'EOF'
 [Unit]
-Description=Weekly Flatpak auto-update timer for HTPC user
+Description=Update Flatpak applications
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/flatpak update --noninteractive --assumeyes
+EOF
+cat >/etc/systemd/system/flatpak-update.timer <<'EOF'
+[Unit]
+Description=Weekly Flatpak update
 
 [Timer]
 OnCalendar=Sun 04:00
@@ -136,68 +273,74 @@ Persistent=true
 [Install]
 WantedBy=timers.target
 EOF
-cat >/etc/systemd/system/flatpak-user-update.service <<'EOF'
-[Unit]
-Description=Weekly Flatpak update for HTPC user
+# The old unit pair was named flatpak-user-update and the timer was enabled
+# without its service ever being installed.
+systemctl disable --now flatpak-user-update.timer 2>/dev/null || true
+rm -f /etc/systemd/system/flatpak-user-update.{timer,service}
+rm -rf /etc/systemd/system/flatpak-user-update.timer.d
+systemctl daemon-reload
+systemctl enable --now flatpak-update.timer
 
-[Service]
-Type=oneshot
-ExecStart=flatpak update --noninteractive
-EOF
-systemctl enable --now flatpak-user-update.timer
-systemctl enable flatpak-user-update.service
+systemctl restart systemd-logind 2>/dev/null || true
 
-# 15. Boot-time lid/sleep hardening
-sed -i 's/^#HandleLidSwitch=.*/HandleLidSwitch=ignore/' /etc/systemd/logind.conf
-sed -i 's/^#HandleLidSwitchExternalPower=.*/HandleLidSwitchExternalPower=ignore/' /etc/systemd/logind.conf
-sed -i 's/^#HandleLidSwitchDocked=.*/HandleLidSwitchDocked=ignore/' /etc/systemd/logind.conf
-systemctl restart systemd-logind
+# ---------------------------------------------------------------------------
+# 13. Extras
+# ---------------------------------------------------------------------------
+for extra in install-extras.sh enhance-cec.sh customize.sh; do
+  if [[ -x "$REPO_ROOT/scripts/$extra" ]]; then
+    echo "== Running $extra =="
+    "$REPO_ROOT/scripts/$extra" || echo "!! $extra reported an error (continuing)"
+  fi
+done
 
-# 16. Unattended security upgrades
-apt-get install -y unattended-upgrades
-dpkg-reconfigure -f noninteractive unattended-upgrades
-
-# 17. Apply repo-local overrides (configs, desktop files, wallpapers, etc.)
-if [[ -d "$REPO_ROOT/overlays" ]]; then
-  rsync -a --no-perms "$REPO_ROOT/overlays/" /
-  echo "Applied repo overlays from $REPO_ROOT/overlays"
-fi
-
-# 18. Enable custom services from overlays
-if [[ -d "$REPO_ROOT/overlays/etc/systemd/system" ]]; then
-  for service in "$REPO_ROOT/overlays/etc/systemd/system/"*.service; do
-    [[ -e "$service" ]] || continue
-    name=$(basename "$service")
-    cp "$service" "/etc/systemd/system/$name"
-    systemctl enable "$name" 2>/dev/null || true
-  done
-  echo "Enabled systemd services from overlays"
-fi
-
-# 19. Run post-install extras (HW decode verification, NUC tuneables)
-if [[ -x "$REPO_ROOT/scripts/install-extras.sh" ]]; then
-  "$REPO_ROOT/scripts/install-extras.sh" || true
-fi
-
-# 19b. Enhanced CEC remote mapping (playerctl + ydotool, Wayland-safe)
-if [[ -x "$REPO_ROOT/scripts/enhance-cec.sh" ]]; then
-  "$REPO_ROOT/scripts/enhance-cec.sh" || true
-fi
-
-# 19c. Apply UI/theme tweaks (Plasma Mobile scaling, favorites, autostart)
-if [[ -x "$REPO_ROOT/scripts/customize.sh" ]]; then
-  "$REPO_ROOT/scripts/customize.sh" || true
-fi
-
-# 20. Final message
-echo "=== tvpc installer finished $(date) ==="
-echo "Reboot now:  sudo reboot"
-echo "After reboot you'll land on the Plasma Mobile home screen."
-echo "VacuumTube is in the app drawer; pin it to favorites."
-echo "Default user: htpc / htpc  (change password!)"
+# ---------------------------------------------------------------------------
+# 14. Verify the machine can actually reach a desktop
+# ---------------------------------------------------------------------------
 echo
-echo "Quick checks after reboot:"
-echo "  vainfo                          # verify Broadwell VA-API"
-echo "  pactl list sinks               # confirm HDMI is default"
-echo "  systemctl status htpc-startup   # CEC power-on"
-echo "  systemctl status htpc-audio     # HDMI audio profile"
+echo "=== Pre-reboot verification ==="
+PROBLEMS=0
+check() { if eval "$2" >/dev/null 2>&1; then echo "  OK    $1"; else echo "  FAIL  $1"; PROBLEMS=$((PROBLEMS+1)); fi; }
+
+check "sddm installed"                 "command -v sddm"
+check "sddm enabled"                   "systemctl is-enabled sddm"
+check "default target is graphical"    "[[ \$(systemctl get-default) == graphical.target ]]"
+check "autologin config written"       "[[ -f /etc/sddm.conf.d/10-tvpc.conf ]]"
+check "user $HTPC_USER exists"         "id $HTPC_USER"
+check "no stale Xorg intel config"     "[[ ! -f /etc/X11/xorg.conf.d/20-intel.conf ]]"
+
+# `ls a b c d` returns non-zero as soon as ONE path is missing, and the session
+# file lives in exactly one of these four directories — so test them one by one.
+session_installed() {
+  local name="$1" d
+  for d in /usr/local/share/wayland-sessions /usr/share/wayland-sessions \
+           /usr/local/share/xsessions /usr/share/xsessions; do
+    [[ -f "$d/$name" ]] && return 0
+  done
+  return 1
+}
+
+SESSION_NAME="$(awk -F= '/^Session=/{print $2}' /etc/sddm.conf.d/10-tvpc.conf 2>/dev/null || true)"
+if [[ -n $SESSION_NAME ]] && session_installed "$SESSION_NAME"; then
+  echo "  OK    session file present ($SESSION_NAME)"
+else
+  echo "  FAIL  session file missing ($SESSION_NAME)"
+  PROBLEMS=$((PROBLEMS+1))
+fi
+
+echo
+echo "=== tvpc installer finished $(date) ==="
+if [[ $PROBLEMS -gt 0 ]]; then
+  echo "$PROBLEMS check(s) failed — fix these before rebooting, or you will get a"
+  echo "black screen again. Diagnose with:  sudo tvpc-repair --check"
+  exit 1
+fi
+
+echo "All checks passed. Reboot:  sudo reboot"
+echo
+echo "After reboot you land on the Plasma desktop as '$HTPC_USER'."
+echo "VacuumTube starts automatically; the app launcher has the rest."
+echo "Default password is 'htpc' — change it with: passwd"
+echo
+echo "Keep it in shape:         sudo tvpc-update   (converge + update)"
+echo "If anything looks wrong:  tvpc-doctor        (health check)"
+echo "If the screen is black:   sudo tvpc-repair   (from a TTY or over SSH)"

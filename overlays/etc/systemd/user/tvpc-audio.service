@@ -1,0 +1,15 @@
+[Unit]
+Description=tvpc: route audio to the TV over HDMI
+# A *user* unit: PipeWire runs in the user session, so the old system-level
+# service had no PipeWire to talk to and never worked.
+After=pipewire-pulse.service wireplumber.service
+Wants=pipewire-pulse.service
+PartOf=graphical-session.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/tvpc-hdmi-audio
+RemainAfterExit=yes
+
+[Install]
+WantedBy=default.target

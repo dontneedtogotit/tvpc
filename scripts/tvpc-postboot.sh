@@ -1,152 +1,89 @@
 #!/usr/bin/env bash
-# tvpc-postboot.sh - Run after first boot into Plasma Mobile to enable SSH, fix Wi-Fi, and polish
-# 
-# Usage: sudo ./tvpc-postboot.sh
+# tvpc-postboot.sh — run once after the first boot: SSH, Wi-Fi, polish.
+# Usage: sudo ./scripts/tvpc-postboot.sh
 set -euo pipefail
+
+[[ $EUID -eq 0 ]] || { echo "Run as root (sudo $0)"; exit 1; }
+
+# shellcheck source=/dev/null
+if [[ -r /etc/default/tvpc ]]; then . /etc/default/tvpc; fi
+HTPC_USER="${TVPC_USER:-htpc}"
 
 echo "=== tvpc post-boot configuration ==="
 
-# 1. Enable SSH server
-echo "[1/4] Enabling SSH server..."
+# ---------------------------------------------------------------------------
+echo "[1/4] SSH"
 if ! command -v sshd >/dev/null 2>&1; then
-    apt-get update
-    apt-get install -y openssh-server
+  apt-get update
+  DEBIAN_FRONTEND=noninteractive apt-get install -y openssh-server
 fi
-systemctl enable ssh
-systemctl start ssh
-echo "SSH enabled on port 22"
-echo "To connect from your laptop: ssh htpc@<nuc-ip-address>"
-echo "Default password: htpc (change it immediately!)"
+systemctl enable --now ssh
+echo "  SSH listening on port 22 — ssh $HTPC_USER@<nuc-ip>"
 
-# 2. Check and fix Wi-Fi if needed
-echo ""
-echo "[2/4] Checking Wi-Fi status..."
+# ---------------------------------------------------------------------------
+echo "[2/4] Wi-Fi"
 if command -v nmcli >/dev/null 2>&1; then
-    # NetworkManager is available
-    wifi_dev=$(nmcli device status | grep wifi | awk '{print $1}' || echo "")
-    if [[ -n "$wifi_dev" ]]; then
-        echo "Wi-Fi device found: $wifi_dev"
-        # Check if it's managed
-        if nmcli device show "$wifi_dev" | grep -q "STATE:\s*unmanaged"; then
-            echo "Wi-Fi device is unmanaged, making it managed..."
-            nmcli device set "$wifi_dev" managed yes
-        fi
-        
-        # Check if radio is on
-        if nmcli radio wifi | grep -q "disabled"; then
-            echo "Enabling Wi-Fi radio..."
-            nmcli radio wifi on
-        fi
-        
-        # List available networks
-        echo "Scanning for Wi-Fi networks..."
-        nmcli device wifi list
-        
-        echo ""
-        echo "To connect to Wi-Fi:"
-        echo "  nmcli device wifi list"
-        echo "  nmcli device wifi connect '<SSID>' password '<password>'"
-    else
-        echo "No Wi-Fi device detected by NetworkManager"
-        # Check if it's a driver issue
-        lspci | grep -i network || true
-        lsusb | grep -i network || true
-        echo ""
-        echo "If you see a wireless device above but it's not working,"
-        echo "you may need to install additional firmware:"
-        echo "  sudo apt-get install linux-firmware"
+  wifi_dev="$(nmcli -t -f DEVICE,TYPE device status 2>/dev/null | awk -F: '$2=="wifi"{print $1; exit}')"
+  if [[ -n ${wifi_dev:-} ]]; then
+    echo "  Wi-Fi device: $wifi_dev"
+    if nmcli -t -f DEVICE,STATE device status | grep -q "^$wifi_dev:unmanaged"; then
+      echo "  device was unmanaged; handing it to NetworkManager"
+      nmcli device set "$wifi_dev" managed yes || true
     fi
+    nmcli radio wifi | grep -q disabled && nmcli radio wifi on || true
+    nmcli device wifi list || true
+    echo
+    echo "  Connect with:"
+    echo "    nmcli device wifi connect '<SSID>' password '<password>'"
+  else
+    echo "  No Wi-Fi device found. Hardware present?"
+    lspci | grep -i network || true
+    echo "  If a device is listed but missing here: sudo apt-get install linux-firmware"
+  fi
 else
-    echo "NetworkManager not found, checking with ip link..."
-    ip link show | grep -i wireless || echo "No wireless interfaces visible"
-    echo ""
-    echo "To install NetworkManager and Wi-Fi tools:"
-    echo "  sudo apt-get update"
-    echo "  sudo apt-get install network-manager"
+  echo "  NetworkManager not installed: sudo apt-get install network-manager"
 fi
 
-# 3. Install any missing firmware/packages
-echo ""
-echo "[3/4] Checking for recommended packages..."
-# These are commonly needed for HTPC functionality
-recommended_packages="\
-    pavucontrol \
-    vim \
-    htop \
-    git \
-    curl \
-    wget \
-    "
-
-# Check which ones are missing
-missing_pkgs=""
-for pkg in $recommended_packages; do
-    if ! dpkg -l | grep -q "^ii\s*$pkg"; then
-        missing_pkgs="$missing_pkgs $pkg"
-    fi
+# ---------------------------------------------------------------------------
+echo "[3/4] Recommended packages"
+# `dpkg -l | grep "^ii\s*$pkg"` matched on a prefix, so "git" counted as
+# installed whenever git-man was. dpkg-query asks about the exact package.
+missing=()
+for pkg in pavucontrol vim htop git curl wget; do
+  dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null | grep -q "install ok installed" || missing+=("$pkg")
 done
-
-if [[ -n "$missing_pkgs" ]]; then
-    echo "Installing recommended packages: $missing_pkgs"
-    apt-get update
-    apt-get install -y $missing_pkgs
+if [[ ${#missing[@]} -gt 0 ]]; then
+  echo "  Installing: ${missing[*]}"
+  apt-get update
+  DEBIAN_FRONTEND=noninteractive apt-get install -y "${missing[@]}"
 else
-    echo "All recommended packages already installed"
+  echo "  All present"
 fi
 
-# 4. Final polishing
-echo ""
-echo "[4/4] Applying final polish..."
-
-# Change default password (important for security!)
-echo ""
-echo "===== IMPORTANT: Change default password ====="
-echo "The default password for user 'htpc' is currently 'htpc'"
-echo "You should change it immediately for security:"
-echo "  passwd"
-echo ""
-
-# Force a password change on next login (appliance hardening)
-if id htpc >/dev/null 2>&1; then
-    chage -d 0 htpc 2>/dev/null && echo "Forced password change for 'htpc' on next login." || true
-fi
-
-# Enable automatic updates if not already done
+# ---------------------------------------------------------------------------
+echo "[4/4] Polish"
 if ! systemctl is-enabled unattended-upgrades >/dev/null 2>&1; then
-    echo "Enabling automatic security updates..."
-    dpkg-reconfigure -plow unattended-upgrades
+  dpkg-reconfigure -f noninteractive unattended-upgrades || true
+fi
+command -v powertop >/dev/null 2>&1 && powertop --auto-tune >/dev/null 2>&1 || true
+
+# NOTE: this script used to run `chage -d 0 htpc`, which expires the password
+# and forces a change at next login. On a box that autologins into a desktop
+# that is not hardening — PAM blocks the autologin on the expired password and
+# you are back to staring at a black screen. Change the password directly
+# instead; it is a one-off, and it happens now rather than at boot.
+echo
+echo "  The default password for '$HTPC_USER' is 'htpc'. Change it now:"
+if [[ -t 0 ]]; then
+  passwd "$HTPC_USER" || echo "  (skipped — run 'sudo passwd $HTPC_USER' later)"
+else
+  echo "    sudo passwd $HTPC_USER"
 fi
 
-# Optimize power settings for NUC
-if command -v powertop >/dev/null 2>&1; then
-    echo "Applying power optimizations..."
-    powertop --auto-tune || true
-fi
-
-# Ensure VacuumTube is set to use VA-API
-echo ""
-echo "To ensure VacuumTube uses hardware video decode:"
-echo "  Edit the VacuumTube shortcut to add:"
-echo "    --enable-features=VaapiVideoDecoder --use-gl=egl"
-echo "Or run it manually with:"
-echo "    flatpak run io.github.vacuumtube.VacuumTube --enable-features=VaapiVideoDecoder"
-
-# Final instructions
-echo ""
+echo
 echo "=== Post-boot configuration complete ==="
-echo ""
-echo "Next steps:"
-echo "1. Change your password: passwd"
-echo "2. Connect to Wi-Fi (if needed):"
-echo "   nmcli device wifi list"
-echo "   nmcli device wifi connect '<SSID>' password '<password>'"
-echo "3. From your laptop, connect via SSH:"
-echo "   ssh htpc@<nuc-ip-address>"
-echo "4. Enjoy your HTPC!"
-echo ""
-echo "Useful commands:"
-echo "  ./scripts/tvpc-doctor.sh   # Full health check (audio/CEC/GPU/network)"
-echo "  sudo ./scripts/enhance-cec.sh   # Samsung remote button mapping (Wayland-safe)"
-echo "  sudo ./scripts/customize.sh     # Re-apply UI tweaks"
-echo "  vainfo                     # Check VA-API status"
-echo "  pactl list sinks           # Check audio output"
+echo
+echo "  tvpc-doctor                     full health check"
+echo "  sudo tvpc-repair --check        diagnose a black screen"
+echo "  sudo ./scripts/enhance-cec.sh   Samsung remote button mapping"
+echo "  sudo ./scripts/customize.sh     re-apply UI tweaks"
