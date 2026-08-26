@@ -38,14 +38,18 @@ if [[ ! -f /etc/default/tvpc-led ]] && command -v i2ctransfer >/dev/null 2>&1; t
   echo "NUC LED off attempted (disable: touch /etc/default/tvpc-led)"
 fi
 
-# 4. NetworkManager: prefer wired, disable Wi-Fi (NUC has no Wi-Fi card by default)
-#    Create wired connection if none exists
+# 4. NetworkManager: leave Wi-Fi ON by default.
+#    The NUC7i5BNH has Intel Wireless-AC 8265; many setups are Wi-Fi-only.
+#    Set TVPC_WIRED_ONLY=1 to power down the Wi-Fi radio (wired-only installs).
 if command -v nmcli >/dev/null 2>&1; then
-  if ! nmcli -t -f TYPE,STATE con show | grep -q "ethernet:activated"; then
-    nmcli con add type ethernet ifname eno1 con-name "NUC-Wired" ipv4.method auto 2>/dev/null || true
+  if ! nmcli -t -f TYPE,STATE con show 2>/dev/null | grep -q "ethernet:activated"; then
+    nmcli con add type ethernet ifname "*" con-name "NUC-Wired" ipv4.method auto 2>/dev/null || true
   fi
-  # Disable Wi-Fi radio if no adapters detected (avoids radio noise / power waste)
-  nmcli radio wifi off 2>/dev/null || true
+  if [[ "${TVPC_WIRED_ONLY:-0}" == "1" ]]; then
+    nmcli radio wifi off 2>/dev/null || true
+  else
+    nmcli radio wifi on 2>/dev/null || true
+  fi
 fi
 
 # 5. Volume step size: Samsung remote sends large jumps → use 2% increments
