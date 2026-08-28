@@ -96,8 +96,29 @@ if ! apt-cache policy plasma-bigscreen 2>/dev/null | grep -q 'Candidate: [^(]'; 
 fi
 
 if ! apt-cache policy plasma-bigscreen 2>/dev/null | grep -q 'Candidate: [^(]'; then
-  echo "!! No installable plasma-bigscreen for this release." >&2
-  echo "   Check: apt-cache policy plasma-bigscreen" >&2
+  # Show the diagnosis rather than asking for it. plasma-bigscreen lives in
+  # the noble RELEASE pocket (noble/universe), not noble-updates, so having
+  # universe on noble-updates alone is not enough — and that is exactly the
+  # state add-apt-repository can leave behind when sources are split across
+  # sources.list and a deb822 .sources file.
+  echo >&2
+  echo "!! No installable plasma-bigscreen." >&2
+  echo >&2
+  echo "   apt-cache policy says:" >&2
+  apt-cache policy plasma-bigscreen 2>&1 | sed 's/^/     /' >&2
+  echo >&2
+  echo "   Enabled components (need 'universe' on the plain 'noble' suite," >&2
+  echo "   not just noble-updates):" >&2
+  {
+    grep -rhs -E '^(deb|Components|Suites|URIs)' \
+      /etc/apt/sources.list /etc/apt/sources.list.d/ 2>/dev/null \
+      | grep -v '^\s*#'
+  } | sed 's/^/     /' >&2
+  echo >&2
+  echo "   If 'universe' is missing from the noble suite, add it:" >&2
+  echo "     sudo sed -i 's/^Components: main restricted$/Components: main restricted universe multiverse/' \\" >&2
+  echo "       /etc/apt/sources.list.d/ubuntu.sources" >&2
+  echo "     sudo apt-get update" >&2
   exit 1
 fi
 
