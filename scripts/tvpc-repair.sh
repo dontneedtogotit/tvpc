@@ -230,6 +230,35 @@ if id "$HTPC_USER" >/dev/null 2>&1; then
       ok "config ownership is correct"
     fi
   fi
+  # An expired password blocks autologin outright. PAM answers SDDM with
+  # "you are required to change your password immediately", SDDM has no way
+  # to run an interactive password change from an autologin, and the screen
+  # stays black — with every other check on this page reporting OK.
+  #
+  # sp_lstchg (field 3 of /etc/shadow) == 0 means "must change at next
+  # login". That is what `chage -d 0` sets, which an old version of
+  # tvpc-postboot.sh used to run.
+  LSTCHG="$(awk -F: -v u="$HTPC_USER" '$1 == u { print $3 }' /etc/shadow 2>/dev/null)"
+  if [[ $LSTCHG == 0 ]]; then
+    bad "password for $HTPC_USER is expired — PAM will refuse the autologin"
+    note "this looks exactly like a boot failure: SDDM starts, PAM says the"
+    note "password must be changed, and nothing ever appears on the TV"
+    if ! dry; then
+      chage -d "$(date +%Y-%m-%d)" "$HTPC_USER" && did "cleared the forced password change"
+    fi
+  else
+    ok "password for $HTPC_USER is not expired"
+  fi
+
+  # A maximum age will re-expire it later, turning this into a box that
+  # boots fine for N days and then goes black for no visible reason.
+  MAXDAYS="$(awk -F: -v u="$HTPC_USER" '$1 == u { print $5 }' /etc/shadow 2>/dev/null)"
+  if [[ -n $MAXDAYS && $MAXDAYS =~ ^[0-9]+$ && $MAXDAYS -lt 3650 ]]; then
+    bad "password for $HTPC_USER expires every $MAXDAYS days — it will black-screen again"
+    if ! dry; then
+      chage -M -1 "$HTPC_USER" && did "removed the password expiry interval"
+    fi
+  fi
 else
   bad "user $HTPC_USER does not exist — autologin cannot succeed"
 fi

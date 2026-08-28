@@ -60,6 +60,15 @@ else
 fi
 loginctl list-sessions --no-legend 2>/dev/null | grep -q . \
   && ok "user session present" || bad "no user sessions"
+
+# An expired password blocks the autologin and looks exactly like a boot
+# failure — every other check here can pass while the TV stays black.
+if [[ "$(awk -F: -v u="$HTPC_USER" '$1 == u { print $3 }' /etc/shadow 2>/dev/null)" == 0 ]]; then
+  bad "password for $HTPC_USER is expired — PAM refuses the autologin"
+  echo "      fix: sudo chage -d \$(date +%Y-%m-%d) $HTPC_USER"
+else
+  ok "password for $HTPC_USER is not expired"
+fi
 for c in /sys/class/drm/card*-HDMI-A-*/status; do
   [[ -e $c ]] || continue
   s="$(cat "$c")"

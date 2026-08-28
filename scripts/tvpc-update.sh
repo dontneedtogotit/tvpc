@@ -42,7 +42,7 @@ NEEDS_REBOOT=0
 # ---------------------------------------------------------------------------
 ITEMS=(
   "config|0|/etc/default/tvpc exists"
-  "user|0|user '$HTPC_USER' exists and is in the right groups"
+  "user|0|user '$HTPC_USER' exists, is in the right groups and can log in"
   "badfiles|0|configuration known to break the display is absent"
   "helpers|1|helper programs in /usr/local/bin match the repo"
   "overlays|1|files under overlays/ are applied to /"
@@ -99,6 +99,10 @@ check_user() {
   for g in video render audio input; do
     id -nG "$HTPC_USER" | grep -qw "$g" || return 1
   done
+  # Being in the right groups is no use if PAM will not let the account log
+  # in. sp_lstchg == 0 means "must change password at next login", which
+  # blocks autologin and shows up as a black screen.
+  [[ "$(awk -F: -v u="$HTPC_USER" '$1 == u { print $3 }' /etc/shadow 2>/dev/null)" != 0 ]]
 }
 fix_user() {
   id "$HTPC_USER" >/dev/null 2>&1 || useradd -m -s /bin/bash "$HTPC_USER" || return 1
