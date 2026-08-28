@@ -23,9 +23,9 @@ fi
 
 echo "== VA-API =="
 if command -v vainfo >/dev/null; then
-  if LIBVA_DRIVER_NAME=iHD vainfo 2>/dev/null | grep -q VAEntrypoint; then
+  if LIBVA_DRIVER_NAME=iHD vainfo 2>/dev/null | grep VAEntrypoint >/dev/null; then
     echo "  VA-API OK via iHD"
-  elif vainfo 2>/dev/null | grep -q VAEntrypoint; then
+  elif vainfo 2>/dev/null | grep VAEntrypoint >/dev/null; then
     echo "  VA-API OK via the default driver"
   else
     echo "  VA-API probe failed (expected before the first reboot)"

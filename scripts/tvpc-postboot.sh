@@ -26,11 +26,11 @@ if command -v nmcli >/dev/null 2>&1; then
   wifi_dev="$(nmcli -t -f DEVICE,TYPE device status 2>/dev/null | awk -F: '$2=="wifi"{print $1; exit}')"
   if [[ -n ${wifi_dev:-} ]]; then
     echo "  Wi-Fi device: $wifi_dev"
-    if nmcli -t -f DEVICE,STATE device status | grep -q "^$wifi_dev:unmanaged"; then
+    if nmcli -t -f DEVICE,STATE device status | grep "^$wifi_dev:unmanaged" >/dev/null; then
       echo "  device was unmanaged; handing it to NetworkManager"
       nmcli device set "$wifi_dev" managed yes || true
     fi
-    nmcli radio wifi | grep -q disabled && nmcli radio wifi on || true
+    nmcli radio wifi | grep disabled >/dev/null && nmcli radio wifi on || true
     nmcli device wifi list || true
     echo
     echo "  Connect with:"
@@ -50,7 +50,7 @@ echo "[3/4] Recommended packages"
 # installed whenever git-man was. dpkg-query asks about the exact package.
 missing=()
 for pkg in pavucontrol vim htop git curl wget; do
-  dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null | grep -q "install ok installed" || missing+=("$pkg")
+  dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null | grep "install ok installed" >/dev/null || missing+=("$pkg")
 done
 if [[ ${#missing[@]} -gt 0 ]]; then
   echo "  Installing: ${missing[*]}"

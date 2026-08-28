@@ -27,7 +27,7 @@ install -d /etc/modules-load.d
 echo uinput >/etc/modules-load.d/uinput.conf
 
 groupadd -f uinput
-id -nG "$HTPC_USER" | grep -qw uinput || usermod -aG uinput "$HTPC_USER"
+id -nG "$HTPC_USER" | grep -w uinput >/dev/null || usermod -aG uinput "$HTPC_USER"
 
 cat >/etc/udev/rules.d/80-uinput.rules <<'EOF'
 KERNEL=="uinput", SUBSYSTEM=="misc", MODE="0660", GROUP="uinput", OPTIONS+="static_node=uinput"

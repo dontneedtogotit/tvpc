@@ -97,7 +97,7 @@ check_user() {
   id "$HTPC_USER" >/dev/null 2>&1 || return 1
   local g
   for g in video render audio input; do
-    id -nG "$HTPC_USER" | grep -qw "$g" || return 1
+    id -nG "$HTPC_USER" | grep -w "$g" >/dev/null || return 1
   done
   # Being in the right groups is no use if PAM will not let the account log
   # in. sp_lstchg == 0 means "must change password at next login", which
@@ -163,7 +163,7 @@ fix_helpers() {
 when_bigscreen() { [[ "${TVPC_SESSION:-}" == bigscreen || "${TVPC_SESSION:-}" == bigscreen-x11 ]]; }
 check_bigscreen() {
   dpkg-query -W -f='${Status}' plasma-bigscreen 2>/dev/null \
-    | grep -q "^install ok installed$" || return 1
+    | grep "^install ok installed$" >/dev/null || return 1
   [[ -f /usr/share/wayland-sessions/plasma-bigscreen-wayland.desktop ]] || return 1
   [[ -f /usr/share/xsessions/plasma-bigscreen-x11.desktop ]] || return 1
 }
@@ -298,7 +298,7 @@ fix_tlp()             { systemctl enable tlp >/dev/null 2>&1; }
 check_flatpak_timer() { systemctl is-enabled flatpak-update.timer >/dev/null 2>&1; }
 fix_flatpak_timer()   { systemctl enable --now flatpak-update.timer >/dev/null 2>&1; }
 
-check_flathub() { flatpak remotes 2>/dev/null | grep -q flathub; }
+check_flathub() { flatpak remotes 2>/dev/null | grep flathub >/dev/null; }
 fix_flathub()   { flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo; }
 
 check_vacuumtube() { flatpak info io.github.vacuumtube.VacuumTube >/dev/null 2>&1; }

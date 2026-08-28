@@ -42,12 +42,29 @@ X11_SESSION=/usr/share/xsessions/plasma-bigscreen-x11.desktop
 ok()  { echo "  ok    $*"; }
 bad() { echo "  MISS  $*"; }
 
+# apt-cache policy piped into `grep -q` is a trap under `set -o pipefail`:
+# grep exits the moment it matches, apt-cache dies on SIGPIPE, and pipefail
+# promotes that failure to the whole pipeline — so the test reports "no
+# candidate" precisely BECAUSE it found one. Capture the output instead.
+apt_has_candidate() {
+  local policy
+  policy="$(apt-cache policy "$1" 2>/dev/null)" || return 1
+  [[ $policy == *"Candidate:"* ]] || return 1
+  [[ $policy != *"Candidate: (none)"* ]]
+}
+
+pkg_installed() {
+  local st
+  st="$(dpkg-query -W -f='${Status}' "$1" 2>/dev/null)" || return 1
+  [[ $st == "install ok installed" ]]
+}
+
 # ---------------------------------------------------------------------------
 # --check
 # ---------------------------------------------------------------------------
 if [[ $MODE == check ]]; then
   echo "== Plasma Bigscreen =="
-  if dpkg-query -W -f='${Status}' plasma-bigscreen 2>/dev/null | grep -q "^install ok installed$"; then
+  if pkg_installed plasma-bigscreen; then
     ok "plasma-bigscreen $(dpkg-query -W -f='${Version}' plasma-bigscreen 2>/dev/null)"
   else
     bad "plasma-bigscreen not installed"
@@ -87,7 +104,7 @@ export DEBIAN_FRONTEND=noninteractive
 
 # plasma-bigscreen lives in universe. On a stock Ubuntu Server that is
 # already enabled; on a trimmed sources list it may not be.
-if ! apt-cache policy plasma-bigscreen 2>/dev/null | grep -q 'Candidate: [^(]'; then
+if ! apt_has_candidate plasma-bigscreen; then
   echo "== Enabling the universe component =="
   if command -v add-apt-repository >/dev/null 2>&1; then
     add-apt-repository -y universe || true
@@ -95,7 +112,7 @@ if ! apt-cache policy plasma-bigscreen 2>/dev/null | grep -q 'Candidate: [^(]'; 
   apt-get update
 fi
 
-if ! apt-cache policy plasma-bigscreen 2>/dev/null | grep -q 'Candidate: [^(]'; then
+if ! apt_has_candidate plasma-bigscreen; then
   # Show the diagnosis rather than asking for it. plasma-bigscreen lives in
   # the noble RELEASE pocket (noble/universe), not noble-updates, so having
   # universe on noble-updates alone is not enough — and that is exactly the

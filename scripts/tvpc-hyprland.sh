@@ -43,6 +43,22 @@ PPA_ORIGIN="LP-PPA-cppiber-hyprland"
 PIN_FILE="/etc/apt/preferences.d/90-tvpc-hyprland"
 SESSION_DESKTOP="/usr/share/wayland-sessions/tvpc-hypr.desktop"
 
+# See the note in tvpc-bigscreen.sh: `cmd | grep -q` under pipefail reports
+# failure when grep matches early and the producer dies on SIGPIPE. That is
+# especially bad for bare `apt-cache policy`, whose output is megabytes.
+apt_has_candidate() {
+  local policy
+  policy="$(apt-cache policy "$1" 2>/dev/null)" || return 1
+  [[ $policy == *"Candidate:"* ]] || return 1
+  [[ $policy != *"Candidate: (none)"* ]]
+}
+
+ppa_configured() {
+  local policy
+  policy="$(apt-cache policy 2>/dev/null)" || return 1
+  [[ $policy == *"$PPA_ORIGIN"* ]]
+}
+
 ok()   { echo "  ok    $*"; }
 bad()  { echo "  MISS  $*"; }
 info() { echo "== $* =="; }
@@ -60,7 +76,7 @@ CONFIGS=(
 # ---------------------------------------------------------------------------
 if [[ $MODE == check ]]; then
   info "Hyprland session"
-  if apt-cache policy 2>/dev/null | grep -q "$PPA_ORIGIN"; then ok "PPA configured"; else bad "PPA not configured"; fi
+  if ppa_configured; then ok "PPA configured"; else bad "PPA not configured"; fi
   if [[ -f $PIN_FILE ]]; then ok "apt pin present ($PIN_FILE)"; else bad "apt pin missing"; fi
   if command -v Hyprland >/dev/null 2>&1 || command -v hyprland >/dev/null 2>&1; then
     ok "Hyprland installed: $( { Hyprland --version 2>/dev/null || hyprland --version 2>/dev/null; } | head -1)"
@@ -165,7 +181,7 @@ Pin-Priority: -1
 PIN
 ok "pin written to $PIN_FILE"
 
-if apt-cache policy 2>/dev/null | grep -q "$PPA_ORIGIN"; then
+if ppa_configured; then
   ok "PPA already configured"
 else
   command -v add-apt-repository >/dev/null 2>&1 || apt-get install -y software-properties-common
@@ -212,7 +228,7 @@ abandon() {
 # fonts before checking, so a failed Hyprland still dragged PPA builds of
 # shared libraries onto a working Plasma system — all of the risk, none of
 # the compositor.
-if ! apt-cache policy hyprland 2>/dev/null | grep -q 'Candidate: [^(]'; then
+if ! apt_has_candidate hyprland; then
   abandon "The PPA offers no installable 'hyprland' for this release."
 fi
 
