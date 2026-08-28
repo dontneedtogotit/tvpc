@@ -76,7 +76,7 @@ you want to leave alone.
 
 | Option | In 24.04? | What it is | Fit for a TV + remote |
 |--------|-----------|------------|-----------------------|
-| **Plasma Bigscreen** `plasma-bigscreen` 5.27.11 | yes | KDE's actual TV shell — big tiles, D-pad navigation | The closest thing to "Plasma Mobile, but for a TV". `tvpc-session.sh bigscreen` |
+| **Plasma Bigscreen** `plasma-bigscreen` 5.27.11 | yes | KDE's actual TV shell — big tiles, D-pad navigation | **The recommended shell here.** Archive-native, and the CEC remote drives it as-is. `tvpc-bigscreen.sh --switch` |
 | **Kodi** `kodi` 20.5 | yes | The classic 10-foot media centre, HDMI-CEC built in | Best remote experience by a distance, but it replaces the session rather than running inside one. Noble ships no Kodi session file, and no `kodi-gbm` / `kodi-standalone-service` |
 | **Phosh** `phosh` 0.38 | yes | GNOME's phone shell — the direct Plasma Mobile equivalent | Same problem as Plasma Mobile: built for touch. `tvpc-session.sh phosh` |
 | **Lomiri** `lomiri` 0.2.1 | yes | Ubuntu Touch's shell | Touch-first, niche on desktop hardware |
@@ -86,24 +86,79 @@ you want to leave alone.
 | **Weston** 13 | yes | Reference compositor with a kiosk shell | Works, but you get nothing else |
 | GNOME, XFCE, LXQt, Cinnamon, Budgie | yes | Conventional desktops | Same category as Plasma; no advantage here |
 
-Short version: if driving Plasma from the couch annoys you, try **Plasma
-Bigscreen** first —
+Short version: if driving Plasma from the couch annoys you, use **Plasma
+Bigscreen** —
 
 ```bash
-sudo apt install plasma-bigscreen
-sudo ./scripts/tvpc-session.sh bigscreen
+sudo ./scripts/tvpc-bigscreen.sh --switch
+sudo systemctl restart sddm
 ```
 
 — and **Kodi** if you want a real media centre and don't mind it owning the
-whole screen. For the Hyprland look, see the next section: it is a PPA away,
-and the config here reshapes it into a TV shell rather than a tiling desktop.
+whole screen. The Hyprland route exists further down, but read the warning
+on it first.
 
-Two honest caveats: Plasma Bigscreen 5.27 is lightly maintained upstream (it
-still carries Mycroft voice-assistant dependencies), and neither it nor Phosh
-has been tested on this hardware. Both are one command to try and one command
-to leave — `tvpc-session.sh plasma` puts you back.
+Two honest caveats: Plasma Bigscreen 5.27 is lightly maintained upstream, and
+neither it nor Phosh has been tested on this hardware. Both are one command to
+try and one command to leave — `tvpc-session.sh plasma` puts you back.
+
+(An earlier version of this file said Bigscreen "still carries Mycroft
+voice-assistant dependencies". That was wrong. It ships a
+`mycroft-skill-launcher` binary, but its `Depends` are only KDE Frameworks,
+Qt5, `plasma-workspace`, `plasma-nano` and `plasma-nm` — no voice assistant
+is pulled in.)
+
+### The Bigscreen session
+
+KDE's own TV shell, and the one to use. Big tiles, D-pad navigation, and it
+reads the plain arrow keys and Enter the CEC listener already sends — no key
+remapping, no custom launcher, nothing to tune.
+
+```bash
+sudo ./scripts/tvpc-bigscreen.sh --switch
+sudo systemctl restart sddm
+```
+
+`sudo tvpc-session plasma` puts you back, `bigscreen-x11` is there if Wayland
+misbehaves, and `sudo tvpc-bigscreen --remove` uninstalls it.
+
+**Why this is the low-risk option.** Everything comes from Ubuntu's universe
+archive at the same Plasma 5.27 already installed, so no library is swapped
+out from under the running desktop. `plasma-bigscreen` depends only on KDE
+Frameworks, Qt5, `plasma-workspace`, `plasma-nano` and `plasma-nm` — all
+already present or archive-native. The installer checks apt's exit status,
+then confirms both session files are actually on disk before it will switch
+anything, and `tvpc-session` independently refuses to point autologin at a
+session that is not there.
+
+Screen blanking is handled by `customize.sh`, which seeds
+`powermanagementprofilesrc` into both `/etc/skel` and the live user's home.
+`tvpc-bigscreen.sh` warns if that has not been run, because a TV that blanks
+after five minutes looks exactly like a boot failure.
 
 ### The Hyprland session
+
+> **Warning — this broke a working box.** On a real NUC the install failed and
+> left the machine at a black screen. Two defects: the installer discarded
+> `apt-get`'s exit status, and it checked for Hyprland only *after* installing
+> the bar, launcher and fonts. So a failed Hyprland still pulled PPA builds of
+> shared libraries onto a system whose Plasma was linked against Ubuntu's.
+>
+> Both are fixed — the PPA is now pinned to priority 100 so it can never
+> replace an already-installed Ubuntu package, Hyprland goes in first and
+> alone, and any failure backs the PPA out again. But the underlying tension
+> is real: Hyprland 0.56 wants newer core libraries than noble ships, and this
+> box's Plasma does not. **Use Bigscreen above.** If you want Hyprland
+> properly, Ubuntu 26.04 LTS packages it natively (0.53.3) and needs no PPA.
+>
+> Recovery, if you are reading this too late:
+> ```bash
+> sudo apt-get install -y ppa-purge
+> sudo ppa-purge ppa:cppiber/hyprland
+> sudo rm -f /etc/apt/preferences.d/90-tvpc-hyprland
+> sudo tvpc-session plasma && sudo systemctl restart sddm
+> ```
+
 
 A Plasma Mobile-shaped shell with Hyprland's look: one app fills the screen,
 a blurred status bar on top, a launcher on the menu button, and animations.

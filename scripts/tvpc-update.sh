@@ -59,6 +59,7 @@ ITEMS=(
   "flathub|0|flathub remote is configured"
   "vacuumtube|0|VacuumTube is installed"
   "user_config|0|the TV user's Plasma config is seeded"
+  "bigscreen|0|Plasma Bigscreen is installed with its session files"
   "hypr|1|Hyprland session files match the repo"
 )
 
@@ -134,6 +135,7 @@ HELPERS=(
   "scripts/tvpc-session.sh:/usr/local/bin/tvpc-session"
   "scripts/tvpc-update.sh:/usr/local/bin/tvpc-update"
   "scripts/tvpc-hyprland.sh:/usr/local/bin/tvpc-hyprland"
+  "scripts/tvpc-bigscreen.sh:/usr/local/bin/tvpc-bigscreen"
 )
 check_helpers() {
   local pair src dst
@@ -149,6 +151,20 @@ fix_helpers() {
     src="$REPO_ROOT/${pair%%:*}"; dst="${pair##*:}"
     [[ -f $src ]] && install -D -m 0755 "$src" "$dst"
   done
+}
+
+# --- Plasma Bigscreen -------------------------------------------------------
+# Archive-native, so unlike the Hyprland item this one is safe to fix
+# automatically: nothing here comes from outside Ubuntu.
+when_bigscreen() { [[ "${TVPC_SESSION:-}" == bigscreen || "${TVPC_SESSION:-}" == bigscreen-x11 ]]; }
+check_bigscreen() {
+  dpkg-query -W -f='${Status}' plasma-bigscreen 2>/dev/null \
+    | grep -q "^install ok installed$" || return 1
+  [[ -f /usr/share/wayland-sessions/plasma-bigscreen-wayland.desktop ]] || return 1
+  [[ -f /usr/share/xsessions/plasma-bigscreen-x11.desktop ]] || return 1
+}
+fix_bigscreen() {
+  DEBIAN_FRONTEND=noninteractive apt-get install -y plasma-bigscreen
 }
 
 # --- Hyprland session -------------------------------------------------------
