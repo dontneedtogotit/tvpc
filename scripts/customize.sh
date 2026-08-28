@@ -16,16 +16,23 @@ mkdir -p "$SKEL/.config" "$SKEL/.config/autostart"
 # Scaling is applied at runtime by tvpc-display-setup (TVPC_SCALE); larger
 # fonts are set here because they work regardless of scale and cannot take the
 # display down if they are wrong.
-cat >"$SKEL/.config/kdeglobals" <<'EOF'
+# The base font size is the master UI scale for anything Kirigami-based:
+# Kirigami.Units.gridUnit is derived from font metrics, so every margin and
+# tile in the shell scales with it. 13 suits plain Plasma on a TV. Plasma
+# Bigscreen is ALREADY a 10-foot UI sized around the 10pt default, so 13
+# there scales it twice and the interface does not fit the screen — set
+# TVPC_FONT_SIZE=10 (tvpc-bigscreen --ui-scale 10 does it for you).
+FONT_SIZE="${TVPC_FONT_SIZE:-13}"
+cat >"$SKEL/.config/kdeglobals" <<EOF
 [General]
 ColorScheme=BreezeDark
 Name=Breeze Dark
 widgetStyle=Breeze
-font=Noto Sans,13,-1,5,50,0,0,0,0,0
-fixed=Noto Sans Mono,12,-1,5,50,0,0,0,0,0
-menuFont=Noto Sans,13,-1,5,50,0,0,0,0,0
-smallestReadableFont=Noto Sans,11,-1,5,50,0,0,0,0,0
-toolBarFont=Noto Sans,12,-1,5,50,0,0,0,0,0
+font=Noto Sans,$FONT_SIZE,-1,5,50,0,0,0,0,0
+fixed=Noto Sans Mono,$((FONT_SIZE - 1)),-1,5,50,0,0,0,0,0
+menuFont=Noto Sans,$FONT_SIZE,-1,5,50,0,0,0,0,0
+smallestReadableFont=Noto Sans,$((FONT_SIZE - 2)),-1,5,50,0,0,0,0,0
+toolBarFont=Noto Sans,$((FONT_SIZE - 1)),-1,5,50,0,0,0,0,0
 
 [KDE]
 LookAndFeelPackage=org.kde.breezedark.desktop

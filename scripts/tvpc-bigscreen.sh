@@ -16,6 +16,12 @@
 #   sudo ./scripts/tvpc-bigscreen.sh --switch   install, then make it the session
 #   sudo ./scripts/tvpc-bigscreen.sh --check    report state, change nothing
 #   sudo ./scripts/tvpc-bigscreen.sh --remove   uninstall
+#
+# Tuning the shell once it is running:
+#   sudo ./scripts/tvpc-bigscreen.sh --ui-scale 10       shrink/grow the whole UI
+#   sudo ./scripts/tvpc-bigscreen.sh --list-apps         apps the home screen shows
+#   sudo ./scripts/tvpc-bigscreen.sh --hide firefox,vlc  drop apps from the home screen
+#   sudo ./scripts/tvpc-bigscreen.sh --show firefox      put one back
 set -uo pipefail
 
 if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
@@ -24,11 +30,16 @@ if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
 fi
 
 MODE=install
+ARG="${2:-}"
 case "${1:-}" in
-  --check)  MODE=check ;;
-  --switch) MODE=switch ;;
-  --remove) MODE=remove ;;
-  "")       ;;
+  --check)     MODE=check ;;
+  --switch)    MODE=switch ;;
+  --remove)    MODE=remove ;;
+  --list-apps) MODE=listapps ;;
+  --ui-scale)  MODE=uiscale ;;
+  --hide)      MODE=hide ;;
+  --show)      MODE=show ;;
+  "")          ;;
   *) echo "Unknown option '$1' (try --help)" >&2; exit 1 ;;
 esac
 
@@ -80,6 +91,124 @@ pkg_installed() {
   st="$(dpkg-query -W -f='${Status}' "$1" 2>/dev/null)" || return 1
   [[ $st == "install ok installed" ]]
 }
+
+# ---------------------------------------------------------------------------
+# Tuning helpers
+# ---------------------------------------------------------------------------
+user_home() { getent passwd "$HTPC_USER" | cut -d: -f6; }
+
+# Bigscreen filters the app list in ApplicationListModel::loadApplications():
+# it takes every KService application, drops Terminal=true ones, drops
+# anything with NoDisplay, and drops names listed in the "blacklist" key of
+# applications-blacklistrc. That last one is undocumented but it is the
+# supported way to take an app off the home screen.
+BLACKLIST_RC() { echo "$(user_home)/.config/applications-blacklistrc"; }
+
+read_blacklist() {
+  local rc; rc="$(BLACKLIST_RC)"
+  [[ -f $rc ]] || return 0
+  sed -n 's/^blacklist=//p' "$rc" | tr ',' '\n' | sed '/^$/d'
+}
+
+write_blacklist() {   # entries on stdin, one per line
+  local rc list; rc="$(BLACKLIST_RC)"
+  list="$(sort -u | sed '/^$/d' | paste -sd, -)"
+  install -d -o "$HTPC_USER" -g "$HTPC_USER" "$(dirname "$rc")"
+  cat >"$rc" <<RC
+[Applications]
+blacklist=$list
+RC
+  chown "$HTPC_USER:$HTPC_USER" "$rc"
+  echo "$list"
+}
+
+# Every application the home screen would show, as Bigscreen selects them.
+list_apps() {
+  local d f id name nodisp term type
+  for d in /usr/share/applications /usr/local/share/applications \
+           "$(user_home)/.local/share/applications" \
+           /var/lib/flatpak/exports/share/applications; do
+    [[ -d $d ]] || continue
+    for f in "$d"/*.desktop; do
+      [[ -f $f ]] || continue
+      type="$(sed -n 's/^Type=//p'      "$f" | head -1)"
+      nodisp="$(sed -n 's/^NoDisplay=//p' "$f" | head -1)"
+      term="$(sed -n 's/^Terminal=//p'  "$f" | head -1)"
+      [[ $type == Application ]]  || continue
+      [[ $nodisp == true ]]       && continue
+      [[ $term == true ]]         && continue
+      name="$(sed -n 's/^Name=//p' "$f" | head -1)"
+      id="$(basename "$f" .desktop)"
+      printf '%s\t%s\n' "$id" "$name"
+    done
+  done | sort -u
+}
+
+if [[ $MODE == listapps ]]; then
+  [[ -n "$(user_home)" ]] || { echo "User '$HTPC_USER' has no home directory" >&2; exit 1; }
+  mapfile -t HIDDEN < <(read_blacklist)
+  printf '%-45s %-30s %s\n' "ID (use this with --hide)" "NAME" "STATE"
+  while IFS=$'\t' read -r id name; do
+    state="shown"
+    for h in ${HIDDEN+"${HIDDEN[@]}"}; do [[ $h == "$id" ]] && state="HIDDEN"; done
+    printf '%-45s %-30s %s\n' "$id" "${name:0:29}" "$state"
+  done < <(list_apps)
+  exit 0
+fi
+
+if [[ $MODE == hide || $MODE == show ]]; then
+  [[ $EUID -eq 0 ]] || { echo "Run as root (sudo $0)" >&2; exit 1; }
+  [[ -n $ARG ]] || { echo "Usage: $0 --$MODE app1[,app2,...]  (ids from --list-apps)" >&2; exit 1; }
+  mapfile -t CURRENT < <(read_blacklist)
+  IFS=',' read -r -a WANT <<<"$ARG"
+  if [[ $MODE == hide ]]; then
+    NEW="$(printf '%s\n' ${CURRENT+"${CURRENT[@]}"} "${WANT[@]}" | write_blacklist)"
+  else
+    KEEP=()
+    for c in ${CURRENT+"${CURRENT[@]}"}; do
+      drop=0
+      for w in "${WANT[@]}"; do [[ $c == "$w" ]] && drop=1; done
+      [[ $drop -eq 0 ]] && KEEP+=("$c")
+    done
+    NEW="$(printf '%s\n' ${KEEP+"${KEEP[@]}"} | write_blacklist)"
+  fi
+  echo "Hidden from the home screen: ${NEW:-(none)}"
+  echo "Log out and back in, or: sudo systemctl restart sddm"
+  exit 0
+fi
+
+if [[ $MODE == uiscale ]]; then
+  [[ $EUID -eq 0 ]] || { echo "Run as root (sudo $0)" >&2; exit 1; }
+  [[ $ARG =~ ^[0-9]+$ ]] || { echo "Usage: $0 --ui-scale <point-size>   (Bigscreen: try 10)" >&2; exit 1; }
+  HOME_DIR="$(user_home)"
+  [[ -n $HOME_DIR ]] || { echo "User '$HTPC_USER' has no home directory" >&2; exit 1; }
+  KG="$HOME_DIR/.config/kdeglobals"
+  install -d -o "$HTPC_USER" -g "$HTPC_USER" "$HOME_DIR/.config"
+  [[ -f $KG ]] || printf '[General]\n' >"$KG"
+  # Every Kirigami margin and tile derives from Kirigami.Units.gridUnit,
+  # which is font metrics — so the base font size scales the whole shell.
+  sed -i \
+    -e "s/^font=.*/font=Noto Sans,$ARG,-1,5,50,0,0,0,0,0/" \
+    -e "s/^menuFont=.*/menuFont=Noto Sans,$ARG,-1,5,50,0,0,0,0,0/" \
+    -e "s/^fixed=.*/fixed=Noto Sans Mono,$((ARG - 1)),-1,5,50,0,0,0,0,0/" \
+    -e "s/^toolBarFont=.*/toolBarFont=Noto Sans,$((ARG - 1)),-1,5,50,0,0,0,0,0/" \
+    -e "s/^smallestReadableFont=.*/smallestReadableFont=Noto Sans,$((ARG - 2)),-1,5,50,0,0,0,0,0/" \
+    "$KG"
+  grep -q '^font=' "$KG" || sed -i "/^\[General\]/a font=Noto Sans,$ARG,-1,5,50,0,0,0,0,0" "$KG"
+  chown "$HTPC_USER:$HTPC_USER" "$KG"
+  # Persist it so customize.sh does not put the old size back on its next run.
+  if [[ -f /etc/default/tvpc ]]; then
+    if grep -q '^TVPC_FONT_SIZE=' /etc/default/tvpc; then
+      sed -i "s/^TVPC_FONT_SIZE=.*/TVPC_FONT_SIZE=$ARG/" /etc/default/tvpc
+    else
+      echo "TVPC_FONT_SIZE=$ARG" >>/etc/default/tvpc
+    fi
+  fi
+  echo "Base font size -> $ARG (was scaling the whole Bigscreen UI)"
+  echo "Recorded TVPC_FONT_SIZE=$ARG in /etc/default/tvpc"
+  echo "Log out and back in, or: sudo systemctl restart sddm"
+  exit 0
+fi
 
 # ---------------------------------------------------------------------------
 # --check

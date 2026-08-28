@@ -136,6 +136,30 @@ Screen blanking is handled by `customize.sh`, which seeds
 `tvpc-bigscreen.sh` warns if that has not been run, because a TV that blanks
 after five minutes looks exactly like a boot failure.
 
+**Tuning it.** Two things need adjusting on almost every TV:
+
+```bash
+sudo tvpc-bigscreen --ui-scale 10      # whole UI too big? this is the knob
+sudo tvpc-bigscreen --list-apps        # what the home screen shows, with ids
+sudo tvpc-bigscreen --hide firefox,org.kde.plasma-systemmonitor
+sudo tvpc-bigscreen --show firefox     # put one back
+```
+
+`--ui-scale` sets the base font point size, which sounds unrelated but is the
+master scale control: everything in Bigscreen is laid out in
+`Kirigami.Units.gridUnit`, and that is derived from font metrics. Bigscreen is
+already a 10-foot UI built around the 10pt default, so `customize.sh`'s
+couch-sized 13pt scales it a second time and the interface stops fitting the
+screen. 10 is the value to start from. The choice is saved as
+`TVPC_FONT_SIZE` in `/etc/default/tvpc` so re-running `customize.sh` keeps it.
+
+`--hide` writes the `blacklist` key in `~/.config/applications-blacklistrc`,
+which is what `ApplicationListModel::loadApplications()` reads. It is
+undocumented but it is how Bigscreen is meant to be filtered; the ids are the
+`.desktop` basenames that `--list-apps` prints. Bigscreen already omits
+terminal applications and anything marked `NoDisplay`, and `--list-apps`
+applies the same filter so what it prints is what you see on the TV.
+
 ### The Hyprland session
 
 > **Warning — this broke a working box.** On a real NUC the install failed and
