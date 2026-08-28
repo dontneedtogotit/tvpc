@@ -103,11 +103,24 @@ if [[ $MODE == remove ]]; then
     exit 1
   fi
   export DEBIAN_FRONTEND=noninteractive
-  apt-get purge -y hyprland xdg-desktop-portal-hyprland hyprpolkitagent 2>/dev/null || true
-  rm -f "$SESSION_DESKTOP" "$PIN_FILE"
+  rm -f "$SESSION_DESKTOP"
   rm -f /usr/local/bin/tvpc-hypr-menu /usr/local/bin/tvpc-hypr-autostart /usr/local/bin/tvpc-hypr-session
-  add-apt-repository -y --remove "$PPA" 2>/dev/null || true
-  apt-get update 2>/dev/null || true
+
+  # ppa-purge is the right tool: it disables the PPA and puts every package
+  # that came from it back to the Ubuntu version. Plain "apt purge" would
+  # leave any upgraded shared libraries behind at their PPA versions.
+  if apt-get install -y ppa-purge >/dev/null 2>&1 && command -v ppa-purge >/dev/null 2>&1; then
+    echo "  reverting PPA packages with ppa-purge (this downgrades, and takes a minute)"
+    ppa-purge -y "$PPA" || echo "  !! ppa-purge reported an error — check 'apt list --installed | grep ppa1'"
+  else
+    echo "  !! ppa-purge unavailable; falling back to a plain purge."
+    echo "     Anything the PPA upgraded stays at its PPA version. Check:"
+    echo "       apt list --installed | grep ppa1"
+    apt-get purge -y hyprland xdg-desktop-portal-hyprland hyprpolkitagent 2>/dev/null || true
+    add-apt-repository -y --remove "$PPA" 2>/dev/null || true
+  fi
+  rm -f "$PIN_FILE"
+  apt-get update -qq 2>/dev/null || true
   echo "Done. The Plasma session and $HOME_DIR/.config/hypr were left alone."
   exit 0
 fi
@@ -123,11 +136,25 @@ export DEBIAN_FRONTEND=noninteractive
 cat >"$PIN_FILE" <<PIN
 # Written by tvpc-hyprland.sh.
 #
-# The Hyprland PPA also ships pipewire/wireplumber builds. This box's audio
-# is HDMI-only and already working on Ubuntu's packages; silently moving it
-# to a PPA build is a needless way to lose sound. Everything else from the
-# PPA is allowed at normal priority, including the newer libinput and
-# wayland-protocols that Hyprland genuinely requires.
+# The whole PPA sits at priority 100, NOT the default 500. That single
+# number is what keeps a working Plasma box working:
+#
+#   * A package that exists only in the PPA (hyprland, hyprutils,
+#     aquamarine, hyprlang...) still installs — nothing in the archive
+#     competes with it.
+#   * A package already installed from Ubuntu (libinput, libxkbcommon,
+#     spdlog, wayland-protocols, and everything Plasma and SDDM link
+#     against) is NOT silently upgraded to the PPA's build.
+#
+# If Hyprland genuinely needs a newer core library than noble ships, apt
+# now reports an unmet dependency and installs nothing. That is the right
+# failure: a clean "no" beats half-upgrading the libraries underneath a
+# running desktop, which is how this box ended up at a black screen.
+Package: *
+Pin: release o=$PPA_ORIGIN
+Pin-Priority: 100
+
+# The audio stack is never taken from any PPA, at any priority.
 Package: pipewire pipewire-* libpipewire-* libspa-* wireplumber wireplumber-*
 Pin: release o=$PPA_ORIGIN
 Pin-Priority: -1
@@ -150,31 +177,59 @@ apt-get update
 # 2. Packages
 # ---------------------------------------------------------------------------
 info "Installing packages"
+# Returns apt-get's exit status. The earlier version threw it away, so a
+# failed install looked identical to a successful one and the script kept
+# running more transactions against the PPA.
 apt_install() {
   local want=("$@") have=() missing=() p
   for p in "${want[@]}"; do
     if apt-cache show "$p" >/dev/null 2>&1; then have+=("$p"); else missing+=("$p"); fi
   done
   if [[ ${#missing[@]} -gt 0 ]]; then echo "!! not available, skipping: ${missing[*]}"; fi
-  if [[ ${#have[@]} -gt 0 ]]; then apt-get install -y "${have[@]}"; fi
+  if [[ ${#have[@]} -eq 0 ]]; then return 0; fi
+  apt-get install -y "${have[@]}"
 }
 
-# Compositor and portals.
-apt_install hyprland xdg-desktop-portal-hyprland xdg-desktop-portal-gtk hyprpolkitagent
-# Shell pieces: bar, launcher, background, terminal.
-apt_install waybar fuzzel swaybg foot
-# Fonts the bar and launcher ask for, plus the glyphs used by the modules.
-apt_install fonts-noto-core fonts-noto-color-emoji fonts-font-awesome
-# Volume control from the bar and the keybinds.
-apt_install wireplumber pipewire-bin wl-clipboard playerctl
-
-if ! command -v Hyprland >/dev/null 2>&1 && ! command -v hyprland >/dev/null 2>&1; then
+# Back out the PPA and the pin, leaving the box exactly as it was found.
+# Called when Hyprland cannot be installed — there is no reason to leave a
+# third-party archive configured on an appliance that is not using it.
+abandon() {
   echo
-  echo "!! Hyprland did not install. Nothing else here will help until it does."
-  echo "   Check:  apt-cache policy hyprland"
+  echo "!! $1"
+  echo "   Removing the PPA again so nothing is left half-applied."
+  add-apt-repository -y --remove "$PPA" >/dev/null 2>&1 || true
+  rm -f "$PIN_FILE"
+  apt-get update -qq 2>/dev/null || true
+  echo
+  echo "   Nothing was installed. The current session is untouched."
+  echo "   If the desktop is already broken, revert any PPA packages with:"
+  echo "     sudo apt-get install -y ppa-purge && sudo ppa-purge $PPA"
   exit 1
+}
+
+# Hyprland goes in FIRST and ALONE, and nothing else is attempted until it
+# is confirmed present. The earlier version installed the bar, launcher and
+# fonts before checking, so a failed Hyprland still dragged PPA builds of
+# shared libraries onto a working Plasma system — all of the risk, none of
+# the compositor.
+if ! apt-cache policy hyprland 2>/dev/null | grep -q 'Candidate: [^(]'; then
+  abandon "The PPA offers no installable 'hyprland' for this release."
+fi
+
+if ! apt_install hyprland; then
+  abandon "apt could not install hyprland (see the error above)."
+fi
+if ! command -v Hyprland >/dev/null 2>&1 && ! command -v hyprland >/dev/null 2>&1; then
+  abandon "hyprland reported success but no Hyprland binary is on PATH."
 fi
 ok "Hyprland: $( { Hyprland --version 2>/dev/null || hyprland --version 2>/dev/null; } | head -1)"
+
+# Only now is it worth pulling in the rest. These are individually
+# non-fatal: a missing font or portal is a blemish, not a black screen.
+apt_install xdg-desktop-portal-hyprland xdg-desktop-portal-gtk hyprpolkitagent || true
+apt_install waybar fuzzel swaybg foot || true
+apt_install fonts-noto-core fonts-noto-color-emoji fonts-font-awesome || true
+apt_install wl-clipboard playerctl || true
 
 # ---------------------------------------------------------------------------
 # 3. Helpers and the session entry

@@ -151,10 +151,33 @@ watching the TV works.
 
 **The PPA caveat, stated plainly.** Hyprland is not in the Ubuntu 24.04
 archive, so this pulls from `ppa:cppiber/hyprland` — third-party, though
-actively maintained and current. That PPA also carries its own PipeWire.
-The installer writes an APT pin that blocks PipeWire and WirePlumber from it
-while allowing everything else, because replacing the audio stack is a good
-way to end up with a TV that shows a picture and makes no sound.
+actively maintained and current. That PPA also carries its own builds of
+core libraries: PipeWire, libinput, libxkbcommon, wayland-protocols, spdlog.
+Letting those upgrade underneath a working Plasma desktop is how you get a
+black screen, so the installer pins the **entire PPA to priority 100**:
+
+* packages that exist only in the PPA (Hyprland and its own libraries)
+  install normally, because nothing in the archive competes with them;
+* packages already installed from Ubuntu are **never** silently replaced.
+
+If Hyprland genuinely needs a newer core library than noble ships, apt now
+reports an unmet dependency and installs nothing at all. That is the correct
+outcome: a clean "no" is much better than half-upgrading the libraries under
+a running desktop. The installer also puts Hyprland in **first and alone**,
+and backs the PPA out again if it does not appear — so a failed install
+leaves the box exactly as it was found.
+
+**If it does go wrong**, `ppa-purge` reverts every package that came from
+the PPA to its Ubuntu version:
+
+```bash
+sudo apt-get install -y ppa-purge
+sudo ppa-purge ppa:cppiber/hyprland
+sudo rm -f /etc/apt/preferences.d/90-tvpc-hyprland
+sudo tvpc-session plasma && sudo systemctl restart sddm
+```
+
+`sudo tvpc-hyprland --remove` does the same thing for you.
 
 **Untested on hardware.** I have no NUC to try this on. The config is
 validated against Hyprland 0.56's documented Lua API and executed against a
