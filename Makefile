@@ -16,6 +16,9 @@ help:
 	@echo "  make session S=plasma Session: auto|plasma|plasma-mobile|plasma-x11|kiosk"
 	@echo "                        opt-in: bigscreen|bigscreen-x11|phosh"
 	@echo "  make customize        Apply idempotent UI/theme tweaks"
+	@echo "  make tweaks           Install the TV Tweaks app + home-screen launcher"
+	@echo "  make home             Apply the full home-screen preset (curate + hero + power)"
+	@echo "  make tweaks-menu      Run the TV Tweaks app interactively"
 	@echo "  make postboot         Post-boot: SSH + Wi-Fi + polish"
 	@echo "  make doctor           Run full health check"
 	@echo "  make cec-remote       Install Samsung remote button mapping"
@@ -48,6 +51,15 @@ session:
 
 customize:
 	sudo ./scripts/customize.sh
+
+tweaks:
+	sudo ./scripts/tvpc-tweaks.sh install-launcher
+
+home:
+	sudo ./scripts/tvpc-tweaks.sh home-preset
+
+tweaks-menu:
+	./scripts/tvpc-tweaks.sh
 
 postboot:
 	sudo ./scripts/tvpc-postboot.sh

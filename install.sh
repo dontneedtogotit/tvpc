@@ -201,6 +201,35 @@ install -m 0755 "$REPO_ROOT/scripts/tvpc-update.sh"        /usr/local/bin/tvpc-u
 # Bigscreen is archive-native; Hyprland pulls from a PPA.
 install -m 0755 "$REPO_ROOT/scripts/tvpc-bigscreen.sh"     /usr/local/bin/tvpc-bigscreen
 install -m 0755 "$REPO_ROOT/scripts/tvpc-hyprland.sh"      /usr/local/bin/tvpc-hyprland
+install -m 0755 "$REPO_ROOT/scripts/tvpc-tweaks.sh"        /usr/local/bin/tvpc-tweaks
+install -m 0755 "$REPO_ROOT/scripts/tvpc-power.sh"          /usr/local/bin/tvpc-power
+# The Power tile for the home screen: restart / shut down / log out.
+cat >/usr/share/applications/tvpc-power.desktop <<'EOF'
+[Desktop Entry]
+Type=Application
+Name=Power
+Comment=Restart, shut down, or log out
+Exec=/usr/local/bin/tvpc-power
+Terminal=false
+Icon=system-shutdown
+Categories=Settings;
+Keywords=tvpc;power;
+EOF
+# The Tweaks app launcher (UI scaling, home-screen apps, etc.) — appears on the
+# home screen / launcher so it can be opened with the remote.
+mkdir -p /usr/share/applications
+cat >/usr/share/applications/tvpc-tweaks.desktop <<'EOF'
+[Desktop Entry]
+Type=Application
+Name=TV Tweaks
+GenericName=tvpc adjustments
+Comment=UI scaling, home-screen apps, and other tvpc tweaks
+Exec=/usr/local/bin/tvpc-tweaks
+Terminal=true
+Icon=preferences-system
+Categories=Settings;
+Keywords=tvpc;tweaks;scaling;home screen;
+EOF
 
 # ---------------------------------------------------------------------------
 # 8. Session + autologin

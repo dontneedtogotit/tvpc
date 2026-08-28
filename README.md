@@ -340,6 +340,64 @@ Three scripts, three jobs:
 
 ---
 
+## Tweaks app — `tvpc-tweaks`
+
+A runnable "Tweaks" app that does the couch-level adjustments in one place:
+**UI scaling**, **removing apps from the home screen**, theme, display mode,
+TV sleep, autostart apps, and session switching. It is an arrow-key menu that
+works over the CEC remote *and* SSH, and it doubles as one-shot commands for
+scripted/headless use.
+
+```bash
+make tweaks            # install /usr/local/bin/tvpc-tweaks + a home-screen launcher
+make tweaks-menu      # run it interactively right now
+```
+
+Launch **TV Tweaks** from the home screen (it opens in a terminal) or run it
+from a shell. Both forms understand the same actions:
+
+```bash
+tvpc-tweaks scale 1.5            # global UI scale (live now, persisted via TVPC_SCALE)
+tvpc-tweaks font 13             # base font size (scales the whole Bigscreen UI)
+tvpc-tweaks apps                # list home-screen apps + shown/hidden state
+tvpc-tweaks hide firefox,vlc    # remove apps from the home screen
+tvpc-tweaks show firefox        # put an app back
+tvpc-tweaks theme dark|light
+tvpc-tweaks mode 1920x1080@60   # or: mode auto
+tvpc-tweaks idle on|off         # stay awake / allow the TV to sleep
+tvpc-tweaks autostart           # manage autostart apps (interactive)
+tvpc-tweaks session plasma      # switch session (needs root)
+tvpc-tweaks status
+```
+
+Home-screen app removal drives both mechanisms: Bigscreen's
+`applications-blacklistrc` and plain Plasma's launcher favorites, so the app
+drops off whichever shell is active. Scaling and mode persist through
+`/etc/default/tvpc` (`TVPC_SCALE` / `TVPC_MODE`) and are applied live by
+`tvpc-display-setup` at login. Reboot-persisting changes need root; user-level
+tweaks apply immediately as the logged-in user.
+
+### The full home-screen preset
+
+`tvpc-tweaks home-preset` applies the recommended couch layout in one go:
+
+- dark theme,
+- a **Watch YouTube** hero tile (if VacuumTube is installed),
+- a **Power** tile (reboot / shut down / restart shell / log out) via `tvpc-power`,
+- **curates the home screen** down to a small whitelist — YouTube, a browser,
+  Kodi, Files, Settings, Power — so the remote never scrolls two hundred entries,
+- a dark wallpaper (where Plasma's tooling allows it),
+- switches the session to **Plasma Bigscreen** when it is installed.
+
+```bash
+make home                 # sudo ./scripts/tvpc-tweaks.sh home-preset
+```
+
+Log out and back in (or `sudo systemctl restart sddm`) to see it. Re-run any
+time; it is idempotent.
+
+---
+
 ## Configuration — `/etc/default/tvpc`
 
 | Setting | Default | Meaning |
