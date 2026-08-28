@@ -18,6 +18,7 @@ help:
 	@echo "  make customize        Apply idempotent UI/theme tweaks"
 	@echo "  make tweaks           Install the TV Tweaks app + home-screen launcher"
 	@echo "  make home             Apply the full home-screen preset (curate + hero + power)"
+	@echo "  make home-vacuum      Curate the home to VacuumTube only + All Apps launcher"
 	@echo "  make tweaks-menu      Run the TV Tweaks app interactively"
 	@echo "  make postboot         Post-boot: SSH + Wi-Fi + polish"
 	@echo "  make doctor           Run full health check"
@@ -57,6 +58,9 @@ tweaks:
 
 home:
 	sudo ./scripts/tvpc-tweaks.sh home-preset
+
+home-vacuum:
+	sudo ./scripts/tvpc-tweaks.sh vacuum-only
 
 tweaks-menu:
 	./scripts/tvpc-tweaks.sh

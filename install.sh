@@ -203,6 +203,20 @@ install -m 0755 "$REPO_ROOT/scripts/tvpc-bigscreen.sh"     /usr/local/bin/tvpc-b
 install -m 0755 "$REPO_ROOT/scripts/tvpc-hyprland.sh"      /usr/local/bin/tvpc-hyprland
 install -m 0755 "$REPO_ROOT/scripts/tvpc-tweaks.sh"        /usr/local/bin/tvpc-tweaks
 install -m 0755 "$REPO_ROOT/scripts/tvpc-power.sh"          /usr/local/bin/tvpc-power
+install -m 0755 "$REPO_ROOT/scripts/tvpc-allapps.sh"         /usr/local/bin/tvpc-allapps
+# The All Apps launcher: every installed app in one browseable list (used when the
+# home screen is curated down to a single tile).
+cat >/usr/share/applications/tvpc-allapps.desktop <<'EOF'
+[Desktop Entry]
+Type=Application
+Name=All Apps
+Comment=Browse every installed application
+Exec=/usr/local/bin/tvpc-allapps
+Terminal=false
+Icon=view-grid
+Categories=Settings;
+Keywords=tvpc;apps;
+EOF
 # The Power tile for the home screen: restart / shut down / log out.
 cat >/usr/share/applications/tvpc-power.desktop <<'EOF'
 [Desktop Entry]

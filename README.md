@@ -396,6 +396,23 @@ make home                 # sudo ./scripts/tvpc-tweaks.sh home-preset
 Log out and back in (or `sudo systemctl restart sddm`) to see it. Re-run any
 time; it is idempotent.
 
+### VacuumTube-only home + All Apps
+
+For the most minimal layout, `tvpc-tweaks vacuum-only` leaves **just
+VacuumTube** on the home screen and makes every other app reachable through the
+**All Apps** launcher (`tvpc-allapps`) — a browseable list of everything
+installed, including apps hidden from the home. It also points the remote's
+**Home** button at All Apps, so the rest of the catalogue is one press away
+without cluttering the home.
+
+```bash
+make home-vacuum          # sudo ./scripts/tvpc-tweaks.sh vacuum-only
+tvpc-allapps              # open the full app list on demand
+```
+
+On the default Plasma session the remote Home button already opens the full
+launcher (Kickoff) too, so this mainly matters for the curated / Bigscreen home.
+
 ---
 
 ## Configuration — `/etc/default/tvpc`

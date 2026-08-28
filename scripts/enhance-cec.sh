@@ -68,6 +68,10 @@ cat >/usr/local/bin/tvpc-cec-remote <<'LISTENER'
 #   0x44 Play | 0x45 Pause | 0x46 Stop | 0x47 FF | 0x48 RW
 set -uo pipefail
 
+# shellcheck source=/dev/null
+[[ -r /etc/default/tvpc ]] && . /etc/default/tvpc
+HTPC_USER="${TVPC_USER:-${HTPC_USER:-htpc}}"
+
 export YDOTOOL_SOCKET="${YDOTOOL_SOCKET:-/run/ydotoold/socket}"
 log() { echo "$*"; }   # journald captures stdout
 
@@ -98,7 +102,15 @@ handle() {
     02) send_key 108 Down   ;;
     03) send_key 105 Left   ;;
     04) send_key 106 Right  ;;
-    09) send_key 125 super  ;;   # Root menu -> Meta (app launcher)
+    09)
+      # Root menu / Home button. When the home is curated to a single tile
+      # (tvpc-tweaks vacuum-only sets TVPC_ALLAPPS=1), this opens the All Apps
+      # launcher instead of Meta, so hidden apps stay reachable from the couch.
+      if [[ ${TVPC_ALLAPPS:-0} == 1 ]] && command -v tvpc-allapps >/dev/null 2>&1; then
+        nohup tvpc-allapps >/dev/null 2>&1 &
+      else
+        send_key 125 super  ;;   # Root menu -> Meta (app launcher)
+      fi ;;
     0d) send_key 1   Escape ;;   # Exit -> Back
     *)  return ;;
   esac

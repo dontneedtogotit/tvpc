@@ -656,6 +656,39 @@ ensure_bigscreen_session() {
   [[ -n $tool ]] && { "$tool" bigscreen && echo "  session -> bigscreen (restart sddm to apply)"; }
 }
 
+# Point the CEC Home button at tvpc-allapps (set once; the listener reads it).
+ensure_allapps() {
+  if is_root; then
+    set_default TVPC_ALLAPPS 1 && echo "  remote Home button now opens All Apps" \
+      || echo "  (could not persist TVPC_ALLAPPS — run 'sudo tvpc-tweaks vacuum-only')"
+  else
+    echo "  All-apps launcher: run 'tvpc-allapps' (or 'sudo tvpc-tweaks vacuum-only' to bind the remote Home button)"
+  fi
+}
+
+# VacuumTube-only home: one tile, everything else via the All Apps launcher.
+vacuum_only() {
+  local vid=io.github.vacuumtube.VacuumTube
+  echo "== tvpc: VacuumTube-only home =="
+  do_theme dark
+  echo "-- curate: keep only VacuumTube --"
+  if ! list_apps | cut -f1 | grep -qx "$vid"; then
+    echo "  (VacuumTube not installed — cannot make it the only home tile; install it first)"
+    return 1
+  fi
+  local id
+  for id in $(list_apps | cut -f1); do
+    [[ $id == "$vid" ]] && continue
+    hide_app "$id"
+  done
+  echo "  home now shows only VacuumTube"
+  echo "-- dark wallpaper --"; apply_wallpaper
+  echo "-- all-apps launcher --"; ensure_allapps
+  echo
+  echo "Done. VacuumTube is the only home tile; every other app opens from 'tvpc-allapps'."
+  echo "(On the default Plasma session the remote Home button already opens the full launcher too.)"
+}
+
 home_preset() {
   echo "== tvpc home-screen preset =="
   echo "-- dark theme --"; do_theme dark
@@ -716,6 +749,7 @@ case "${1:-}" in
                    [[ -n $SESSION_TOOL ]] && "$SESSION_TOOL" "${1:-auto}" || echo "tvpc-session not found" ;;
   status)          cmd_status ;;
   home-preset)     home_preset ;;
+  vacuum-only)     vacuum_only ;;
   install-launcher) install_launcher ;;
   --help|-h|help)  usage; exit 0 ;;
   "")              if [[ -t 1 ]]; then tui_main; else usage; fi ;;
