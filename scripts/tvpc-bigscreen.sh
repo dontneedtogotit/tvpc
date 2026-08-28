@@ -39,6 +39,28 @@ HTPC_USER="${TVPC_USER:-${HTPC_USER:-htpc}}"
 WAYLAND_SESSION=/usr/share/wayland-sessions/plasma-bigscreen-wayland.desktop
 X11_SESSION=/usr/share/xsessions/plasma-bigscreen-x11.desktop
 
+# Runtime QML modules that plasma-bigscreen imports but does NOT declare in
+# its Depends. On a desktop install these are already present as a side
+# effect of everything else; on this server-based build they are not, and
+# the shell starts and then dies with "error loading QML file".
+#
+# The list was derived from the imports in the v5.27.11 source (the version
+# noble ships) rather than found one crash at a time:
+#   grep -rhoE '^\s*import [A-Za-z0-9_.]+' --include='*.qml' .
+BIGSCREEN_QML_DEPS=(
+  kdeconnect                              # org.kde.kdeconnect            (8 imports)
+  qml-module-qtgraphicaleffects           # QtGraphicalEffects           (17 imports)
+  qml-module-org-kde-kquickcontrolsaddons # org.kde.kquickcontrolsaddons  (7)
+  qml-module-org-kde-kcm                  # org.kde.kcm                   (7)
+  qml-module-org-kde-kirigami2            # org.kde.kirigami             (60)
+  qml-module-org-kde-kitemmodels          # org.kde.kitemmodels
+  qml-module-org-kde-kcoreaddons          # org.kde.kcoreaddons
+  qml-module-qtmultimedia                 # QtMultimedia
+  qml-module-qtquick-virtualkeyboard      # QtQuick.VirtualKeyboard
+  plasma-settings                         # org.kde.plasma.settings
+  plasma-pa                               # org.kde.plasma.private.volume
+)
+
 ok()  { echo "  ok    $*"; }
 bad() { echo "  MISS  $*"; }
 
@@ -68,6 +90,15 @@ if [[ $MODE == check ]]; then
     ok "plasma-bigscreen $(dpkg-query -W -f='${Version}' plasma-bigscreen 2>/dev/null)"
   else
     bad "plasma-bigscreen not installed"
+  fi
+  MISSING_QML=()
+  for p in "${BIGSCREEN_QML_DEPS[@]}"; do
+    pkg_installed "$p" || MISSING_QML+=("$p")
+  done
+  if [[ ${#MISSING_QML[@]} -eq 0 ]]; then
+    ok "QML runtime modules present"
+  else
+    bad "missing QML modules: ${MISSING_QML[*]}"
   fi
   if [[ -f $WAYLAND_SESSION ]]; then ok "Wayland session $WAYLAND_SESSION"; else bad "Wayland session $WAYLAND_SESSION"; fi
   if [[ -f $X11_SESSION     ]]; then ok "X11 session $X11_SESSION";         else bad "X11 session $X11_SESSION"; fi
@@ -148,6 +179,20 @@ if ! apt-get install -y plasma-bigscreen; then
   echo "!! apt could not install plasma-bigscreen (see the error above)." >&2
   echo "   Nothing was changed. The current session is untouched." >&2
   exit 1
+fi
+
+echo "== Installing the QML modules Bigscreen forgets to depend on =="
+QML_HAVE=() QML_MISSING=()
+for p in "${BIGSCREEN_QML_DEPS[@]}"; do
+  if apt_has_candidate "$p"; then QML_HAVE+=("$p"); else QML_MISSING+=("$p"); fi
+done
+if [[ ${#QML_MISSING[@]} -gt 0 ]]; then
+  echo "!! not available, skipping: ${QML_MISSING[*]}"
+fi
+if [[ ${#QML_HAVE[@]} -gt 0 ]]; then
+  # Non-fatal: a missing QML module degrades a settings page, it does not
+  # stop the shell coming up, and the session check below is what matters.
+  apt-get install -y "${QML_HAVE[@]}" || echo "!! some QML modules failed to install"
 fi
 
 # The session files are the whole point: tvpc-session refuses to point
