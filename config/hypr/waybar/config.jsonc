@@ -1,0 +1,57 @@
+// tvpc status bar for the Hyprland session.
+//
+// Deliberately built from generic modules only — no hyprland/* modules.
+// Those talk to the compositor over its IPC socket, and a waybar built
+// against a different Hyprland release than the one running is the usual
+// reason a bar comes up empty. Clock, volume and network need none of that.
+{
+  "layer": "top",
+  "position": "top",
+  "height": 44,
+  "spacing": 16,
+
+  // Small inset so the bar is not sitting in the overscan region of an
+  // older TV. Raise together with TVPC_OVERSCAN if the clock is cropped.
+  "margin-top": 6,
+  "margin-left": 18,
+  "margin-right": 18,
+
+  "modules-left":   ["custom/menu", "clock"],
+  "modules-center": [],
+  "modules-right":  ["pulseaudio", "network", "custom/power"],
+
+  "custom/menu": {
+    "format": "☰  Apps",
+    "on-click": "tvpc-hypr-menu",
+    "tooltip": false
+  },
+
+  "clock": {
+    "format": "{:%H:%M}",
+    "format-alt": "{:%a %d %b  %H:%M}",
+    "tooltip": false
+  },
+
+  "pulseaudio": {
+    "format": "{icon}  {volume}%",
+    "format-muted": "󰝟  muted",
+    "format-icons": { "default": ["󰕿", "󰖀", "󰕾"] },
+    "on-click": "wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle",
+    "on-scroll-up": "wpctl set-volume -l 1 @DEFAULT_AUDIO_SINK@ 5%+",
+    "on-scroll-down": "wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%-",
+    "tooltip": false
+  },
+
+  "network": {
+    "format-wifi": "󰖩  {essid}",
+    "format-ethernet": "󰈀  wired",
+    "format-disconnected": "󰖪  offline",
+    "tooltip": false
+  },
+
+  "custom/power": {
+    "format": "⏻",
+    "on-click": "tvpc-hypr-menu power",
+    "tooltip": false
+  }
+}

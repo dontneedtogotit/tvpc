@@ -196,6 +196,9 @@ install -m 0755 "$REPO_ROOT/scripts/tvpc-doctor.sh"        /usr/local/bin/tvpc-d
 install -m 0755 "$REPO_ROOT/scripts/tvpc-repair.sh"        /usr/local/bin/tvpc-repair
 install -m 0755 "$REPO_ROOT/scripts/tvpc-session.sh"       /usr/local/bin/tvpc-session
 install -m 0755 "$REPO_ROOT/scripts/tvpc-update.sh"        /usr/local/bin/tvpc-update
+# The Hyprland shell is opt-in and pulls from a PPA, so install.sh only
+# puts its installer on the box — running it is a separate, deliberate step.
+install -m 0755 "$REPO_ROOT/scripts/tvpc-hyprland.sh"      /usr/local/bin/tvpc-hyprland
 
 # ---------------------------------------------------------------------------
 # 8. Session + autologin

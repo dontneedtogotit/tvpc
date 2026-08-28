@@ -51,12 +51,13 @@ sudo ./scripts/tvpc-session.sh plasma-x11      # X11 fallback
 sudo ./scripts/tvpc-session.sh kiosk           # kwin_wayland + one app
 sudo ./scripts/tvpc-session.sh auto            # first of the above that exists
 
+sudo ./scripts/tvpc-session.sh hypr            # opt-in: Hyprland, TV-tuned
 sudo ./scripts/tvpc-session.sh bigscreen       # opt-in: KDE's TV shell
 sudo ./scripts/tvpc-session.sh phosh           # opt-in: GNOME's phone shell
 ```
 
-The opt-in ones need their package installed first (`plasma-bigscreen`,
-`phosh`). They are not in the `auto` chain. If the package is missing the
+The opt-in ones need installing first (`tvpc-hyprland.sh`, `plasma-bigscreen`,
+`phosh`). They are not in the `auto` chain. If the session is missing the
 resolver refuses rather than writing autologin for a session that is not there.
 
 **`plasma` is the default**, not `plasma-mobile`. Plasma Mobile is built for a
@@ -79,7 +80,7 @@ you want to leave alone.
 | **Kodi** `kodi` 20.5 | yes | The classic 10-foot media centre, HDMI-CEC built in | Best remote experience by a distance, but it replaces the session rather than running inside one. Noble ships no Kodi session file, and no `kodi-gbm` / `kodi-standalone-service` |
 | **Phosh** `phosh` 0.38 | yes | GNOME's phone shell — the direct Plasma Mobile equivalent | Same problem as Plasma Mobile: built for touch. `tvpc-session.sh phosh` |
 | **Lomiri** `lomiri` 0.2.1 | yes | Ubuntu Touch's shell | Touch-first, niche on desktop hardware |
-| **Hyprland** | **no** | Tiling Wayland compositor | Not in 24.04 at all. Also keyboard-driven tiling, which is the wrong shape for a remote |
+| **Hyprland** 0.56 | not in the archive | Animated Wayland compositor, Lua-configured | Ships via the actively maintained `ppa:cppiber/hyprland`. Built into a TV shell here: `tvpc-hyprland.sh`, then `tvpc-session.sh hypr` |
 | **Sway** 1.9, **labwc** 0.7, **wayfire** 0.8 | yes | Tiling/stacking Wayland compositors | Keyboard-driven; no remote story |
 | **Cage** 0.1.5 | yes | Single-application kiosk compositor | Genuinely useful — close to what the built-in `kiosk` session does with `kwin_wayland` |
 | **Weston** 13 | yes | Reference compositor with a kiosk shell | Works, but you get nothing else |
@@ -94,13 +95,74 @@ sudo ./scripts/tvpc-session.sh bigscreen
 ```
 
 — and **Kodi** if you want a real media centre and don't mind it owning the
-whole screen. Hyprland is not an option on 24.04, and tiling compositors are
-the wrong shape for a remote regardless.
+whole screen. For the Hyprland look, see the next section: it is a PPA away,
+and the config here reshapes it into a TV shell rather than a tiling desktop.
 
 Two honest caveats: Plasma Bigscreen 5.27 is lightly maintained upstream (it
 still carries Mycroft voice-assistant dependencies), and neither it nor Phosh
 has been tested on this hardware. Both are one command to try and one command
 to leave — `tvpc-session.sh plasma` puts you back.
+
+### The Hyprland session
+
+A Plasma Mobile-shaped shell with Hyprland's look: one app fills the screen,
+a blurred status bar on top, a launcher on the menu button, and animations.
+
+```bash
+sudo ./scripts/tvpc-hyprland.sh     # install (adds a PPA)
+sudo tvpc-session hypr              # switch to it
+sudo systemctl restart sddm
+```
+
+`sudo tvpc-session plasma` puts you straight back, and
+`sudo tvpc-hyprland --remove` uninstalls the lot.
+
+**What makes it TV-shaped rather than a tiling desktop.** The layout is
+`monocle`, so one app owns the screen and the rest stack behind it — you are
+never asked to manage a tiling tree with a five-button remote. The only key
+the shell claims is the menu button; **arrows, OK and Back are deliberately
+left unbound** so they reach the app, which is what keeps YouTube navigable in
+VacuumTube. Screen blanking is off, `hypridle` is not installed, and the
+pointer hides after three seconds so an idle box shows a picture, not a cursor
+on black.
+
+**Where things live.** Config is Lua, not the old `hyprland.conf` — Hyprland
+deprecated hyprlang in 0.55, and the PPA is on 0.56.
+
+| File | Purpose |
+|------|---------|
+| `config/hypr/hyprland.lua` | compositor: layout, look, binds, window rules |
+| `config/hypr/waybar/` | the status bar |
+| `config/hypr/fuzzel.ini` | the launcher |
+| `scripts/tvpc-hypr-menu.sh` | curated app + power menu |
+
+Edit them in the repo and re-run `sudo tvpc-hyprland` to push them out;
+a config you have edited by hand is left alone unless you pass `--force`
+(which keeps a `.bak`). Hyprland reloads on save, so tuning over SSH while
+watching the TV works.
+
+**Knobs**, all in `/etc/default/tvpc`:
+
+| Variable | Effect |
+|----------|--------|
+| `TVPC_OVERSCAN` | pixel inset if your TV crops the edges (try the TV's "Just Scan" mode first) |
+| `TVPC_SCALE` / `TVPC_MODE` | force a scale factor or a video mode |
+| `TVPC_AUTOSTART_APP` | command to launch at login; unset means start at the launcher |
+
+**The PPA caveat, stated plainly.** Hyprland is not in the Ubuntu 24.04
+archive, so this pulls from `ppa:cppiber/hyprland` — third-party, though
+actively maintained and current. That PPA also carries its own PipeWire.
+The installer writes an APT pin that blocks PipeWire and WirePlumber from it
+while allowing everything else, because replacing the audio stack is a good
+way to end up with a TV that shows a picture and makes no sound.
+
+**Untested on hardware.** I have no NUC to try this on. The config is
+validated against Hyprland 0.56's documented Lua API and executed against a
+mock of it, the installer has been run end-to-end against stubs, and
+`tvpc-session` refuses to point autologin at a session that is not on disk —
+so a failed install cannot black-screen the box. But the first real boot is
+still the first real boot: keep SSH open, and `tvpc-repair --check` and
+`~/.local/state/tvpc/hyprland.log` are there if it comes up wrong.
 
 ---
 

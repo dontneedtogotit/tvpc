@@ -59,6 +59,7 @@ ITEMS=(
   "flathub|0|flathub remote is configured"
   "vacuumtube|0|VacuumTube is installed"
   "user_config|0|the TV user's Plasma config is seeded"
+  "hypr|1|Hyprland session files match the repo"
 )
 
 if [[ $MODE == list ]]; then
@@ -132,6 +133,7 @@ HELPERS=(
   "scripts/tvpc-repair.sh:/usr/local/bin/tvpc-repair"
   "scripts/tvpc-session.sh:/usr/local/bin/tvpc-session"
   "scripts/tvpc-update.sh:/usr/local/bin/tvpc-update"
+  "scripts/tvpc-hyprland.sh:/usr/local/bin/tvpc-hyprland"
 )
 check_helpers() {
   local pair src dst
@@ -146,6 +148,48 @@ fix_helpers() {
   for pair in "${HELPERS[@]}"; do
     src="$REPO_ROOT/${pair%%:*}"; dst="${pair##*:}"
     [[ -f $src ]] && install -D -m 0755 "$src" "$dst"
+  done
+}
+
+# --- Hyprland session -------------------------------------------------------
+# Only meaningful once the box has actually been switched to it; on a Plasma
+# box this reports SKIP instead of nagging about a shell nobody asked for.
+HYPR_CONFIGS=(
+  "config/hypr/hyprland.lua:.config/hypr/hyprland.lua"
+  "config/hypr/waybar/config.jsonc:.config/waybar/config.jsonc"
+  "config/hypr/waybar/style.css:.config/waybar/style.css"
+  "config/hypr/fuzzel.ini:.config/fuzzel/fuzzel.ini"
+)
+when_hypr() { [[ "${TVPC_SESSION:-}" == "hypr" ]]; }
+check_hypr() {
+  command -v Hyprland >/dev/null 2>&1 || command -v hyprland >/dev/null 2>&1 || return 1
+  [[ -f /usr/share/wayland-sessions/tvpc-hypr.desktop ]] || return 1
+  [[ -x /usr/local/bin/tvpc-hypr-session   ]] || return 1
+  [[ -x /usr/local/bin/tvpc-hypr-menu      ]] || return 1
+  [[ -x /usr/local/bin/tvpc-hypr-autostart ]] || return 1
+  local home pair
+  home="$(getent passwd "$HTPC_USER" | cut -d: -f6)"
+  [[ -n $home ]] || return 1
+  for pair in "${HYPR_CONFIGS[@]}"; do
+    cmp -s "$REPO_ROOT/${pair%%:*}" "$home/${pair##*:}" || return 1
+  done
+}
+fix_hypr() {
+  # Deliberately does NOT add the PPA or run apt: a routine converge should
+  # not reach out to a third-party archive on its own. If the compositor is
+  # missing, this reports the failure and tvpc-hyprland.sh is the fix.
+  command -v Hyprland >/dev/null 2>&1 || command -v hyprland >/dev/null 2>&1 || {
+    echo "Hyprland is not installed — run: sudo tvpc-hyprland" >&2
+    return 1
+  }
+  local home pair src dst
+  home="$(getent passwd "$HTPC_USER" | cut -d: -f6)"
+  install -m 0755 "$REPO_ROOT/scripts/tvpc-hypr-menu.sh"      /usr/local/bin/tvpc-hypr-menu
+  install -m 0755 "$REPO_ROOT/scripts/tvpc-hypr-autostart.sh" /usr/local/bin/tvpc-hypr-autostart
+  for pair in "${HYPR_CONFIGS[@]}"; do
+    src="$REPO_ROOT/${pair%%:*}"; dst="$home/${pair##*:}"
+    install -d -o "$HTPC_USER" -g "$HTPC_USER" "$(dirname "$dst")"
+    install -o "$HTPC_USER" -g "$HTPC_USER" -m 0644 "$src" "$dst"
   done
 }
 
@@ -267,6 +311,14 @@ for entry in "${ITEMS[@]}"; do
 
   if [[ $needs_repo == 1 && $HAVE_REPO -eq 0 ]]; then
     printf '  SKIP   %s\n' "$desc"
+    N_SKIPPED=$((N_SKIPPED+1))
+    continue
+  fi
+
+  # An item may declare when_<id> to say it only applies in some
+  # configurations. Without one, every item always applies.
+  if declare -F "when_$id" >/dev/null && ! "when_$id" >/dev/null 2>&1; then
+    printf '  SKIP   %s (not applicable)\n' "$desc"
     N_SKIPPED=$((N_SKIPPED+1))
     continue
   fi

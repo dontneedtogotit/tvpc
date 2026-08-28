@@ -7,7 +7,7 @@
 # fall back to and you get a black screen with a cursor. Nothing here is
 # written until the target session file has been confirmed on disk.
 #
-# Usage: sudo ./scripts/tvpc-session.sh [auto|plasma|plasma-mobile|plasma-x11|kiosk]
+# Usage: sudo ./scripts/tvpc-session.sh [auto|plasma|plasma-mobile|plasma-x11|kiosk|hypr]
 set -euo pipefail
 
 # shellcheck source=/dev/null
@@ -35,10 +35,12 @@ session_file() {   # $1 = session id -> echoes "<desktop-file>|<wayland|x11>"
     plasma-mobile) echo "plasma-mobile.desktop|wayland" ;;
     plasma-x11)    echo "plasma.desktop|x11" ;;
     kiosk)         echo "tvpc-kiosk.desktop|wayland" ;;
-    # Opt-in, not in AUTO_ORDER. Install the package first; the check below
+    # Opt-in, not in AUTO_ORDER. Install the session first; the check below
     # refuses to point autologin at a session that is not on disk.
-    #   bigscreen -> apt install plasma-bigscreen   (KDE's TV shell, remote-first)
-    #   phosh     -> apt install phosh              (GNOME's phone shell)
+    #   hypr      -> sudo ./scripts/tvpc-hyprland.sh  (Hyprland, TV-tuned)
+    #   bigscreen -> apt install plasma-bigscreen     (KDE's TV shell, remote-first)
+    #   phosh     -> apt install phosh                (GNOME's phone shell)
+    hypr)          echo "tvpc-hypr.desktop|wayland" ;;
     bigscreen)     echo "plasma-bigscreen-wayland.desktop|wayland" ;;
     bigscreen-x11) echo "plasma-bigscreen-x11.desktop|x11" ;;
     phosh)         echo "phosh.desktop|wayland" ;;
@@ -113,7 +115,7 @@ if [[ $WANT == auto ]]; then
 else
   session_file "$WANT" >/dev/null || {
     echo "Unknown session '$WANT'. Known: auto plasma plasma-mobile plasma-x11" >&2
-    echo "                              kiosk bigscreen bigscreen-x11 phosh" >&2
+    echo "                              kiosk hypr bigscreen bigscreen-x11 phosh" >&2
     exit 1
   }
   if ! CHOSEN_PATH="$(locate_session "$WANT")"; then

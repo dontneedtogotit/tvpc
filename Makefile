@@ -71,6 +71,7 @@ offline-usb:
 check:
 	@bash -n install.sh scripts/*.sh && echo "bash syntax OK"
 	@command -v shellcheck >/dev/null && shellcheck -x -S warning install.sh scripts/*.sh || echo "shellcheck not installed (skipping)"
+	@./scripts/check-hyprland-config.sh
 
 clean:
 	rm -f /var/log/tvpc-install.log

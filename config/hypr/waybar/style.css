@@ -1,0 +1,51 @@
+/* tvpc status bar — sized to be read from a sofa, not a desk. */
+
+* {
+  font-family: "Noto Sans", "Symbols Nerd Font", sans-serif;
+  font-size: 19px;
+  font-weight: 500;
+  border: none;
+  border-radius: 0;
+  min-height: 0;
+}
+
+window#waybar {
+  /* Semi-transparent: Hyprland's layer blur rule does the rest. */
+  background: rgba(11, 14, 20, 0.62);
+  color: #e6edf3;
+  border-radius: 16px;
+}
+
+#clock,
+#pulseaudio,
+#network,
+#custom-menu,
+#custom-power {
+  padding: 4px 16px;
+  margin: 4px 2px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.05);
+}
+
+#custom-menu {
+  color: #33ccff;
+  font-weight: 700;
+}
+
+#clock {
+  font-size: 21px;
+  font-weight: 700;
+}
+
+#pulseaudio.muted {
+  color: #ff7b72;
+}
+
+#network.disconnected {
+  color: #ff7b72;
+}
+
+#custom-power {
+  color: #ff7b72;
+  font-size: 21px;
+}
