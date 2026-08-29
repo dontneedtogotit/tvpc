@@ -553,8 +553,536 @@ tui_main() {
 }
 
 # ---------------------------------------------------------------------------
-# Launcher install
+# Display: EDID detection, HDR, UI density
 # ---------------------------------------------------------------------------
+output_id() {
+  command -v kscreen-doctor >/dev/null 2>&1 || return 0
+  kscreen-doctor -o 2>/dev/null | awk '/^Output:/ && /enabled/ {print $3; exit}'
+}
+
+detect_edid() {
+  local edid; for p in /sys/class/drm/*/edid; do
+    [[ -r $p ]] || continue
+    if [[ $(stat -c%s "$p" 2>/dev/null || echo 0) -gt 0 ]]; then
+      edid="$p"
+      local info=""; command -v edid-decode >/dev/null 2>&1 && info="$(edid-decode "$edid" 2>/dev/null)" || true
+      local vendor="${info//[^A-Z]"/"}"  # crude
+      local model="${info//[^A-Za-z0-9]"/"}"
+      echo "EDID: $edid (${vendor:-?} ${model:-?})"
+      # Extract preferred mode (first Resolution line from edid-decode)
+      local mode; mode="$(echo "$info" | awk '/^Model Name:/ {modelname=$2} /^[0-9]+x[0-9]+.*[0-9]+ Hz/ {print $1"@"$NF; exit} {modelname=$2}')"
+      if [[ -n $mode ]]; then
+        echo "Preferred mode: $mode"
+        do_mode "$mode"
+      fi
+      # Set UI density based on typical TV (1.5) or monitor (1.0)
+      local scale=1.5
+      [[ $mode == 3840x* ]] && scale=1.25
+      do_scale "$scale"
+      return 0
+    fi
+  done
+  echo "No EDID found (no display connected)"
+  return 1
+}
+
+cmd_edid() {
+  if command -v kscreen-doctor >/dev/null 2>&1; then
+    local out; out="$(output_id)"
+    [[ -n $out ]] && echo "Connected output: $out"
+  fi
+  detect_edid
+}
+
+cmd_hdr() {
+  local state="${1:-on}"; shift
+  command -v kscreen-doctor >/dev/null 2>&1 || { echo "kscreen-doctor missing"; return 1; }
+  local out; out="$(output_id)" || { echo "no output"; return 1; }
+  if kscreen-doctor "output.$out.hdr.$state" >/dev/null 2>&1; then
+    echo "HDR -> $state"
+    set_default TVPC_HDR "$state"
+  else
+    echo "HDR not supported by this display/driver"
+    return 1
+  fi
+}
+
+ui_densities() {
+  local ks ks_default
+  ks="$(kglobals_path)"  # Path to kdeglobals
+  if [[ -f $ks ]]; then
+    ks_default="$(grep -i '^[[:space:]]*[[:alnum:]]* =' "$ks" | head -1)"
+    echo "$ks_default"
+  else
+    echo ""
+  fi
+}
+
+value_of() {
+  local key="$1"; local file="$2"
+  [[ -f $file ]] && grep -q "^$key=" "$file" && sed -n "s/^$key=//p" "$file" | head -1
+}
+
+in_section() {
+  local line; while IFS= read -r line; do
+    if [[ $line == "[\"$1\"]" ]]; then return 0; elif [[ $line == "["* "]" ]]; then return 1; fi
+  done
+}
+
+insert_into_section() {
+  local file="$1"; local section="$2"; local key="$3"; local val="$4"
+  local tmp; tmp="$(mktemp)"
+  local found=0
+  while IFS= read -r line; do
+    if [[ $line == "[$section]" ]]; then found=1; fi
+    if (( found )) && [[ $line == "$key="* ]]; then
+      echo "$key=$val"
+      found=2
+      continue
+    fi
+    echo "$line"
+  done <"$file" >"$tmp"
+  if (( found < 2 )); then
+    awk -v sect="[$section]" -v kv="$key=$val" '
+      {print}
+      $0==sect && !done {print kv; done=1}
+    ' "$file" >"$tmp"
+  fi
+  mv "$tmp" "$file"
+}
+
+cmd_density() {
+  local level="$1"
+  if [[ ! $level =~ ^(comfortable|normal|compact)$ ]]; then
+    echo "usage: tvpc-tweaks density comfortable|normal|compact"
+    return 1
+  fi
+  case "$level" in
+    comfortable) do_font 15; do_scale 1.5; kde_icon_size 48 ;;
+    normal)      do_font 13; do_scale 1.0; kde_icon_size 32 ;;
+    compact)     do_font 11; do_scale 0.75; kde_icon_size 24 ;;
+  esac
+  echo "UI density -> $level (font=$FONT_SIZE, scale=$TVPC_SCALE, icons=$?)"
+}
+
+# ---------------------------------------------------------------------------
+# Audio: equalizer (best-effort, requires mbeq_swh-plugins)
+# ---------------------------------------------------------------------------
+EQ_CONF="$(target_home)/.config/pipewire/pipewire.conf.d/99-tvpc-eq.conf"
+CMD_EQ_OFF='rm -f "$EQ_CONF" && echo "EQ disabled" && echo "  restart pipewire: systemctl --user restart pipewire"'
+EQ_PRESETS=(flat bass treble vocal movie)
+EQ_BANDS=(0 0 0 0 0 0 0 0 0 0 0 0 0 0 0)  # 15 bands
+
+CMD_EQ_WRITE='if [[ $preset == off ]]; then $CMD_EQ_OFF; else
+  local f="$EQ_CONF"
+  mkdir -p "$(dirname "$f")"
+  cat >"$f" <<EOF
+context.modules = [
+  { factory = "filter-chain"
+    args = {
+      node.description = "tvpc EQ"
+      media.name = "tvpc EQ"
+      filter.graph = {
+        nodes = [ { type = ladspa
+                    plugin = mbeq_1901
+                    label = mbeq
+                    control = { $eqs } } ]
+        inputs = [ "in_1" "in_2" ];
+        outputs = [ "out_1" "out_2" ];
+        links = [ { in = "in_1", out = "out_1" }
+                  { in = "in_2", out = "out_2" } ]
+      }
+      capture.props = { node.name = "tvpc.eq.source" }
+      playback.props = { node.name = "tvpc.eq.sink" node.target = "auto" }
+    }
+  }
+]
+EOF
+  echo "EQ -> $preset"
+  echo "  restart pipewire: systemctl --user restart pipewire"
+fi"
+
+cmd_eq() {
+  local preset="${1:-off}"; shift
+  if [[ $preset == off ]]; then
+    eval "$CMD_EQ_OFF"
+    return 0
+  fi
+  local found=0
+  for p in "${EQ_PRESETS[@]}"; do
+    if [[ $p == "$preset" ]]; then found=1; break; fi
+  done
+  if (( found == 0 )); then
+    echo "Unknown preset: $preset"
+    echo "Available: ${EQ_PRESETS[*]}"
+    return 1
+  fi
+  local eqs; eqs="$(IFS=:; echo "${EQ_BANDS[*]}")"  # placeholder
+  eval "$CMD_EQ_WRITE"
+}
+
+# ---------------------------------------------------------------------------
+# Network: Wi-Fi, Bluetooth, and home-screen tiles
+# ---------------------------------------------------------------------------
+NETWORK_TILES_DIR="$(target_home)/.local/share/applications"
+cmd_wifi() { [[ -t 0 ]] && kcmshell5 kcm_networkmanagement 2>/dev/null || echo "Run from a TTY or GUI" >&2; }
+cmd_bluetooth() { [[ -t 0 ]] && kcmshell5 bluetooth 2>/dev/null || echo "Run from a TTY or GUI" >&2; }
+
+add_network_tiles() {
+  mkdir -p "$NETWORK_TILES_DIR"
+  cat >"$NETWORK_TILES_DIR/tvpc-wifi.desktop" <<'EOF'
+[Desktop Entry]
+Type=Application
+Name=Wi-Fi
+Comment=Network settings
+Exec=kcmshell5 kcm_networkmanagement
+Terminal=false
+Icon=network-wireless
+Categories=Settings;Network;
+EOF
+  cat >"$NETWORK_TILES_DIR/tvpc-bluetooth.desktop" <<'EOF'
+[Desktop Entry]
+Type=Application
+Name=Bluetooth
+Comment=Bluetooth settings
+Exec=kcmshell5 bluetooth
+Terminal=false
+Icon=bluetooth
+Categories=Settings;Network;
+EOF
+  if is_root; then chown -R "$TVPC_USER:$TVPC_USER" "$NETWORK_TILES_DIR" 2>/dev/null || true; fi
+  echo "Added Wi-Fi and Bluetooth tiles to home screen."
+}
+
+# ---------------------------------------------------------------------------
+# Boot splash
+# ---------------------------------------------------------------------------
+cmd_splash() {
+  local arg="${1:-}"
+  is_root || { echo "needs root"; return 1; }
+  command -v plymouth >/dev/null 2>&1 || { echo "plymouth not installed"; return 1; }
+  local splash_img="/usr/share/plymouth/tvpc-splash.png"
+  if [[ $arg == off ]]; then
+    rm -f "$splash_img"
+    update-initramfs -u 2>/dev/null || true
+    echo "Custom splash removed"
+    return 0
+  fi
+  ensure_wallpaper "$splash_img" || { echo "could not create image"; return 1; }
+  # create or update a theme's background image (best-effort)
+  local theme; theme="$(plymouth-set-default-theme 2>/dev/null || echo text)"
+  if [[ -d /usr/share/plymouth/themes/$theme ]]; then
+    cp "$splash_img" "/usr/share/plymouth/themes/$theme/background.png" 2>/dev/null || true
+  fi
+  update-initramfs -u 2>/dev/null || true
+  echo "Boot splash set to a dark image (reboot to see it)."
+}
+
+# ---------------------------------------------------------------------------
+# CEC remote control: map, macro, mouse, editing
+# ---------------------------------------------------------------------------
+CEC_MAP=/etc/tvpc/cec-map.conf
+CEC_MACROS=/etc/tvpc/cec-macros.conf
+MOUSE_MODE=0
+
+define_default_cec_map() {
+  mkdir -p "$(dirname "$CEC_MAP")"
+  cat >"$CEC_MAP" <<'EOF'
+# TVPC CEC key map. Format: <hexcode> <action>
+# actions: key:<linux-code> mpris:<cmd> pactl:<args> app:<desktop-id> macro:<name> mouse none
+00 key:28
+01 key:103
+02 key:108
+03 key:105
+04 key:106
+09 key:125
+0d key:1
+41 pactl:+2%
+42 pactl:-2%
+43 pactl:toggle
+44 mpris:play-pause
+45 mpris:play-pause
+46 mpris:stop
+47 mpris:next
+48 mpris:previous
+EOF
+}
+
+ensure_cec_map() { [[ -f $CEC_MAP ]] || define_default_cec_map; }
+
+write_cec_map() {
+  local code="$1"; local action="$2"
+  ensure_cec_map
+  local tmp; tmp="$(mktemp)"
+  while IFS= read -r line; do
+    if [[ $line == "$code "* ]]; then
+      echo "$code $action"
+    else
+      echo "$line"
+    fi
+  done <"$CEC_MAP" >"$tmp"
+  mv "$tmp" "$CEC_MAP"
+  chmod 0644 "$CEC_MAP"
+}
+
+# read action for a code, fallback to default defined above
+get_cec_action() {
+  local code="$1"
+  local action=""
+  if [[ -f $CEC_MAP ]]; then
+    action="$(grep -v '^#' "$CEC_MAP" | awk -v c="$code" '$1==c{print $2; exit}')"
+  fi
+  [[ -z $action ]] && case "$code" in
+    00) action="key:28";; 01) action="key:103";; 02) action="key:108";;
+    03) action="key:105";; 04) action="key:106";; 09) action="key:125";;
+    0d) action="key:1";; 41) action="pactl:+2%";; 42) action="pactl:-2%";;
+    43) action="pactl:toggle";; 44|45) action="mpris:play-pause";;
+    46) action="mpris:stop";; 47) action="mpris:next";; 48) action="mpris:previous";;
+    *) action="none";; esac
+  echo "$action"
+}
+
+run_cec_action() {
+  local act="$1"; local code="$2"
+  case "$act" in
+    key:*) send_key "${act#key:}" "${act#key:}";;
+    pactl:*) local v="${act#pactl:}"; pactl set-sink-volume @DEFAULT_SINK@ "$v" 2>/dev/null || true; [[ $v == toggle ]] && pactl set-sink-mute @DEFAULT_SINK@ toggle 2>/dev/null;;
+    mpris:*) playerctl "${act#mpris:}" 2>/dev/null || true;;
+    app:*) kde-open5 "application://${act#app:}.desktop" 2>/dev/null || true;;
+    mouse) if (( MOUSE_MODE )); then MOUSE_MODE=0; else MOUSE_MODE=1; fi;;
+    none|"") ;;
+    macro:*) run_cec_macro "${act#macro:}";;
+    cmd:*) bash -c "${act#cmd:}" &;;
+  esac
+}
+
+run_cec_macro() {
+  local name="$1"; local line; while IFS= read -r l; do
+    [[ $l == "#"* || -z $l ]] && continue
+    run_cec_action "$l" "$(echo "$l" | cut -d' ' -f1)"
+  done < <(grep -v "^#" "$CEC_MACROS" 2>/dev/null | awk -v n="$name" '$1==n{$1=""; sub(/^ /,""); print; exit}')
+}
+
+# send key using ydotool (or xdotool) from enhance-cec.sh's send_key
+y_send_key() { ydotool key "$1:1" "$1:0" 2>/dev/null; }
+
+# Ydotool mouse operations (best-effort)
+Y_SEND_MOUSE() {
+  local op="$1"; shift
+  case "$op" in
+    move) ydotool mousemove "$@" 2>/dev/null;;
+    click) ydotool click "$@" 2>/dev/null;;
+    *) ;;
+  esac
+}
+
+# CEC listener handler with mouse support
+CEC_HANDLE() {
+  local code="$1"; local act; act="$(get_cec_action "$code")"
+  if (( MOUSE_MODE )); then
+    case "$code" in
+      00) Y_SEND_MOUSE click LEFT;;
+      01) Y_SEND_MOUSE move -0 -40;;
+      02) Y_SEND_MOUSE move -0 40;;
+      03) Y_SEND_MOUSE move -40 -0;;
+      04) Y_SEND_MOUSE move 40 -0;;
+    esac
+    return
+  fi
+  if [[ $act == mouse ]]; then MOUSE_MODE=1; return; fi
+  run_cec_action "$act" "$code"
+}
+
+# User interface for CEC mapping
+tui_cec() {
+  need_root "cec" || return 1
+  ensure_cec_map
+  local codes=(00 01 02 03 04 09 0d 41 42 43 44 45 46 47 48)
+  local names=(OK Up Down Left Right Home Exit Vol+ Vol- Mute Play Pause Stop Next Prev)
+  local i
+  while true; do
+    menu_reset
+    for ((i=0; i<${#codes[@]}; i++)); do
+      menu_add "${codes[$i]}" "${names[$i]} ->  $(get_cec_action "${codes[$i]}")"
+    done
+    menu_add back "Back"
+    select_list "CEC remote keys"
+    if [[ $RESULT == back || -z $RESULT ]]; then break; fi
+    cec_edit_key "$RESULT"
+    systemctl restart tvpc-cec-remote 2>/dev/null || true
+    echo "CEC map updated; listener restarted."
+  done
+}
+
+cec_edit_key() {
+  local code="$1"
+  menu_reset
+  menu_add key "Key press (linux keycode)"
+  menu_add mpris "Media (playerctl)"
+  menu_add pactl "Volume"
+  menu_add app "Launch app"
+  menu_add macro "Macro"
+  menu_add cmd "Shell command"
+  menu_add mouse "Toggle mouse mode"
+  menu_add none "Disabled"
+  menu_add cancel "Cancel"
+  select_list "Action for key 0x$code"
+  case "$RESULT" in
+    cancel|"") return ;;
+    key) clear; printf 'Linux keycode (e.g. 28=Enter 125=Super 103=Up): '; read -r v; [[ $v ]] && write_cec_map "$code" "key:$v" ;;
+    mpris) menu_reset; for m in play-pause stop next previous; do menu_add "$m" "$m"; done; menu_add cancel Cancel; select_list "Media action"; [[ $RESULT && $RESULT != cancel ]] && write_cec_map "$code" "mpris:$RESULT" ;;
+    pactl) menu_reset; for v in "+2%" "-2%" "toggle"; do menu_add "$v" "$v"; done; menu_add cancel Cancel; select_list "Volume"; [[ $RESULT && $RESULT != cancel ]] && write_cec_map "$code" "pactl:$RESULT" ;;
+    app) menu_reset; while IFS=$'\t' read -r id name; do menu_add "$id" "$name"; done < <(list_apps); menu_add cancel Cancel; select_list "App to launch"; [[ $RESULT && $RESULT != cancel ]] && write_cec_map "$code" "app:$RESULT" ;;
+    macro) menu_reset; while IFS= read -r m; do [[ $m == \#* || -z $m ]] && continue; menu_add "${m%% *}" "${m%% *}"; done < "$CEC_MACROS" 2>/dev/null; menu_add __new__ "New macro…"; menu_add cancel Cancel; select_list "Macro"; if [[ $RESULT == __new__ ]]; then clear; printf 'Macro name: '; read -r mn; printf 'Actions (space-separated, e.g. cmd:tvpc-allapps): '; read -r ma; [[ $mn && $ma ]] && { echo "$mn $ma" >> "$CEC_MACROS"; write_cec_map "$code" "macro:$mn"; }; elif [[ $RESULT && $RESULT != cancel ]]; then write_cec_map "$code" "macro:$RESULT"; fi ;;
+    cmd) clear; printf 'Shell command: '; read -r v; [[ $v ]] && write_cec_map "$code" "cmd:$v" ;;
+    mouse) write_cec_map "$code" "mouse" ;;
+    none) write_cec_map "$code" "none" ;;
+  esac
+}
+
+# ---------------------------------------------------------------------------
+# Plugins (load from files)
+# ---------------------------------------------------------------------------
+load_plugins() {
+  local d
+  for d in /usr/local/share/tvpc-tweaks/plugins.d "$HOME/.config/tvpc-tweaks/plugins.d"; do
+    [[ -d $d ]] || continue
+    for f in "$d"/*.sh; do [[ -f $f ]] && . "$f"; done
+  done
+}
+
+# Plugin example (installed by install.sh)
+add_example_plugin() {
+  mkdir -p /usr/local/share/tvpc-tweaks/plugins.d
+  cat >"/usr/local/share/tvpc-tweaks/plugins.d/10-example.sh" <<'EOF'
+TVPC_PLUGIN_IDS+=("clear-cache")
+TVPC_PLUGIN_LABELS+=("Clear thumbnail cache")
+
+tvpc_plugin_clear-cache() {
+  local cache_dirs=("$HOME/.cache/thumbnails" "$HOME/.local/share/Trash")
+  for cd in "${cache_dirs[@]}"; do rm -rf "$cd"/* 2>/dev/null || true; done
+  echo "Thumbnail cache cleared."
+}
+EOF
+}
+
+# ---------------------------------------------------------------------------
+# Dispatch of commands and menu
+# ---------------------------------------------------------------------------
+cmd_status() {
+  local scale; scale="${TVPC_SCALE:-unset}"
+  echo "== tvpc tweaks status =="
+  echo "session   : ${TVPC_SESSION:-unset}"
+  echo "scale     : $scale"
+  echo "font size : $(get_kg font | cut -d, -f2)pt"
+  echo "theme     : $(get_kg ColorScheme)"
+  echo "mode      : ${TVPC_MODE:-auto}"
+  echo "EDID      : $(detect_edid)"
+  echo "HDR       : ${TVPC_HDR:-on}"
+  echo "EQ preset : ${1:-$(if [[ -f $EQ_CONF ]] && command -v pw-cli >/dev/null 2>&1; then echo "active" || echo "config present" || echo "off"; else echo "off"; fi)}"
+  echo "CEC map   : $(ls -l $CEC_MAP 2>/dev/null | wc -l)"
+  echo "Mouse mode: $MOUSE_MODE"
+}
+
+vacuum_only() {
+  echo "== tvpc: VacuumTube-only home =="
+  do_theme dark
+  echo "-- curate: keep only VacuumTube --"
+  local vid=io.github.vacuumtube.VacuumTube
+  if ! list_apps | cut -f1 | grep -qx "$vid"; then
+    echo "  (VacuumTube not installed — cannot make it the only home tile; install it first)"
+    return 1
+  fi
+  local id
+  for id in $(list_apps | cut -f1); do
+    [[ $id == "$vid" ]] && continue
+    hide_app "$id"
+  done
+  echo "  home now shows only VacuumTube"
+  echo "-- dark wallpaper --"; apply_wallpaper
+  echo "-- all-apps launcher --"; ensure_allapps
+  echo
+  echo "Done. VacuumTube is the only home tile; every other app opens from 'tvpc-allapps'."
+}
+
+home_preset() {
+  echo "== tvpc home-screen preset =="
+  echo "-- dark theme --"; do_theme dark
+  echo "-- hero tile --"; add_hero_tile
+  echo "-- curate tiles (keep only a couch set) --"
+  local present_whitelist=0 w id keepit=0
+  for w in "${WHITELIST_IDS[@]}"; do
+    if list_apps | cut -f1 | grep -qx "$w"; then present_whitelist=$((present_whitelist + 1)); fi
+  done
+  if [[ $present_whitelist -eq 0 ]]; then
+    echo "  (no whitelisted apps installed yet — leaving the home screen unchanged)"
+  else
+    for id in $(list_apps | cut -f1); do
+      keepit=0
+      for w in "${WHITELIST_IDS[@]}"; do [[ $id == "$w" ]] && { keepit=1; break; }; done
+      [[ $keepit -eq 0 ]] && hide_app "$id"
+    done
+  fi
+  echo "  kept tiles:"
+  for w in "${WHITELIST_IDS[@]}"; do
+    if list_apps | cut -f1 | grep -qx "$w"; then echo "    - $w"; fi
+  done
+  echo "-- wallpaper --"; apply_wallpaper
+  echo "-- session --"; ensure_bigscreen_session
+  echo
+  echo "Done. Log out and back in (or 'sudo systemctl restart sddm') to see it."
+}
+
+# ---------------------------------------------------------------------------
+# Wrapper for mouse click (uses ydotool if available)
+# ---------------------------------------------------------------------------
+Y_CLICK_LEFT="$(which ydotool 2>/dev/null || echo false)"  # flag
+if [[ $Y_CLICK_LEFT != false ]]; then
+  mouse_click_left() { ydotool click LEFT 2>/dev/null; }
+else
+  mouse_click_left() { command -v xdotool >/dev/null 2>&1 && DISPLAY=:0 xdotool click 1 2>/dev/null; }
+fi
+
+# Wrapper for mouse move (relative) — only if ydotool present
+MOUSE_MOVE="$(which ydotool 2>/dev/null || echo false)"
+if [[ $MOUSE_MOVE != false ]]; then
+  mouse_move() { ydotool mousemove "$@" 2>/dev/null; }
+else
+  mouse_move() { command -v xdotool >/dev/null 2>&1 && DISPLAY=:0 xdotool mousemove "$@" 2>/dev/null; }
+fi
+
+# Dispatch of commands and menu
+case "${1:-}" in
+  scale)           shift; do_scale "${1:-}" ;;
+  font)            shift; do_font "${1:-}" ;;
+  apps)            list_apps | while IFS=$'\t' read -r id name; do
+                     app_is_hidden "$id" && st="hidden" || st="shown"
+                     printf '%-45s %-30s %s\n' "$id" "${name:0:29}" "$st"
+                   done ;;
+  hide)            shift; need_root "hide $*" || exit 1; IFS=',' read -r -a ids <<<"$*"; for id in "${ids[@]}"; do hide_app "$id"; done; echo "Hidden: ${ids[*]}  (log out and back in)" ;;
+  show)            shift; need_root "show $*" || exit 1; IFS=',' read -r -a ids <<<"$*"; for id in "${ids[@]}"; do show_app "$id"; done; echo "Shown again: ${ids[*]}  (log out and back in)" ;;
+  theme)           shift; do_theme "${1:-}" ;;
+  mode)            shift; do_mode "${1:-auto}" ;;
+  idle)            shift; do_idle "${1:-on}" ;;
+  autostart)       shift; tui_autostart ;;
+  session)         shift; need_root "session $*" || exit 1; SESSION_TOOL=""; for cand in "$REPO_ROOT/scripts/tvpc-session.sh" /usr/local/bin/tvpc-session; do [[ -x $cand ]] && { SESSION_TOOL="$cand"; break; }; done; [[ -n $SESSION_TOOL ]] && "$SESSION_TOOL" "${1:-auto}" || echo "tvpc-session not found" ;;
+  status)          cmd_status ;;
+  home)            home_preset ;;
+  vacuum-only)     vacuum_only ;;
+  edid)            cmd_edid ;;
+  hdr)             cmd_hdr "$2" ;;
+  density)         cmd_density "$2" ;;
+  eq)              cmd_eq "$2" ;;
+  wifi)            cmd_wifi ;;
+  bluetooth)      cmd_bluetooth ;;
+  network-tiles)  add_network_tiles ;;
+  splash)          cmd_splash "$2" ;;
+  cec|cec-map)     need_root "cec" || exit 1; tui_cec ;;
+  install-launcher) install_launcher ;;
+  --help|-h|help)  usage; exit 0 ;;
+  "")              if [[ -t 1 ]]; then tui_main; else usage; fi ;;
+  *)               echo "Unknown command '$1' (try: tvpc-tweaks --help)" >&2; exit 1 ;;
+esac
 install_launcher() {
   need_root "install-launcher" || return 1
   install -m 0755 "$REPO_ROOT/scripts/tvpc-tweaks.sh" /usr/local/bin/tvpc-tweaks
