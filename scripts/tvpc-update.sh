@@ -133,7 +133,6 @@ fix_badfiles() {
 HELPERS=(
   "scripts/cec-tv-poweron.sh:/usr/local/bin/cec-tv-poweron.sh"
   "scripts/tvpc-hdmi-audio.sh:/usr/local/bin/tvpc-hdmi-audio"
-  "scripts/tvpc-display-setup.sh:/usr/local/bin/tvpc-display-setup"
   "scripts/tvpc-doctor.sh:/usr/local/bin/tvpc-doctor"
   "scripts/tvpc-repair.sh:/usr/local/bin/tvpc-repair"
   "scripts/tvpc-session.sh:/usr/local/bin/tvpc-session"

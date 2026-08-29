@@ -486,6 +486,8 @@ Commands:
   density <level>  UI density (comfortable/normal/compact)
   hdr <on|off>     Toggle HDR output (live)
   edid             Detect EDID and suggest modes
+  setup            Apply TVPC_SCALE/TVPC_MODE live (autostart)
+  audio <status|volume up/down N|mute|profile NAME>  HDMI audio control
   autostart        Manage autostart apps (interactive)
   session <name>   Switch desktop session (needs root)
   status           Show current configuration
@@ -665,6 +667,98 @@ cmd_density() {
             ;;
     esac
     echo "UI density -> $level (font=$(get_kg font | cut -d, -f2), icons=$(get_kg 'Icons' 'Size'))"
+}
+
+# tvpc-display-setup inlined: apply TVPC_SCALE/TVPC_MODE from /etc/default/tvpc
+cmd_setup() {
+    command -v kscreen-doctor >/dev/null 2>&1 || {
+        echo "kscreen-doctor missing; skipping display setup"
+        return 0
+    }
+    for _ in $(seq 1 15); do
+        kscreen-doctor -o >/dev/null 2>&1 && break
+        sleep 2
+    done
+    local out; out="$(output_id)"
+    if [[ -z $out ]]; then
+        echo "no enabled output reported; skipping"
+        return 0
+    fi
+    local mode="${TVPC_MODE:-}"
+    if [[ -n $mode ]]; then
+        kscreen-doctor "output.$out.mode.$mode" \
+            && echo "mode -> $mode on $out" \
+            || echo "could not set mode $mode (see: kscreen-doctor -o)"
+    fi
+    local scale="${TVPC_SCALE:-1.5}"
+    if [[ $scale != "1" && $scale != "1.0" ]]; then
+        kscreen-doctor "output.$out.scale.$scale" \
+            && echo "scale -> $scale on $out" \
+            || echo "could not set scale $scale"
+    fi
+}
+
+# Audio management (inlined from tvpc-audio-manager.sh)
+cmd_audio() {
+    local sub="${2:-status}"
+    case "$sub" in
+        status)
+            echo "=== Audio Status ==="
+            echo "Default sink: $(pactl get-default-sink 2>/dev/null || true)"
+            echo
+            echo "Available sinks:"
+            pactl list short sinks 2>/dev/null
+            echo
+            echo "Current volume: $(pactl get-sink-volume @DEFAULT_SINK@ 2>/dev/null | awk '{print $5}' | tr -d '%')%"
+            echo "Mute: $(pactl get-sink-mute @DEFAULT_SINK@ 2>/dev/null | awk '{print $2}')"
+            ;;
+        volume)
+            local level="$3"
+            if [[ -z $level ]]; then
+                echo "Current volume: $(pactl get-sink-volume @DEFAULT_SINK@ 2>/dev/null | awk '{print $5}' | tr -d '%')%"
+            elif [[ $level == "up" ]]; then
+                pactl set-sink-volume @DEFAULT_SINK@ +5%
+                echo "Volume increased by 5%"
+            elif [[ $level == "down" ]]; then
+                pactl set-sink-volume @DEFAULT_SINK@ -5%
+                echo "Volume decreased by 5%"
+            elif [[ $level =~ ^[0-9]+$ ]] && [[ $level -ge 0 ]] && [[ $level -le 100 ]]; then
+                pactl set-sink-volume @DEFAULT_SINK@ "${level}%"
+                echo "Volume set to ${level}%"
+            else
+                echo "Error: Volume must be 0-100 or up/down" >&2
+                return 1
+            fi
+            ;;
+        mute)
+            pactl set-sink-mute @DEFAULT_SINK@ toggle
+            local m; m="$(pactl get-sink-mute @DEFAULT_SINK@ 2>/dev/null | awk '{print $2}')"
+            if [[ $m == "yes" ]]; then
+                echo "Audio muted"
+            else
+                echo "Audio unmuted"
+            fi
+            ;;
+        profile)
+            local prof="$3"
+            if [[ -z $prof ]]; then
+                echo "Available profiles:"
+                pactl list cards 2>/dev/null | sed -n '/Profiles:/,/^ *$/p'
+                return 0
+            fi
+            local card; card="$(pactl list short cards 2>/dev/null | head -1 | awk '{print $2}')"
+            if [[ -n $card ]] && pactl set-card-profile "$card" "$prof" 2>/dev/null; then
+                echo "Profile set to $prof"
+            else
+                echo "Failed to set profile: $prof" >&2
+                return 1
+            fi
+            ;;
+        *)
+            echo "Usage: tvpc-tweaks audio status|volume|mute|profile" >&2
+            return 1
+            ;;
+    esac
 }
 
 cmd_eq() {
@@ -1268,6 +1362,7 @@ tui_main() {
         menu_add edid "EDID / display detection"
         menu_add hdr "HDR toggle"
         menu_add density "UI density"
+        menu_add audio "Audio (HDMI / volume)"
         menu_add cec "CEC key mappings"
         menu_add quit "Exit"
         select_list "tvpc Tweaks"
@@ -1291,6 +1386,11 @@ tui_main() {
                 pause_msg ""
                 ;;
             density)   tui_density ;;
+            audio)
+                clear
+                cmd_audio status
+                pause_msg ""
+                ;;
             cec)       tui_cec ;;
             quit|"")   return ;;
         esac
@@ -1435,6 +1535,12 @@ case "${1:-}" in
         ;;
     network-tiles)
         add_network_tiles
+        ;;
+    setup)
+        cmd_setup
+        ;;
+    audio)
+        cmd_audio "$@"
         ;;
     splash)
         shift

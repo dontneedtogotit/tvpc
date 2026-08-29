@@ -374,7 +374,7 @@ Home-screen app removal drives both mechanisms: Bigscreen's
 `applications-blacklistrc` and plain Plasma's launcher favorites, so the app
 drops off whichever shell is active. Scaling and mode persist through
 `/etc/default/tvpc` (`TVPC_SCALE` / `TVPC_MODE`) and are applied live by
-`tvpc-display-setup` at login. Reboot-persisting changes need root; user-level
+`tvpc-tweaks setup` at login. Reboot-persisting changes need root; user-level
 tweaks apply immediately as the logged-in user.
 
 ### The full home-screen preset
@@ -514,12 +514,11 @@ tvpc/
 │   ├── tvpc-doctor.sh              # Health check
 │   ├── tvpc-postboot.sh            # Run once after first boot
 │   ├── tvpc-hdmi-audio.sh          # Detect and select the HDMI output
-│   ├── tvpc-display-setup.sh       # Scale/mode via kscreen-doctor
 │   ├── customize.sh                # Idempotent UI/theme tweaks
 │   ├── enhance-cec.sh              # Samsung remote button mapping
 │   ├── cec-tv-poweron.sh           # CEC power-on at boot
 │   ├── install-extras.sh           # HW checks + NUC tuning
-│   ├── tvpc-audio-manager.sh       # Manual audio control
+│   ├── tvpc-tweaks.sh              # All-in-one UI/display/audio/CEC tweaks
 │   ├── make-offline-usb.sh         # Offline USB creator
 │   ├── prepare-ventoy-data.sh      # Ventoy data partition prep
 │   └── install-ubuntu-server.sh    # Simple USB builder

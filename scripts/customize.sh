@@ -13,7 +13,7 @@ SKEL=/etc/skel
 mkdir -p "$SKEL/.config" "$SKEL/.config/autostart"
 
 # --- Theme and 10-foot type -------------------------------------------------
-# Scaling is applied at runtime by tvpc-display-setup (TVPC_SCALE); larger
+# Scaling is applied at runtime by `tvpc-tweaks setup` (TVPC_SCALE); larger
 # fonts are set here because they work regardless of scale and cannot take the
 # display down if they are wrong.
 # The base font size is the master UI scale for anything Kirigami-based:
@@ -80,7 +80,7 @@ EOF
 # --- KWin rules -------------------------------------------------------------
 # The old rule tried to set the screen resolution here. KWin rules apply to
 # windows, not outputs, so it could never have worked; the display mode is
-# handled by tvpc-display-setup via kscreen-doctor. What is left is a real
+# handled by `tvpc-tweaks setup` via kscreen-doctor. What is left is a real
 # window rule: start VacuumTube fullscreen.
 cat >"$SKEL/.config/kwinrulesrc" <<'EOF'
 [General]
@@ -102,7 +102,7 @@ cat >"$SKEL/.config/autostart/tvpc-display-setup.desktop" <<'EOF'
 Type=Application
 Name=tvpc display setup
 Comment=Apply TV scale/mode from /etc/default/tvpc
-Exec=/usr/local/bin/tvpc-display-setup
+Exec=/usr/local/bin/tvpc-tweaks setup
 X-KDE-autostart-phase=1
 NoDisplay=true
 EOF

@@ -191,7 +191,6 @@ update-grub
 # ---------------------------------------------------------------------------
 install -m 0755 "$REPO_ROOT/scripts/cec-tv-poweron.sh"     /usr/local/bin/cec-tv-poweron.sh
 install -m 0755 "$REPO_ROOT/scripts/tvpc-hdmi-audio.sh"    /usr/local/bin/tvpc-hdmi-audio
-install -m 0755 "$REPO_ROOT/scripts/tvpc-display-setup.sh" /usr/local/bin/tvpc-display-setup
 install -m 0755 "$REPO_ROOT/scripts/tvpc-doctor.sh"        /usr/local/bin/tvpc-doctor
 install -m 0755 "$REPO_ROOT/scripts/tvpc-repair.sh"        /usr/local/bin/tvpc-repair
 install -m 0755 "$REPO_ROOT/scripts/tvpc-session.sh"       /usr/local/bin/tvpc-session
