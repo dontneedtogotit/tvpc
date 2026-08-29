@@ -625,7 +625,7 @@ value_of() {
 
 in_section() {
   local line; while IFS= read -r line; do
-    if [[ $line == "[\"$1\"]" ]]; then return 0; elif [[ $line == "["* "]" ]]; then return 1; fi
+    if [[ $line == "[$1]" ]]; then return 0; elif [[ $line == \[*\]* ]]; then return 1; fi
   done
 }
 
@@ -769,13 +769,14 @@ cmd_splash() {
     return 0
   fi
   ensure_wallpaper "$splash_img" || { echo "could not create image"; return 1; }
-  # create or update a theme's background image (best-effort)
-  local theme; theme="$(plymouth-set-default-theme 2>/dev/null || echo text)"
-  if [[ -d /usr/share/plymouth/themes/$theme ]]; then
-    cp "$splash_img" "/usr/share/plymouth/themes/$theme/background.png" 2>/dev/null || true
-  fi
-  update-initramfs -u 2>/dev/null || true
-  echo "Boot splash set to a dark image (reboot to see it)."
+# create or update a theme's background image (best-effort)
+   local theme
+   theme=$(plymouth-set-default-theme 2>/dev/null || echo "text")
+   if [[ -d /usr/share/plymouth/themes/$theme ]]; then
+     cp "$splash_img" "/usr/share/plymouth/themes/$theme/background.png" 2>/dev/null || true
+   fi
+   update-initramfs -u 2>/dev/null || true
+   echo "Boot splash set to a dark image (reboot to see it)."
 }
 
 # ---------------------------------------------------------------------------
