@@ -199,6 +199,7 @@ install -m 0755 "$REPO_ROOT/scripts/tvpc-update.sh"        /usr/local/bin/tvpc-u
 # installers on the box. Running one is a separate, deliberate step.
 # Bigscreen is archive-native; Hyprland pulls from a PPA.
 install -m 0755 "$REPO_ROOT/scripts/tvpc-bigscreen.sh"     /usr/local/bin/tvpc-bigscreen
+install -m 0755 "$REPO_ROOT/scripts/tvpc-bigscreen-topbar.sh" /usr/local/bin/tvpc-bigscreen-topbar
 install -m 0755 "$REPO_ROOT/scripts/tvpc-hyprland.sh"      /usr/local/bin/tvpc-hyprland
 install -m 0755 "$REPO_ROOT/scripts/tvpc-tweaks.sh"        /usr/local/bin/tvpc-tweaks
 install -m 0755 "$REPO_ROOT/scripts/tvpc-power.sh"          /usr/local/bin/tvpc-power
