@@ -72,7 +72,8 @@ detect_app_dir() {
 }
 
 get_main_file() {
-    local files="$1" pkg="$files/package.json"
+    local files="$1" pkg
+    pkg="$files/package.json"
     [[ -f $pkg ]] || { echo "index.js"; return; }
     grep -m1 '"main"' "$pkg" | sed -E 's/.*"main"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/' \
         | tr -d '[:space:]' | grep -v '^$' || echo "index.js"
