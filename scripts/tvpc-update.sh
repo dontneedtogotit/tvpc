@@ -134,6 +134,7 @@ HELPERS=(
   "scripts/cec-tv-poweron.sh:/usr/local/bin/cec-tv-poweron.sh"
   "scripts/tvpc-controller.sh:/usr/local/bin/tvpc-controller"
   "scripts/tvpc-status.sh:/usr/local/bin/tvpc-status"
+  "scripts/tvpc-cameras.sh:/usr/local/bin/tvpc-cameras"
   "scripts/tvpc-bigscreen-topbar.sh:/usr/local/bin/tvpc-bigscreen-topbar"
   "scripts/tvpc-hdmi-audio.sh:/usr/local/bin/tvpc-hdmi-audio"
   "scripts/tvpc-doctor.sh:/usr/local/bin/tvpc-doctor"

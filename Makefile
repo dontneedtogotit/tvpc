@@ -1,6 +1,6 @@
 .PHONY: help install update update-check repair check-boot logs session \
         customize postboot doctor cec-remote cec-poweron check-updates check \
-        offline-usb clean
+        offline-usb clean cameras-menu status controller-status controller-pair
 
 help:
 	@echo "tvpc — Android-like HTPC Linux (Intel NUC7i5BNH + 2013 Samsung TV)"
@@ -19,6 +19,10 @@ help:
 	@echo "  make tweaks           Install the TV Tweaks app + home-screen launcher"
 	@echo "  make home             Apply the full home-screen preset (curate + hero + power)"
 	@echo "  make home-vacuum      Curate the home to VacuumTube only + All Apps launcher"
+	@echo "  make status           Open the visual status dashboard (tvpc-status)"
+	@echo "  make controller-status Show paired gamepads / input devices"
+	@echo "  make controller-pair  Pair a Bluetooth gamepad interactively"
+	@echo "  make cameras-menu     Open the security-camera discovery + PiP app"
 	@echo "  make tweaks-menu      Run the TV Tweaks app interactively"
 	@echo "  make postboot         Post-boot: SSH + Wi-Fi + polish"
 	@echo "  make doctor           Run full health check"
@@ -64,6 +68,18 @@ home-vacuum:
 
 tweaks-menu:
 	./scripts/tvpc-tweaks.sh
+
+cameras-menu:
+	./scripts/tvpc-cameras.sh menu
+
+status:
+	./scripts/tvpc-status.sh
+
+controller-status:
+	sudo ./scripts/tvpc-controller.sh status
+
+controller-pair:
+	sudo ./scripts/tvpc-controller.sh pair-gamepad
 
 postboot:
 	sudo ./scripts/tvpc-postboot.sh

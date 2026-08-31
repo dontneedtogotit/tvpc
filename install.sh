@@ -204,6 +204,7 @@ install -m 0755 "$REPO_ROOT/scripts/tvpc-hyprland.sh"      /usr/local/bin/tvpc-h
 install -m 0755 "$REPO_ROOT/scripts/tvpc-tweaks.sh"        /usr/local/bin/tvpc-tweaks
 install -m 0755 "$REPO_ROOT/scripts/tvpc-controller.sh"    /usr/local/bin/tvpc-controller
 install -m 0755 "$REPO_ROOT/scripts/tvpc-status.sh"       /usr/local/bin/tvpc-status
+install -m 0755 "$REPO_ROOT/scripts/tvpc-cameras.sh"      /usr/local/bin/tvpc-cameras
 install -m 0755 "$REPO_ROOT/scripts/tvpc-power.sh"          /usr/local/bin/tvpc-power
 install -m 0755 "$REPO_ROOT/scripts/tvpc-allapps.sh"         /usr/local/bin/tvpc-allapps
 # The All Apps launcher: every installed app in one browseable list (used when the
