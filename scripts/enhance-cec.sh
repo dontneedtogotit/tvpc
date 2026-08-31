@@ -23,6 +23,9 @@ if [[ "${1:-}" == "--check" ]]; then
     fi
     echo
     echo "  /dev/cec* : $(ls /dev/cec* 2>/dev/null || echo none)"
+    echo "  /dev/ttyACM* /dev/ttyUSB* : $(ls /dev/ttyACM* /dev/ttyUSB* 2>/dev/null || echo none)"
+    echo "  USB CEC adapter (lsusb): $(lsusb 2>/dev/null | grep -iE 'cec|pulse' || echo none)"
+    echo "  user groups: $(id | tr ',' '\n' | grep -oE 'dialout|plugdev|tty|uinput' | tr '\n' ',' || echo none)"
     echo
     echo "== Services =="
     for u in ydotoold tvpc-cec-remote; do
@@ -82,6 +85,35 @@ KERNEL=="uinput", SUBSYSTEM=="misc", MODE="0660", GROUP="uinput", OPTIONS+="stat
 EOF
 udevadm control --reload-rules 2>/dev/null || true
 udevadm trigger --name-match=uinput 2>/dev/null || true
+
+# CEC adapter access. Pulse-Eight USB-CEC adapters present as /dev/ttyACMx;
+# libCEC needs read+write. Add the user to dialout (the group that owns the
+# device) and write a udev rule so future adapters get the right perms too.
+groupadd -f dialout
+id -nG "$HTPC_USER" | grep -w dialout >/dev/null || usermod -aG dialout "$HTPC_USER"
+cat >/etc/udev/rules.d/99-cec-adapter.rules <<'EOF'
+# Pulse-Eight USB-CEC adapter and similar tty-based CEC devices.
+# Give the dialout group rw so libCEC (cec-client) can open it.
+KERNEL=="ttyACM[0-9]*", SUBSYSTEM=="tty", MODE="0660", GROUP="dialout"
+KERNEL=="ttyUSB[0-9]*", SUBSYSTEM=="tty", MODE="0660", GROUP="dialout", ATTRS{idVendor}=="1a44"
+EOF
+udevadm control --reload-rules 2>/dev/null || true
+udevadm trigger --subsystem-match=tty 2>/dev/null || true
+
+# If a CEC adapter is already plugged in, fix its current mode so the listener
+# can open it without a replug. If none is plugged in yet, this is a no-op.
+for dev in /dev/ttyACM* /dev/ttyUSB*; do
+    [[ -e $dev ]] || continue
+    chgrp dialout "$dev" 2>/dev/null || true
+    chmod 0660 "$dev" 2>/dev/null || true
+done
+
+# Warn if the user is going to need a log out for the new dialout group.
+if id -nG "$HTPC_USER" | grep -wq dialout; then
+    :
+else
+    echo "  (user $HTPC_USER was added to 'dialout' — re-login / reboot for it to take effect)"
+fi
 
 # Ubuntu ships no unit for ydotoold, so provide one. The socket is handed to
 # the HTPC user, which is what the clients below connect to.
