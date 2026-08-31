@@ -5,14 +5,62 @@
 #   Volume      -> pactl (PipeWire)
 #   Navigation  -> ydotool (Wayland; needs the ydotoold daemon)
 #
-# Usage: sudo ./scripts/enhance-cec.sh
+# IMPORTANT: the Intel NUC7i5BNH has NO native CEC. HDMI-CEC only works with a
+# Pulse-Eight USB-CEC adapter (or equivalent) plugged into the NUC's USB. If
+# there is no adapter, cec-client finds nothing and the remote does nothing.
+#
+# Usage:
+#   sudo ./scripts/enhance-cec.sh         install + enable
+#   sudo ./scripts/enhance-cec.sh --check report adapter + service state
 set -euo pipefail
+
+if [[ "${1:-}" == "--check" ]]; then
+    echo "== CEC adapter =="
+    if command -v cec-client >/dev/null 2>&1; then
+        cec-client -l 2>&1 | sed 's/^/  /' || echo "  cec-client present but no adapter listed"
+    else
+        echo "  cec-client NOT installed"
+    fi
+    echo
+    echo "  /dev/cec* : $(ls /dev/cec* 2>/dev/null || echo none)"
+    echo
+    echo "== Services =="
+    for u in ydotoold tvpc-cec-remote; do
+        if systemctl list-unit-files "$u.service" >/dev/null 2>&1; then
+            echo "  $u: $(systemctl is-enabled "$u" 2>/dev/null) / $(systemctl is-active "$u" 2>/dev/null)"
+        else
+            echo "  $u: not installed"
+        fi
+    done
+    echo
+    echo "  Anynet+ must be ENABLED on the TV (Settings > General > External Device"
+    echo "  Manager > Anynet+ (HDMI-CEC)). The NUC must be on the TV's HDMI input."
+    exit 0
+fi
 
 [[ $EUID -eq 0 ]] || { echo "Run as root"; exit 1; }
 
 # shellcheck source=/dev/null
 if [[ -r /etc/default/tvpc ]]; then . /etc/default/tvpc; fi
 HTPC_USER="${TVPC_USER:-${HTPC_USER:-htpc}}"
+
+# --- 0. Verify a CEC adapter exists ----------------------------------------
+# Without it the listener can never receive a key, and the remote will do
+# nothing. Say so up front instead of installing a silently-dead service.
+echo "[0/4] Checking for a CEC adapter..."
+if ! command -v cec-client >/dev/null 2>&1; then
+    echo "  !! cec-client (cec-utils) is not installed — install it first:"
+    echo "     sudo apt-get install cec-utils"
+    exit 1
+fi
+if ! cec-client -l 2>&1 | grep -qiE 'found|adapter|com port|/dev/'; then
+    echo "  !! No CEC adapter detected (no /dev/cec*, no Pulse-Eight device)."
+    echo "     The Intel NUC7i5BNH has no onboard CEC — you need a USB-CEC"
+    echo "     adapter (Pulse-Eight or compatible) plugged into the NUC."
+    echo "     The listener service will be installed but the remote will not"
+    echo "     work until an adapter is present. Plug one in and re-run this."
+    ls /dev/cec* 2>/dev/null || true
+fi
 
 echo "[1/4] Installing dependencies..."
 export DEBIAN_FRONTEND=noninteractive
@@ -73,58 +121,64 @@ set -uo pipefail
 HTPC_USER="${TVPC_USER:-${HTPC_USER:-htpc}}"
 
 export YDOTOOL_SOCKET="${YDOTOOL_SOCKET:-/run/ydotoold/socket}"
-log() { echo "$*"; }   # journald captures stdout
+log() { echo "tvpc-cec-remote: $*" >&2; }   # journald captures stderr
 
 # ydotool 1.x requires keycode:pressed pairs — a bare "ydotool key 28" is a
 # syntax error, which is why key presses silently did nothing before.
 send_key() {
-  local code="$1"
-  if command -v ydotool >/dev/null 2>&1; then
-    ydotool key "${code}:1" "${code}:0" 2>/dev/null && return 0
-  fi
-  command -v xdotool >/dev/null 2>&1 && DISPLAY=:0 xdotool key "$2" 2>/dev/null
+    local code="$1"
+    if command -v ydotool >/dev/null 2>&1; then
+        ydotool key "${code}:1" "${code}:0" 2>/dev/null && return 0
+    fi
+    command -v xdotool >/dev/null 2>&1 && DISPLAY=:0 xdotool key "$2" 2>/dev/null
 }
 
 handle() {
-  case "$1" in
-    # Media transport -> MPRIS
-    44|45) playerctl play-pause 2>/dev/null || true ;;
-    46)    playerctl stop       2>/dev/null || true ;;
-    47)    playerctl next       2>/dev/null || true ;;
-    48)    playerctl previous   2>/dev/null || true ;;
-    # Volume
-    41) pactl set-sink-volume @DEFAULT_SINK@ +2%     2>/dev/null || true ;;
-    42) pactl set-sink-volume @DEFAULT_SINK@ -2%     2>/dev/null || true ;;
-    43) pactl set-sink-mute   @DEFAULT_SINK@ toggle  2>/dev/null || true ;;
-    # Navigation (Linux input event codes)
-    00) send_key 28  Return ;;
-    01) send_key 103 Up     ;;
-    02) send_key 108 Down   ;;
-    03) send_key 105 Left   ;;
-    04) send_key 106 Right  ;;
-    09)
-      # Root menu / Home button. When the home is curated to a single tile
-      # (tvpc-tweaks vacuum-only sets TVPC_ALLAPPS=1), this opens the All Apps
-      # launcher instead of Meta, so hidden apps stay reachable from the couch.
-      if [[ ${TVPC_ALLAPPS:-0} == 1 ]] && command -v tvpc-allapps >/dev/null 2>&1; then
-        nohup tvpc-allapps >/dev/null 2>&1 &
-      else
-        send_key 125 super  ;;   # Root menu -> Meta (app launcher)
-      fi ;;
-    0d) send_key 1   Escape ;;   # Exit -> Back
-    *)  return ;;
-  esac
-  log "key=0x$1 handled"
+    case "$1" in
+        # Media transport -> MPRIS
+        44|45) playerctl play-pause 2>/dev/null || true ;;
+        46)    playerctl stop       2>/dev/null || true ;;
+        47)    playerctl next       2>/dev/null || true ;;
+        48)    playerctl previous   2>/dev/null || true ;;
+        # Volume
+        41) pactl set-sink-volume @DEFAULT_SINK@ +2%     2>/dev/null || true ;;
+        42) pactl set-sink-volume @DEFAULT_SINK@ -2%     2>/dev/null || true ;;
+        43) pactl set-sink-mute   @DEFAULT_SINK@ toggle  2>/dev/null || true ;;
+        # Navigation (Linux input event codes)
+        00) send_key 28  Return ;;
+        01) send_key 103 Up     ;;
+        02) send_key 108 Down   ;;
+        03) send_key 105 Left   ;;
+        04) send_key 106 Right  ;;
+        09)
+            # Root menu / Home button. When the home is curated to a single tile
+            # (tvpc-tweaks vacuum-only sets TVPC_ALLAPPS=1), this opens the All Apps
+            # launcher instead of Meta, so hidden apps stay reachable from the couch.
+            if [[ ${TVPC_ALLAPPS:-0} == 1 ]] && command -v tvpc-allapps >/dev/null 2>&1; then
+                nohup tvpc-allapps >/dev/null 2>&1 &
+            else
+                send_key 125 super  ;;   # Root menu -> Meta (app launcher)
+            fi ;;
+        0d) send_key 1   Escape ;;   # Exit -> Back
+        *)  return ;;
+    esac
+    log "key=0x$1 handled"
 }
 
 log "listener started (socket=$YDOTOOL_SOCKET)"
 # -d 8 selects the TRAFFIC log level. The old code used -d 1 (errors only), so
 # no frames were ever printed to match against. Frames look like:
 #   TRAFFIC: [   1234]  >> 04:44:41
-cec-client -d 8 2>/dev/null | while IFS= read -r line; do
-  if [[ "$line" =~ \>\>[[:space:]]*[0-9a-fA-F]{2}:44:([0-9a-fA-F]{2}) ]]; then
-    handle "$(tr '[:upper:]' '[:lower:]' <<<"${BASH_REMATCH[1]}")"
-  fi
+# stdbuf -oL keeps lines unbuffered so a key is acted on immediately and each
+# raw frame is logged for debugging (visible via: journalctl -u tvpc-cec-remote).
+stdbuf -oL cec-client -d 8 2>&1 | while IFS= read -r line; do
+    # Log every TRAFFIC frame so we can see what the TV actually sends.
+    if [[ "$line" == *TRAFFIC* ]]; then
+        log "raw: $line"
+    fi
+    if [[ "$line" =~ \>\>[[:space:]]*[0-9a-fA-F]{2}:44:([0-9a-fA-F]{2}) ]]; then
+        handle "$(tr '[:upper:]' '[:lower:]' <<<"${BASH_REMATCH[1]}")"
+    fi
 done
 LISTENER
 chmod 0755 /usr/local/bin/tvpc-cec-remote
@@ -164,3 +218,4 @@ echo "  Listener log:    journalctl -u tvpc-cec-remote -f"
 echo "  Daemon log:      journalctl -u ydotoold -f"
 echo "  Raw CEC traffic: sudo systemctl stop tvpc-cec-remote && cec-client -d 8"
 echo "  (stop the listener first — the CEC adapter takes one client at a time)"
+
