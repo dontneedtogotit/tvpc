@@ -495,6 +495,8 @@ Commands:
   install-launcher Install home-screen launcher
   vacuum-only      Home: only VacuumTube + All Apps
   home-preset      Full curated home (dark theme + hero + Power + curated tiles)
+  home-tv         Home: VacuumTube + Settings + an Add Apps button
+  addapps          Pick apps to add back to the home screen
   --help, -h       Show this help
 
 Run without arguments for interactive TUI.
@@ -599,6 +601,94 @@ EOF
     else
         echo "Need root to install launcher system-wide"
     fi
+}
+
+# Install the "Add Apps" tile that opens a picker to un-hide apps on the home.
+install_addapps_tile() {
+    if ! is_root; then return 0; fi
+    mkdir -p /usr/share/applications
+    cat >/usr/share/applications/tvpc-addapps.desktop <<'EOF'
+[Desktop Entry]
+Type=Application
+Name=Add Apps
+Comment=Choose apps to show on the home screen
+Exec=/usr/local/bin/tvpc-tweaks addapps
+Terminal=false
+Icon=list-add
+Categories=Settings;
+Keywords=tvpc;apps;home;
+EOF
+    chown "$TVPC_USER:$TVPC_USER" /usr/share/applications/tvpc-addapps.desktop 2>/dev/null || true
+}
+
+# Home: only VacuumTube + Settings (+ an Add Apps button to bring back others).
+curate_home() {
+    local keep="vacuumtube systemsettings"
+    local id
+    while IFS=$'\t' read -r id name; do
+        local keepit=0
+        for k in $keep; do
+            [[ $id == "$k" ]] && keepit=1
+        done
+        [[ $keepit -eq 0 ]] && hide_app "$id" 2>/dev/null || true
+    done < <(list_apps)
+    # Make sure the keepers are actually shown (not blacklisted).
+    for k in $keep; do
+        show_app "$k" 2>/dev/null || true
+    done
+    install_addapps_tile
+    echo "Home curated: VacuumTube + Settings + Add Apps."
+    echo "Run 'tvpc-tweaks addapps' (or the Add Apps tile) to put others back."
+    reload_shell
+}
+
+# Soft-refresh the running shell so home-screen changes appear without logout.
+reload_shell() {
+    if pgrep -x plasmashell >/dev/null 2>&1; then
+        killall plasmashell 2>/dev/null
+        nohup plasmashell >/dev/null 2>&1 &
+        echo "(refreshed plasmashell)"
+    elif pgrep -x plasma-bigscreen >/dev/null 2>&1; then
+        echo "(log out and back in to refresh the Bigscreen home)"
+    else
+        echo "(log out and back in to see the new home screen)"
+    fi
+}
+
+# Picker that un-hides chosen apps (adds them to the home screen).
+cmd_addapps() {
+    local ids=() names=() sel=() i out
+    while IFS=$'\t' read -r id name; do
+        ids+=("$id"); names+=("$name")
+    done < <(list_apps)
+    if command -v kdialog >/dev/null 2>&1; then
+        local args=()
+        for i in "${!ids[@]}"; do
+            args+=("${ids[$i]}" "${names[$i]}" "off")
+        done
+        out="$(kdialog --checklist "Add apps to the home screen" "${args[@]}" 2>/dev/null)" || return 0
+        # kdialog returns | - separated, each item single-quoted.
+        IFS='|' read -ra sel <<<"$out"
+    elif [[ -t 0 ]]; then
+        echo "Select apps to ADD to the home (space toggles, Enter confirms):"
+        PS3="Add: "
+        select i in "${names[@]}" "Done"; do
+            [[ $i == Done ]] && break
+            for n in "${!names[@]}"; do
+                [[ ${names[$n]} == "$i" ]] && sel+=("${ids[$n]}")
+            done
+        done
+    else
+        echo "Add Apps needs a GUI (kdialog) or a terminal; run it from the session." >&2
+        return 1
+    fi
+    local added=()
+    for id in "${sel[@]}"; do
+        id="$(echo "$id" | tr -d "'\"")"
+        [[ -n $id ]] && { show_app "$id" 2>/dev/null || true; added+=("$id"); }
+    done
+    echo "Added to home: ${added[*]:-none}"
+    reload_shell
 }
 
 cmd_edid() {
@@ -1532,6 +1622,12 @@ case "${1:-}" in
         ;;
     home)
         home_preset
+        ;;
+    home-tv)
+        curate_home
+        ;;
+    addapps)
+        cmd_addapps
         ;;
     network-tiles)
         add_network_tiles
