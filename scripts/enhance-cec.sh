@@ -157,7 +157,7 @@ handle() {
             if [[ ${TVPC_ALLAPPS:-0} == 1 ]] && command -v tvpc-allapps >/dev/null 2>&1; then
                 nohup tvpc-allapps >/dev/null 2>&1 &
             else
-                send_key 125 super  ;;   # Root menu -> Meta (app launcher)
+                send_key 125 super   # Root menu -> Meta (app launcher)
             fi ;;
         0d) send_key 1   Escape ;;   # Exit -> Back
         *)  return ;;
