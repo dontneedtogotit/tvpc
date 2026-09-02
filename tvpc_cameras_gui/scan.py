@@ -149,6 +149,11 @@ class ScanWorker(QObject):
                 self.progress.emit(f"    {len(hits)} host(s) responded on TCP/{port}")
                 open_map[port] = set(hits)
 
+        # Hosts that had ANY port open.
+        any_open: Set[str] = set()
+        for s in open_map.values():
+            any_open |= s
+
         # RTSP DESCRIBE on hosts that have any RTSP port open.
         rtsp_candidates: Set[str] = set()
         for p in disc.RTSP_PORTS:
@@ -194,6 +199,27 @@ class ScanWorker(QObject):
                         return
                     for cam in fut.result():
                         _emit(cam)
+
+        # Cloud-only fallback: for any ARP host that responded to NO
+        # known camera port, do a quick ICMP ping. If it's alive, it
+        # is almost certainly a Tuya/ORION/Grid Connect camera that
+        # does not expose RTSP/ONVIF by default. Report a stub so the
+        # user can add it manually after enabling ONVIF/RTSP in the
+        # vendor app.
+        silent_alive = disc.alive_hosts(all_hosts - any_open)
+        for host in silent_alive:
+            if self._cancel:
+                return
+            _emit(disc.DiscoveredCamera(
+                host=host,
+                url="",            # no stream URL yet
+                method="cloud",
+                vendor="Orion / Tuya / Grid Connect (likely)",
+                note=(
+                    "no local RTSP/ONVIF/HTTP service detected. "
+                    "Enable ONVIF/RTSP in the Grid Connect app and re-scan."
+                ),
+            ))
 
     # ------------------------------------------------------------------
     def _onvif_phase(self, _emit) -> None:

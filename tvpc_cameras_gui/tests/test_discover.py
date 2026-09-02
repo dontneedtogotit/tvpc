@@ -27,19 +27,9 @@ from tvpc_cameras_gui import discover  # noqa: E402
 # Mock RTSP server
 # ---------------------------------------------------------------------------
 class _MockRtspServer:
-    """Answers DESCRIBE with a Hikvision-looking response and 200/OK."""
+    """Answers DESCRIBE with a vendor-configurable response and 200/OK."""
 
-    SDP = (
-        "v=0\r\n"
-        "o=- 0 0 IN IP4 127.0.0.1\r\n"
-        "s=Hikvision RTSP Server\r\n"
-        "c=IN IP4 127.0.0.1\r\n"
-        "t=0 0\r\n"
-        "m=video 0 RTP/AVP 96\r\n"
-        "a=rtpmap:96 H264/90000\r\n"
-    )
-
-    def __init__(self) -> None:
+    def __init__(self, server_header: str = "Hikvision-Webs", sdp: str = None) -> None:
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.sock.bind(("127.0.0.1", 0))
@@ -48,6 +38,16 @@ class _MockRtspServer:
         self._stop = threading.Event()
         self._thread = threading.Thread(target=self._serve, daemon=True)
         self._thread.start()
+        self._server_header = server_header
+        self._sdp = sdp or (
+            "v=0\r\n"
+            "o=- 0 0 IN IP4 127.0.0.1\r\n"
+            "s=Hikvision RTSP Server\r\n"
+            "c=IN IP4 127.0.0.1\r\n"
+            "t=0 0\r\n"
+            "m=video 0 RTP/AVP 96\r\n"
+            "a=rtpmap:96 H264/90000\r\n"
+        )
 
     def _serve(self) -> None:
         self.sock.settimeout(0.2)
@@ -69,16 +69,14 @@ class _MockRtspServer:
                 if not chunk:
                     break
                 data += chunk
-            request_line = data.split(b"\r\n", 1)[0].decode("ascii", "replace")
-            # Hikvision: Server header reveals vendor in the body.
             response = (
                 "RTSP/1.0 200 OK\r\n"
                 "CSeq: 1\r\n"
                 "Content-Type: application/sdp\r\n"
-                "Server: Hikvision-Webs\r\n"
-                f"Content-Length: {len(self.SDP)}\r\n"
+                f"Server: {self._server_header}\r\n"
+                f"Content-Length: {len(self._sdp)}\r\n"
                 "\r\n"
-            ) + self.SDP
+            ) + self._sdp
             conn.sendall(response.encode())
         except OSError:
             pass
@@ -240,6 +238,200 @@ class TestMdnsParser(unittest.TestCase):
         self.assertGreaterEqual(len(pkt), 12)
         # transaction id is arbitrary but non-zero
         self.assertNotEqual(pkt[:2], b"\x00\x00")
+
+
+class TestVendorIdentification(unittest.TestCase):
+    """Vendor identification from RTSP DESCRIBE / HTTP responses."""
+
+    def test_orion_server_header(self) -> None:
+        info = {
+            "server": "Orion/IPCam/v1.2.3",
+            "body": "v=0\r\ns=Orion Streaming\r\n",
+            "content_type": "application/sdp",
+        }
+        self.assertEqual(discover.identify_vendor_from_rtsp(info), "Orion")
+
+    def test_grid_connect_server_header(self) -> None:
+        info = {
+            "server": "Grid Connect IPC",
+            "body": "v=0\r\ns=Tuya IPC\r\n",
+            "content_type": "application/sdp",
+        }
+        # More specific (Grid Connect) wins over Tuya.
+        self.assertEqual(
+            discover.identify_vendor_from_rtsp(info),
+            "Grid Connect (Orion / Tuya)",
+        )
+
+    def test_tuya_in_sdp_body(self) -> None:
+        info = {
+            "server": "Generic",
+            "body": "v=0\r\no=- 0 0 IN IP4 127.0.0.1\r\ns=Tuya Camera\r\n",
+            "content_type": "application/sdp",
+        }
+        self.assertEqual(discover.identify_vendor_from_rtsp(info), "Tuya")
+
+    def test_hisilicon_in_sdp_body(self) -> None:
+        info = {
+            "server": "Generic",
+            "body": "v=0\r\no=- 0 0 IN IP4 127.0.0.1\r\ns=HiSilicon IPC\r\n",
+            "content_type": "application/sdp",
+        }
+        self.assertEqual(
+            discover.identify_vendor_from_rtsp(info),
+            "HiSilicon (generic)",
+        )
+
+    def test_dahua_in_sdp_body(self) -> None:
+        info = {
+            "server": "Generic",
+            "body": "v=0\r\no=- 0 0 IN IP4 127.0.0.1\r\ns=DAHUA IPC-HDW2231T\r\n",
+            "content_type": "application/sdp",
+        }
+        self.assertEqual(discover.identify_vendor_from_rtsp(info), "Dahua")
+
+    def test_tapo_in_sdp_body(self) -> None:
+        info = {
+            "server": "TP-LINK",
+            "body": "v=0\r\no=- 0 0 IN IP4 127.0.0.1\r\ns=Tapo Camera\r\n",
+            "content_type": "application/sdp",
+        }
+        self.assertEqual(
+            discover.identify_vendor_from_rtsp(info), "TP-Link Tapo",
+        )
+
+    def test_unknown(self) -> None:
+        info = {
+            "server": "Apache",
+            "body": "v=0\r\ns=Camera\r\n",
+            "content_type": "application/sdp",
+        }
+        self.assertEqual(discover.identify_vendor_from_rtsp(info), "")
+
+    def test_http_grid_connect_title(self) -> None:
+        body = "<html><head><title>Grid Connect Camera</title></head><body>OK</body></html>"
+        headers = {"server": "lighttpd/1.4"}
+        self.assertEqual(
+            discover.identify_vendor_from_http(body, headers),
+            "Grid Connect (Orion / Tuya)",
+        )
+
+    def test_http_hisilicon_endpoint(self) -> None:
+        # A 200 OK on a HiSilicon path with the "HiSilicon" string in body.
+        body = "HiSilicon HI3518E V100R001"
+        headers = {"server": "HTTPD"}
+        self.assertEqual(
+            discover.identify_vendor_from_http(body, headers),
+            "HiSilicon (generic)",
+        )
+
+
+class TestOrionRtspPathDiscovery(unittest.TestCase):
+    """End-to-end: identify a Tuya/ORION camera via RTSP DESCRIBE."""
+
+    def test_finds_tuya_on_high_port(self) -> None:
+        # Bind a mock RTSP server on a high port and confirm the
+        # scan worker identifies it as Tuya/Grid Connect.
+        from PySide6.QtWidgets import QApplication
+        import socket as _socket
+        import threading as _threading
+
+        app = QApplication.instance() or QApplication([])
+
+        # Use a high port to avoid collisions with other tests.
+        sock = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM)
+        sock.setsockopt(_socket.SOL_SOCKET, _socket.SO_REUSEADDR, 1)
+        for port in (8554, 10554, 11554, 12554, 13554, 14554, 15554, 16554, 17554, 18554):
+            try:
+                sock.bind(("127.0.0.1", port))
+                break
+            except OSError:
+                continue
+        else:
+            self.skipTest("no free high port for mock RTSP server")
+        sock.listen(8)
+        sock.settimeout(0.2)
+        bound_port = sock.getsockname()[1]
+
+        sdp = ("v=0\r\no=- 0 0 IN IP4 127.0.0.1\r\n"
+               "s=Grid Connect IPC\r\n"
+               "c=IN IP4 127.0.0.1\r\nt=0 0\r\nm=video 0 RTP/AVP 96\r\n"
+               "a=rtpmap:96 H264/90000\r\n")
+
+        def _handle(conn) -> None:
+            try:
+                conn.settimeout(2.0)
+                data = b""
+                while b"\r\n\r\n" not in data and len(data) < 4096:
+                    chunk = conn.recv(1024)
+                    if not chunk:
+                        break
+                    data += chunk
+                resp = ("RTSP/1.0 200 OK\r\nCSeq: 1\r\n"
+                        "Content-Type: application/sdp\r\n"
+                        "Server: Grid Connect IPC\r\n"
+                        f"Content-Length: {len(sdp)}\r\n\r\n{sdp}").encode()
+                conn.sendall(resp)
+            except OSError:
+                pass
+            finally:
+                try:
+                    conn.close()
+                except OSError:
+                    pass
+
+        stop = _threading.Event()
+
+        def _serve() -> None:
+            while not stop.is_set():
+                try:
+                    conn, _ = sock.accept()
+                except _socket.timeout:
+                    continue
+                except OSError:
+                    return
+                _threading.Thread(target=_handle, args=(conn,), daemon=True).start()
+            sock.close()
+
+        _threading.Thread(target=_serve, daemon=True).start()
+        try:
+            from tvpc_cameras_gui import discover
+            from tvpc_cameras_gui.scan import ScanWorker
+            old_ports = discover.RTSP_PORTS
+            discover.RTSP_PORTS = (bound_port, *old_ports)
+            try:
+                worker = ScanWorker(cidr="127.0.0.1/32", workers=16, do_onvif_enrich=False)
+                found: list = []
+                worker.found.connect(lambda c: found.append(c))
+                worker.run()
+            finally:
+                discover.RTSP_PORTS = old_ports
+            self.assertGreater(len(found), 0, "ScanWorker did not find the Grid Connect mock")
+            gc = [c for c in found
+                  if "Grid Connect" in c.vendor or "Orion" in c.vendor or "Tuya" in c.vendor]
+            self.assertGreater(len(gc), 0,
+                               f"Grid Connect not identified: {found}")
+        finally:
+            stop.set()
+            time.sleep(0.2)
+
+
+class TestAliveHosts(unittest.TestCase):
+    """alive_hosts() uses TCP connect to determine liveness."""
+
+    def test_returns_loopback_alive(self) -> None:
+        # 127.0.0.1 should always respond to a TCP connect probe.
+        from tvpc_cameras_gui import discover
+        alive = discover.alive_hosts(["127.0.0.1"], timeout=0.3)
+        self.assertIn("127.0.0.1", alive)
+
+    def test_drops_unreachable(self) -> None:
+        from tvpc_cameras_gui import discover
+        # 192.0.2.0/24 is reserved for documentation (RFC 5737) and
+        # does not respond on the public Internet. It is a safe
+        # unreachable target.
+        alive = discover.alive_hosts(["192.0.2.1"], timeout=0.3)
+        self.assertNotIn("192.0.2.1", alive)
 
 
 class TestScanWorkerEndToEnd(unittest.TestCase):

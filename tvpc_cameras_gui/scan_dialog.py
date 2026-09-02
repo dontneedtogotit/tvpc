@@ -174,8 +174,16 @@ class ScanDialog(QDialog):
         existing = {c.name for c in cams}
         existing_urls = {c.url for c in cams}
         added = 0
+        skipped_no_url = 0
         for item in items:
             res: DiscoveredCamera = item.data(Qt.UserRole)
+            if not res.url:
+                # Cloud-only stub (e.g. ORION/Grid Connect with no local
+                # service yet). The user has to enable ONVIF/RTSP in the
+                # vendor app, then re-scan to get a real URL. We surface
+                # this clearly in the result message at the end.
+                skipped_no_url += 1
+                continue
             if res.url in existing_urls:
                 continue
             base = res.vendor.lower().replace(" ", "_") if res.vendor else res.method
@@ -201,7 +209,21 @@ class ScanDialog(QDialog):
             existing_urls.add(res.url)
             added += 1
         cfg.save_cameras(cams)
-        QMessageBox.information(self, "Added", f"Added {added} camera(s) to the config.")
+        if added and skipped_no_url:
+            QMessageBox.information(
+                self, "Added",
+                f"Added {added} camera(s) to the config.\n"
+                f"Skipped {skipped_no_url} cloud-only entry(ies) — enable "
+                f"ONVIF/RTSP in the vendor app and re-scan to get a URL.",
+            )
+        elif added:
+            QMessageBox.information(self, "Added", f"Added {added} camera(s) to the config.")
+        else:
+            QMessageBox.information(
+                self, "Nothing to add",
+                "Selected entries are cloud-only (no URL). Enable "
+                "ONVIF/RTSP in the vendor app and re-scan to get a URL.",
+            )
         self.accept()
 
     def reject(self) -> None:  # noqa: D401

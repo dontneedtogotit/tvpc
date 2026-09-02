@@ -37,8 +37,11 @@ from typing import Callable, Iterable, List, Optional, Set, Tuple
 # ---------------------------------------------------------------------------
 # Common network ports probed during the sweep.
 # ---------------------------------------------------------------------------
-RTSP_PORTS = (554, 8554, 10554)
-HTTP_PORTS = (80, 8080, 8000, 443)
+# RTSP:  554 standard, 8554/10554 common alt, 6554 Tuya, 10554 some OEMs
+# HTTP:  80/8080/8000/443 standard web, 5000 Tuya ONVIF service, 6668 Tuya
+#        local API
+RTSP_PORTS = (554, 8554, 10554, 6554)
+HTTP_PORTS = (80, 8080, 8000, 443, 5000, 6668)
 
 
 # ---------------------------------------------------------------------------
@@ -57,28 +60,47 @@ RTSP_PATHS: List[str] = [
     "/live/sub",
     "/live/0/main",              # Reolink
     "/h264Preview_01_main",      # Axis-like
-    "/11",                       # Reolink alt
-    "/stream1",
+    "/11",                       # Reolink alt / HiSilicon clone
+    "/0",                        # HiSilicon / TC98
+    "/1",                        # TC98 alt
+    "/ch0_0.h264",               # HiSilicon 3516
+    "/stream_0",                 # Tuya (port 6554)
+    "/cam1/mpeg4",               # Tuya / generic Chinese
+    "/stream1",                  # generic
     "/stream2",
     "/av0_0",                    # some Chinese cams
     "/video",                    # MJPEG-over-RTSP
-    "/",                         # root
+    "/live1.264",                # HiSilicon unknown
+    "/",                         # root (Tuya root URL)
 ]
 
 
 # HTTP probe paths. Each tuple is (path, method, what-it-means-if-200).
-# The path is a substring we look for in the body to identify the vendor.
 HTTP_PROBES: List[Tuple[str, str, str]] = [
+    # Hikvision
     ("/ISAPI/Streaming/channels", "GET", "hikvision"),
     ("/ISAPI/System/deviceInfo", "GET", "hikvision"),
     ("/cgi-bin/magicBox.cgi?action=getProductClass", "GET", "hikvision"),
+    # Dahua
     ("/cgi-bin/devInfo.cgi?action=get", "GET", "dahua"),
     ("/cgi-bin/menu.cgi?action=getProductModel", "GET", "dahua"),
+    # Reolink
     ("/api.cgi?cmd=GetDevInfo&token=", "GET", "reolink"),
+    # ONVIF device service
     ("/onvif/device_service", "POST", "onvif"),
+    # Axis MJPEG
     ("/axis-cgi/mjpg/video.cgi", "GET", "axis-mjpeg"),
+    # Generic MJPEG
     ("/mjpg/video.mjpg", "GET", "generic-mjpeg"),
     ("/video.mjpg", "GET", "generic-mjpeg"),
+    # HiSilicon / Chinese OEM (ORION rebadges use these)
+    ("/videostream.cgi", "GET", "hisilicon"),
+    ("/tmpfs/auto.jpg", "GET", "hisilicon"),
+    ("/cgi-bin/net_jpeg.cgi?ch=1", "GET", "hisilicon"),
+    ("/img/snapshot.cgi?size=2", "GET", "hisilicon"),
+    ("/snapshot.cgi", "GET", "hisilicon"),
+    # Tuya / Grid Connect — many Tuya cams expose a tiny web UI on :80
+    # that contains the device UUID and "tuya" or "smart life" branding
     ("/", "GET", "http-root"),
 ]
 
@@ -94,7 +116,7 @@ MDNS_SERVICE_TYPES = ("_rtsp._tcp.local", "_onvif._tcp.local", "_http._tcp.local
 class DiscoveredCamera:
     host: str
     url: str
-    method: str = "rtsp"            # "rtsp", "http", "onvif", "mdns", "arp"
+    method: str = "rtsp"            # "rtsp", "http", "onvif", "mdns", "arp", "cloud"
     vendor: str = ""
     model: str = ""
     firmware: str = ""
@@ -113,7 +135,10 @@ class DiscoveredCamera:
         if self.vendor or self.model:
             ident = " ".join(x for x in (self.vendor, self.model) if x)
             bits.append(f"  ({ident})")
-        bits.append(f"  →  {self.url}")
+        if self.url:
+            bits.append(f"  →  {self.url}")
+        else:
+            bits.append("  (no URL — see note)")
         return "".join(bits)
 
 
@@ -294,20 +319,51 @@ def rtsp_describe(host: str, port: int, path: str,
 
 
 _VENDOR_RE = [
-    (re.compile(r"Hikvision", re.I), "Hikvision"),
-    (re.compile(r"Dahua", re.I), "Dahua"),
-    (re.compile(r"Reolink", re.I), "Reolink"),
-    (re.compile(r"Axis", re.I), "Axis"),
-    (re.compile(r"Bosch", re.I), "Bosch"),
-    (re.compile(r"Vivotek", re.I), "Vivotek"),
-    (re.compile(r"HiSilicon", re.I), "HiSilicon (generic)"),
-    (re.compile(r"ONVIF", re.I), "ONVIF device"),
+    # Specific OEMs that identify themselves in the Server header or SDP body.
+    (re.compile(r"\bOrion\b", re.I), "Orion"),
+    (re.compile(r"Grid[-\s]?Connect", re.I), "Grid Connect (Orion / Tuya)"),
+    (re.compile(r"\bTuya\b", re.I), "Tuya"),
+    (re.compile(r"\bConvision\b", re.I), "Convision"),
+    # TP-Link must come before Tapo (Tapo also matches TP-LINK) and
+    # before ONVIF/HiSilicon fallbacks.
+    (re.compile(r"\bTapo\b", re.I), "TP-Link Tapo"),
+    (re.compile(r"\bTP-LINK\b", re.I), "TP-Link"),
+    (re.compile(r"\bHikvision\b", re.I), "Hikvision"),
+    (re.compile(r"\bDahua\b", re.I), "Dahua"),
+    (re.compile(r"\bReolink\b", re.I), "Reolink"),
+    (re.compile(r"\bAxis\b", re.I), "Axis"),
+    (re.compile(r"\bBosch\b", re.I), "Bosch"),
+    (re.compile(r"\bVivotek\b", re.I), "Vivotek"),
+    (re.compile(r"\bHiSilicon\b", re.I), "HiSilicon (generic)"),
+    (re.compile(r"\bONVIF\b", re.I), "ONVIF device"),
     (re.compile(r"NetSurveillance", re.I), "NetSurveillance (Chinese OEM)"),
+    # SDP origin fields that reveal a more specific chipset.
+    (re.compile(r"o=-.*Hanwha", re.I), "Hanwha"),
 ]
 
 
 def identify_vendor_from_rtsp(info: dict) -> str:
+    """Pick the most specific vendor name from an RTSP DESCRIBE response.
+
+    Order matters: more specific patterns (Orion, Grid Connect, Tuya) are
+    tried before generic ones (HiSilicon, ONVIF).
+    """
     haystack = " ".join([info.get("server", ""), info.get("body", "")])
+    for rx, name in _VENDOR_RE:
+        if rx.search(haystack):
+            return name
+    return ""
+
+
+def identify_vendor_from_http(body: str, headers: dict) -> str:
+    haystack = " ".join([
+        body,
+        headers.get("server", ""),
+        headers.get("x-powered-by", ""),
+        # Grid Connect / Tuya web UIs put a brand string in the title tag.
+        re.search(r"<title>([^<]+)</title>", body, re.I).group(1)
+        if re.search(r"<title>([^<]+)</title>", body, re.I) else "",
+    ])
     for rx, name in _VENDOR_RE:
         if rx.search(haystack):
             return name
@@ -454,6 +510,87 @@ def arp_hosts() -> Set[str]:
                 out.add(ip)
     except OSError:
         pass
+    return out
+
+
+# ---------------------------------------------------------------------------
+# ICMP ping (with TCP fallback for unprivileged environments)
+# ---------------------------------------------------------------------------
+def _icmp_ping(host: str, timeout: float = 0.5) -> bool:
+    """Send one ICMP echo request. Requires root (CAP_NET_RAW).
+
+    Returns True if a reply arrived within `timeout` seconds.
+    """
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_RAW, socket.IPPROTO_ICMP)
+    except (PermissionError, OSError):
+        return False
+    try:
+        sock.settimeout(timeout)
+        # ICMP echo: type=8, code=0, checksum=0, id=0x1234, seq=1
+        # The kernel fills in the checksum for SOCK_RAW ICMP, but on
+        # some platforms we need to compute it ourselves.
+        pkt = b"\x08\x00\x00\x00\x12\x34\x00\x01" + b"\x00" * 8
+        # Simple checksum (RFC 1071).
+        if len(pkt) % 2:
+            pkt += b"\x00"
+        words = struct.unpack("!%dH" % (len(pkt) // 2), pkt)
+        s = sum(words)
+        s = (s >> 16) + (s & 0xFFFF)
+        s += s >> 16
+        pkt = struct.pack("!BBHHH", 8, 0, (~s) & 0xFFFF, 0x1234, 1) + b"\x00" * 8
+        sock.sendto(pkt, (host, 0))
+        try:
+            data, _ = sock.recvfrom(1024)
+            return data and data[20] == 0  # type 0 = echo reply
+        except socket.timeout:
+            return False
+    finally:
+        sock.close()
+
+
+def _tcp_ping(host: str, timeout: float = 0.5) -> bool:
+    """Probe a host via TCP. Returns True if the host is reachable.
+
+    * errno 0 (success)  — host is up and answered the SYN
+    * errno ECONNREFUSED — host is up and replied with RST
+    * anything else (timeout, ENETUNREACH, EHOSTUNREACH) — host is down
+    """
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.settimeout(timeout)
+        err = s.connect_ex((host, 80))
+        s.close()
+        # 0 = success, ECONNREFUSED (111) = RST, EHOSTUNREACH (113) = no route
+        # but with a short timeout, EHOSTUNREACH may be reported by the
+        # kernel as a synchronous ICMP error during connect_ex.
+        return err in (0, 111)  # success or refused
+    except OSError:
+        return False
+
+
+def alive_hosts(hosts: Iterable[str], *,
+                timeout: float = 0.4, workers: int = 64) -> Set[str]:
+    """Return the subset of `hosts` that respond to a quick liveness check.
+
+    Uses ICMP echo if available, otherwise falls back to a non-blocking
+    connect to TCP/80 (a RST also proves the host is up).
+    """
+    host_list = list(hosts)
+    if not host_list:
+        return set()
+    # Probe one host to see if raw ICMP is allowed.
+    use_icmp = _icmp_ping(host_list[0], timeout=timeout) or False
+    # Even if the first one is down, ICMP may still work — just try.
+    out: Set[str] = set()
+    with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as ex:
+        if use_icmp:
+            futs = {ex.submit(_icmp_ping, h, timeout): h for h in host_list}
+        else:
+            futs = {ex.submit(_tcp_ping, h, timeout): h for h in host_list}
+        for fut in concurrent.futures.as_completed(futs):
+            if fut.result():
+                out.add(futs[fut])
     return out
 
 

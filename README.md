@@ -443,14 +443,18 @@ rtsp://…` from a headless install still works.
 The GUI (and the bash CLI) look for cameras on the network using several
 methods in parallel:
 
-* **Parallel TCP sweep** on RTSP (554, 8554, 10554) and HTTP (80, 8080,
-  8000, 443) across every active interface, not just the default route.
-  A /24 finishes in a couple of seconds instead of 30+.
+* **Parallel TCP sweep** on RTSP (554, 8554, 10554, 6554) and HTTP
+  (80, 8080, 8000, 443, 5000, 6668) across every active interface, not
+  just the default route. A /24 finishes in a couple of seconds instead
+  of 30+. Port 6554 is **Tuya's** RTSP port; 5000 and 6668 are the
+  **Tuya** ONVIF and local-API ports.
 * **Raw RTSP DESCRIBE** — no `ffprobe` required. Identifies the vendor
   from the `Server` header and SDP body (Hikvision, Dahua, Reolink,
-  Axis, Bosch, Vivotek, ONVIF, generic Chinese OEM).
+  Axis, Bosch, Vivotek, Hanwha, **Orion / Grid Connect / Tuya**,
+  HiSilicon, ONVIF, generic Chinese OEM, TP-Link Tapo).
 * **HTTP probe** of vendor endpoints: Hikvision ISAPI, Dahua CGI,
-  Reolink `api.cgi`, generic MJPEG streams, ONVIF device service.
+  Reolink, HiSilicon `/videostream.cgi` and `/tmpfs/auto.jpg`,
+  generic MJPEG streams, ONVIF device service.
 * **ONVIF WS-Discovery** (UDP/3702) plus, when the user provides
   credentials, **GetDeviceInformation / GetProfiles / GetStreamUri**
   so the real manufacturer / model / firmware and stream URL are
@@ -460,9 +464,32 @@ methods in parallel:
   to this host before.
 * **mDNS** queries for `_rtsp._tcp`, `_onvif._tcp`, `_http._tcp` to
   pick up cameras that don't expose port 554.
+* **Cloud-only stub** for hosts that respond to ping but to no known
+  camera port. These are almost always **ORION / Grid Connect / Tuya**
+  cameras that do not expose RTSP or ONVIF until you enable it in the
+  vendor app. The stub tells you what to do.
 
 You can also supply your own CIDR (e.g. `10.0.0.0/16`) in the dialog
 for larger networks.
+
+#### ORION / Grid Connect / Tuya cameras
+
+ORION is an Australian brand distributed via the **Grid Connect** app
+(itself a Tuya OEM). Stock cameras only stream to the cloud; you have
+to enable local RTSP or ONVIF in the app to view them in the tvpc GUI.
+The scanner:
+
+1. probes TCP/6554 (Tuya RTSP), TCP/5000 (Tuya ONVIF) and TCP/6668
+   (Tuya local API) on every host, so an enabled Tuya/ORION camera
+   is found and reported as **Grid Connect (Orion / Tuya)** with a
+   working stream URL.
+2. also tries HiSilicon-class RTSP paths (`/11`, `/0`, `/1`, `/ch0_0.h264`)
+   and HTTP endpoints (`/videostream.cgi`, `/tmpfs/auto.jpg`,
+   `/img/snapshot.cgi`), which catch some ORION rebadges that ship
+   with a different firmware.
+3. if a host is alive but exposes none of the above, it is reported as
+   **Orion / Tuya / Grid Connect (likely)** with no URL — the message
+   tells you to enable ONVIF/RTSP in the Grid Connect app and re-scan.
 
 ---
 
