@@ -5,7 +5,7 @@ from typing import Optional
 
 from PySide6.QtWidgets import (
     QDialog, QDialogButtonBox, QFormLayout, QLineEdit, QTextEdit,
-    QVBoxLayout, QLabel, QCheckBox,
+    QVBoxLayout, QLabel, QCheckBox, QComboBox,
 )
 
 from .config import Camera
@@ -17,7 +17,7 @@ class CameraEditDialog(QDialog):
     def __init__(self, parent=None, camera: Optional[Camera] = None) -> None:
         super().__init__(parent)
         self.setWindowTitle("Edit camera" if camera else "Add camera")
-        self.setMinimumWidth(460)
+        self.setMinimumWidth(480)
 
         self._name = QLineEdit(self)
         self._name.setPlaceholderText("e.g. Front Door")
@@ -32,15 +32,24 @@ class CameraEditDialog(QDialog):
         self._show_pass.toggled.connect(
             lambda on: self._pass.setEchoMode(QLineEdit.Normal if on else QLineEdit.Password)
         )
+        self._group = QLineEdit(self)
+        self._group.setPlaceholderText("e.g. Backyard, Garage (optional)")
+        self._profile = QComboBox(self)
+        self._profile.addItems(["main", "sub"])
+        self._audio = QCheckBox("Play audio in PiP windows", self)
+        self._audio.setChecked(True)
         self._notes = QTextEdit(self)
-        self._notes.setFixedHeight(60)
-        self._notes.setPlaceholderText("Optional notes (location, model, etc.)")
+        self._notes.setFixedHeight(50)
+        self._notes.setPlaceholderText("Optional notes")
 
         if camera is not None:
             self._name.setText(camera.name)
             self._url.setText(camera.url)
             self._user.setText(camera.user)
             self._pass.setText(camera.password)
+            self._group.setText(camera.group)
+            self._profile.setCurrentText(camera.profile if camera.profile in ("main", "sub") else "main")
+            self._audio.setChecked(camera.audio)
             self._notes.setPlainText(camera.notes)
 
         form = QFormLayout()
@@ -49,6 +58,9 @@ class CameraEditDialog(QDialog):
         form.addRow("Username", self._user)
         form.addRow("Password", self._pass)
         form.addRow("", self._show_pass)
+        form.addRow("Group", self._group)
+        form.addRow("Profile", self._profile)
+        form.addRow("", self._audio)
         form.addRow("Notes", self._notes)
 
         hint = QLabel(
@@ -83,4 +95,7 @@ class CameraEditDialog(QDialog):
             user=self._user.text().strip(),
             password=self._pass.text(),
             notes=self._notes.toPlainText().strip(),
+            group=self._group.text().strip(),
+            profile=self._profile.currentText(),
+            audio=self._audio.isChecked(),
         )

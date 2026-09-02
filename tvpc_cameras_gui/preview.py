@@ -6,7 +6,6 @@ A `QTimer` polls the file and reloads it into a `QPixmap` when it changes.
 """
 from __future__ import annotations
 
-import os
 import shutil
 import subprocess
 import tempfile
@@ -23,6 +22,8 @@ PLACEHOLDER_BG = QColor("#222")
 PLACEHOLDER_FG = QColor("#888")
 _ERROR_BG = QColor("#3a1010")
 _ERROR_FG = QColor("#ff8a8a")
+_ONLINE_FG = QColor("#4caf50")
+_OFFLINE_FG = QColor("#f44336")
 
 
 def _have_ffmpeg() -> bool:
@@ -51,7 +52,6 @@ def _inject_credentials(url: str, user: str, password: str) -> str:
     """For rtsp://, embed user:pass in the URL itself; otherwise pass through."""
     if not user or not url.startswith("rtsp://"):
         return url
-    # rtsp://host/path  ->  rtsp://user:pass@host/path
     prefix = "rtsp://"
     rest = url[len(prefix):]
     if "@" in rest.split("/", 1)[0]:
@@ -69,6 +69,7 @@ class PreviewWidget(QWidget):
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
         self._pixmap: Optional[QPixmap] = None
+        self._online: Optional[bool] = None
         self._label = QLabel("no signal", self)
         self._label.setAlignment(Qt.AlignCenter)
         self._label.setStyleSheet(
@@ -105,6 +106,7 @@ class PreviewWidget(QWidget):
         self.stop()
         self._current_url = url
         self._caption.setText(caption or url)
+        self._online = None
         if not _have_ffmpeg():
             self._show_error("ffmpeg not installed")
             return
@@ -148,7 +150,25 @@ class PreviewWidget(QWidget):
             self._tmpdir = None
             self._jpeg_path = None
         self._pixmap = None
+        self._online = None
         self._show_placeholder()
+
+    def set_online_status(self, online: bool) -> None:
+        """Update the online/offline indicator dot."""
+        self._online = online
+        self._update_caption_style()
+
+    def snapshot(self, output_path: Optional[Path] = None) -> Optional[Path]:
+        """Save the current frame to disk. Returns the path saved, or None."""
+        if self._pixmap is None or self._pixmap.isNull():
+            return None
+        if output_path is None:
+            from .config import RECORD_DIR
+            ts = time.strftime("%Y%m%d_%H%M%S")
+            output_path = RECORD_DIR / f"snapshot_{ts}.jpg"
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        self._pixmap.save(str(output_path), "JPG")
+        return output_path
 
     def is_active(self) -> bool:
         return self._proc is not None
@@ -177,6 +197,16 @@ class PreviewWidget(QWidget):
         painter.setFont(font)
         painter.drawText(pix.rect(), Qt.AlignCenter, text)
         painter.end()
+
+    def _update_caption_style(self) -> None:
+        if self._online is True:
+            color = _ONLINE_FG.name()
+            self._caption.setStyleSheet(f"color: {color};")
+        elif self._online is False:
+            color = _OFFLINE_FG.name()
+            self._caption.setStyleSheet(f"color: {color};")
+        else:
+            self._caption.setStyleSheet("color: #ddd;")
 
     def _poll_frame(self) -> None:
         if self._jpeg_path is None or not self._jpeg_path.exists():

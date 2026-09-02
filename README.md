@@ -458,6 +458,75 @@ On first launch the GUI walks you through:
    pre-fill them.
 4. **Finish** — opens the main window.
 
+### Main window
+
+Once cameras are configured, the main window shows:
+
+* **Camera list** (left) — all your cameras, filterable by group. Double-click
+  to edit, or use the Add / Edit / Remove buttons.
+* **Live preview grid** (right) — up to 4 cameras at a time with live
+  thumbnail previews. Click a preview to select it. Each preview shows a
+  green/red online-offline indicator once the health monitor has checked it.
+
+#### Toolbar actions
+
+| Action | Shortcut | What it does |
+|--------|----------|--------------|
+| Add / Edit / Remove | — | Manage the camera list |
+| Scan network | — | Search the LAN for cameras (RTSP, ONVIF, HTTP, mDNS, ARK) |
+| Open PiP | `P` | Open the selected camera in a picture-in-picture window |
+| Fullscreen | `F` | Open the selected camera in a fullscreen mpv window |
+| Grid | `G` | Cycle through layouts: 1×1, 2×2, 3×3, 4×4, 1+3 |
+| Record | `R` | Toggle recording the selected camera to disk (saved to
+`~/.config/tvpc/recordings/`) |
+| Snapshot | `S` | Save the current preview frame as a JPEG |
+| Close PiP windows | `Escape` | Close all PiP windows |
+| Reload | `Ctrl+R` | Reload the camera list from disk |
+| Recordings | — | Open the recording history dialog |
+
+#### Keyboard shortcuts
+
+* `Tab` — move between camera list and preview grid
+* `Up` / `Down` — navigate the camera list
+* `Space` — start/stop recording the selected camera
+* `Ctrl+N` — add a new camera
+* `Delete` — remove the selected camera
+
+#### Recording
+
+Click **Record** (or press `R`) on a selected camera to start recording.
+The status bar shows what's being recorded and for how long. Recordings are
+saved as MKV files to `~/.config/tvpc/recordings/` with timestamped
+filenames. Click **Record** again to stop.
+
+Use the **Recordings** toolbar button to view, open, or delete saved
+recordings.
+
+#### Camera health monitoring
+
+The app automatically pings your cameras every 30 seconds. Each preview
+shows a green dot (online) or red dot (offline). You also get desktop
+notifications when a camera goes offline or comes back online.
+
+#### Camera groups
+
+When adding or editing a camera, you can assign it to a group (e.g.
+"Backyard", "Garage"). The camera list has a dropdown to filter by group.
+
+#### Per-camera settings
+
+* **Profile** — `main` or `sub` stream (for cameras that expose both).
+* **Audio** — toggle whether the PiP window plays the camera's audio.
+  Per-camera, so you can mute a noisy camera while keeping audio on another.
+
+#### Notifications
+
+Desktop notifications (via `notify-send`) alert you when:
+* A camera goes offline or comes back online
+* Recording starts or stops
+
+If `notify-send` is not available, notifications are silently skipped.
+
 The main window has a friendly empty state that points you to the scan
 button or the manual-add button, and the scan dialog explains in plain
 language what it's about to do.
