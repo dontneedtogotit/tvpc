@@ -417,12 +417,11 @@ class TestOrionRtspPathDiscovery(unittest.TestCase):
 
 
 class TestAliveHosts(unittest.TestCase):
-    """alive_hosts() uses TCP connect to determine liveness."""
+    """alive_hosts() uses ICMP ping to determine liveness."""
 
     def test_returns_loopback_alive(self) -> None:
-        # 127.0.0.1 should always respond to a TCP connect probe.
         from tvpc_cameras_gui import discover
-        alive = discover.alive_hosts(["127.0.0.1"], timeout=0.3)
+        alive = discover.alive_hosts(["127.0.0.1"], timeout=1)
         self.assertIn("127.0.0.1", alive)
 
     def test_drops_unreachable(self) -> None:
@@ -430,8 +429,21 @@ class TestAliveHosts(unittest.TestCase):
         # 192.0.2.0/24 is reserved for documentation (RFC 5737) and
         # does not respond on the public Internet. It is a safe
         # unreachable target.
-        alive = discover.alive_hosts(["192.0.2.1"], timeout=0.3)
+        alive = discover.alive_hosts(["192.0.2.1"], timeout=1)
         self.assertNotIn("192.0.2.1", alive)
+
+    def test_timeout_parameter(self) -> None:
+        from tvpc_cameras_gui import discover
+        # Test with a very short timeout (should still work for localhost)
+        alive = discover.alive_hosts(["127.0.0.1"], timeout=0)
+        self.assertIn("127.0.0.1", alive)
+
+    def test_empty_host_list(self) -> None:
+        from tvpc_cameras_gui import discover
+        # Empty list should return empty set
+        alive = discover.alive_hosts([])
+        self.assertEqual(len(alive), 0)
+        self.assertIsInstance(alive, set)
 
 
 class TestScanWorkerEndToEnd(unittest.TestCase):

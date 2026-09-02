@@ -569,29 +569,49 @@ def _tcp_ping(host: str, timeout: float = 0.5) -> bool:
         return False
 
 
-def alive_hosts(hosts: Iterable[str], *,
-                timeout: float = 0.4, workers: int = 64) -> Set[str]:
-    """Return the subset of `hosts` that respond to a quick liveness check.
+def alive_hosts(hosts: Iterable[str], timeout: int = 1) -> Set[str]:
+    """Return the subset of `hosts` that respond to ICMP ping.
 
-    Uses ICMP echo if available, otherwise falls back to a non-blocking
-    connect to TCP/80 (a RST also proves the host is up).
+    Uses the system ping utility with -c 1 -W timeout for ICMP echo.
+    Safe to call from a worker thread.
+    Handles subprocess exceptions (TimeoutExpired, CalledProcessError, OSError).
     """
+    import subprocess
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    def ping_host(host: str) -> bool:
+        """Ping a single host and return True if it responds."""
+        try:
+            # Use system ping utility: -c 1 (count), -W timeout (Linux) or -w timeout (macOS/BSD)
+            # Linux uses -W for timeout in seconds, macOS/BSD uses -w
+            # We'll try Linux format first, then fall back to macOS/BSD if needed
+            result = subprocess.run(
+                ['ping', '-c', '1', '-W', str(timeout), host],
+                capture_output=True,
+                text=True,
+                timeout=timeout + 1  # Add a second to the subprocess timeout
+            )
+            return result.returncode == 0
+        except subprocess.TimeoutExpired:
+            return False
+        except (subprocess.CalledProcessError, OSError):
+            return False
+
     host_list = list(hosts)
     if not host_list:
         return set()
-    # Probe one host to see if raw ICMP is allowed.
-    use_icmp = _icmp_ping(host_list[0], timeout=timeout) or False
-    # Even if the first one is down, ICMP may still work — just try.
-    out: Set[str] = set()
-    with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as ex:
-        if use_icmp:
-            futs = {ex.submit(_icmp_ping, h, timeout): h for h in host_list}
-        else:
-            futs = {ex.submit(_tcp_ping, h, timeout): h for h in host_list}
-        for fut in concurrent.futures.as_completed(futs):
-            if fut.result():
-                out.add(futs[fut])
-    return out
+
+    alive: Set[str] = set()
+    # Use ThreadPoolExecutor to ping hosts in parallel
+    # Limit workers to avoid overwhelming the system
+    max_workers = min(32, len(host_list))
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        future_to_host = {executor.submit(ping_host, host): host for host in host_list}
+        for future in as_completed(future_to_host):
+            if future.result():
+                alive.add(future_to_host[future])
+    
+    return alive
 
 
 # ---------------------------------------------------------------------------

@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
+from pathlib import Path
 from typing import List, Optional
 
 
@@ -46,7 +48,64 @@ def _ensure_pyside6() -> bool:
         return False
 
 
+def _ensure_venv() -> int:
+    """Ensure we're running in the auto-created virtual environment.
+
+    If not running in the venv, create it if needed, install dependencies,
+    then re-exec ourselves using the venv's Python interpreter.
+
+    Returns 0 if we should continue running in the current process,
+    or -1 if we've re-execed into the venv and should not return.
+    """
+    from .venv_mgr import is_running_in_venv, ensure_venv, get_venv_python, install_in_venv
+
+    # Already running in the venv — continue normally.
+    if is_running_in_venv():
+        return 0
+
+    # Not in venv — set one up.
+    venv_python = get_venv_python()
+    if venv_python == Path(sys.executable):
+        # We're already in the right place somehow.
+        return 0
+
+    print("tvpc-cameras-gui: setting up a virtual environment...", file=sys.stderr)
+
+    # Create the venv if it doesn't exist.
+    if not ensure_venv(progress=lambda msg: print(f"  {msg}", file=sys.stderr)):
+        print("Failed to create virtual environment.", file=sys.stderr)
+        return 0  # Fall back to system Python.
+
+    # Install the runtime dependencies into the venv.
+    deps = ["PySide6", "requests"]
+    if not install_in_venv(deps, progress=lambda msg: print(f"  {msg}", file=sys.stderr)):
+        print("Failed to install dependencies in virtual environment.", file=sys.stderr)
+        return 0  # Fall back to system Python.
+
+    # Re-exec ourselves in the venv.
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os.execv(str(venv_python), [str(venv_python), "-m", "tvpc_cameras_gui"] + sys.argv[1:])
+    return -1  # Not reached — execv replaces the process.
+
+
 def main(argv: Optional[List[str]] = None) -> int:
+    # Step 0: Ensure we're running in the auto-created virtual environment.
+    # This will create the venv, install deps, and re-exec us inside it.
+    result = _ensure_venv()
+    if result == -1:
+        # We've been re-execed — don't run _ensure_venv again.
+        pass
+    elif result == 0:
+        # Already in the venv — proceed normally.
+        pass
+    else:
+        # venv creation failed, but we can still try to proceed.
+        print(
+            "Note: Running outside virtual environment; PySide6 may need to be installed manually.",
+            file=sys.stderr,
+        )
+
     args = _parse_args(argv if argv is not None else sys.argv[1:])
 
     # Apply optional config override before importing config module users.
