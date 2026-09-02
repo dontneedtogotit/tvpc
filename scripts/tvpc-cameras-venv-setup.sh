@@ -11,7 +11,8 @@ echo "=== tvpc-cameras-gui venv setup ==="
 echo ""
 
 # Check if already in venv
-if [[ "$VIRTUAL_ENV" == "$VENV_DIR" ]] || [[ "$(python3 -c 'import sys; print(sys.prefix)')" == "$VENV_DIR" ]]; then
+CURRENT_PREFIX=$(python3 -c 'import sys; print(sys.prefix)')
+if [[ "${VIRTUAL_ENV:-}" == "$VENV_DIR" ]] || [[ "$CURRENT_PREFIX" == "$VENV_DIR" ]]; then
     echo "Already running in the venv at: $VENV_DIR"
     echo ""
     echo "To use the GUI, run:"
