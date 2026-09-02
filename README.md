@@ -427,16 +427,42 @@ camera added in the GUI shows up in the bash script and vice versa.
 | Discover cameras on the LAN | `tvpc-cameras scan` (RTSP + ONVIF) | **Scan network** button |
 | Add / edit / remove | CLI: `add`, `remove` | Form dialogs for name, URL, user, pass, notes |
 | View a camera | `view ID` (mpv PiP) | Click in preview, then **Open PiP** |
-| View 2x2 grid | `grid` | **Open 2x2 grid** button |
+| View 2×2 grid | `grid` | **Open 2×2 grid** button |
 | Live preview thumbnails | — | Up to 4 cameras at once (ffmpeg) |
 | PiP | `mpv` always-on-top borderless window | same |
+
+### Installation
 
 The GUI needs `python3-pyside6`, `ffmpeg`, and (for the PiP views) `mpv`.
 `install.sh` installs all three; `tvpc-update.sh --check` will tell you if
 anything is out of sync.
 
+If you run the GUI without installing those packages first, it detects what's
+missing and shows a setup wizard that installs them for you (using `pkexec`
+or `sudo` as needed). You don't have to run any install command manually.
+
 The config file is plain text, so the GUI is optional — `tvpc-cameras add NAME
 rtsp://…` from a headless install still works.
+
+### First-run wizard
+
+On first launch the GUI walks you through:
+
+1. **Welcome** — a short explanation of what the app does.
+2. **Dependencies** — checks for PySide6, ffmpeg, ffprobe and mpv. If any
+   are missing, an **Install missing dependencies** button runs the installer
+   (with a progress view). On Ubuntu/Debian this is
+   `apt-get install -y python3-pyside6 ffmpeg mpv`.
+3. **Default credentials** — optional. If all your cameras share the same
+   username and password, enter them here and the scanner / add dialog will
+   pre-fill them.
+4. **Finish** — opens the main window.
+
+The main window has a friendly empty state that points you to the scan
+button or the manual-add button, and the scan dialog explains in plain
+language what it's about to do.
+
+### ORION / Grid Connect / Tuya cameras
 
 ### What the discovery does
 

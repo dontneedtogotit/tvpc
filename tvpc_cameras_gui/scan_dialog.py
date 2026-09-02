@@ -41,10 +41,11 @@ class ScanDialog(QDialog):
         self._worker: Optional[ScanWorker] = None
 
         intro = QLabel(
-            "Scans every local /24 on every active interface for RTSP / "
-            "ONVIF / HTTP / mDNS-discoverable IP cameras. Multi-interface "
-            "boxes (Wi-Fi + Ethernet) are handled automatically; you can "
-            "override the range with a CIDR below."
+            "This will scan your local network for IP security cameras. "
+            "Make sure your cameras are powered on and connected to the "
+            "same network as this computer.\n\n"
+            "The scan checks for RTSP, ONVIF, HTTP, and mDNS-discoverable "
+            "cameras across all your network interfaces."
         )
         intro.setWordWrap(True)
 

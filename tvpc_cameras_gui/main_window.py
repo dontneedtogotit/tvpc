@@ -6,11 +6,11 @@ from pathlib import Path
 from typing import List, Optional
 
 from PySide6.QtCore import Qt, QTimer
-from PySide6.QtGui import QAction, QKeySequence, QIcon
+from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QListWidget,
     QListWidgetItem, QPushButton, QToolBar, QStatusBar, QMessageBox,
-    QGridLayout, QSizePolicy, QFileDialog,
+    QGridLayout, QSizePolicy, QFrame,
 )
 
 from . import config as cfg
@@ -21,14 +21,62 @@ from .preview import PreviewWidget
 from .scan_dialog import ScanDialog
 
 
+class EmptyStateWidget(QWidget):
+    """Shown when no cameras are configured."""
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+
+        title = QLabel("No cameras yet")
+        title.setStyleSheet("font-size: 18px; font-weight: bold;")
+        title.setAlignment(Qt.AlignCenter)
+
+        body = QLabel(
+            "You can add cameras in two ways:\n\n"
+            "  1. Scan your network — the app will look for cameras "
+            "automatically.\n"
+            "  2. Add a camera manually if you know its stream URL "
+            "(rtsp:// or http://).\n\n"
+            "Click <b>Scan network</b> to get started."
+        )
+        body.setWordWrap(True)
+        body.setAlignment(Qt.AlignCenter)
+        body.setStyleSheet("color: #555;")
+
+        scan_btn = QPushButton("🔍  Scan network for cameras")
+        scan_btn.setStyleSheet("padding: 10px 20px; font-size: 14px;")
+        scan_btn.clicked.connect(lambda: self.parent()._action_scan())  # type: ignore[attr-defined]
+
+        add_btn = QPushButton("➕  Add camera manually")
+        add_btn.setStyleSheet("padding: 8px 16px;")
+        add_btn.clicked.connect(lambda: self.parent()._action_add())  # type: ignore[attr-defined]
+
+        btn_row = QHBoxLayout()
+        btn_row.addStretch(1)
+        btn_row.addWidget(scan_btn)
+        btn_row.addWidget(add_btn)
+        btn_row.addStretch(1)
+
+        layout = QVBoxLayout(self)
+        layout.addStretch(1)
+        layout.addWidget(title)
+        layout.addSpacing(12)
+        layout.addWidget(body)
+        layout.addSpacing(24)
+        layout.addLayout(btn_row)
+        layout.addStretch(1)
+
+
 class MainWindow(QMainWindow):
     """Grid of live preview thumbnails + camera list, with toolbar actions."""
 
-    def __init__(self) -> None:
+    def __init__(self, default_user: str = "", default_pass: str = "") -> None:
         super().__init__()
-        self.setWindowTitle("tvpc cameras")
+        self.setWindowTitle("tvpc Cameras")
         self.resize(1280, 760)
 
+        self._default_user = default_user
+        self._default_pass = default_pass
         self._pip = PipManager()
         self._previews: List[PreviewWidget] = []
         self._selected_index: int = -1
@@ -52,48 +100,44 @@ class MainWindow(QMainWindow):
         tb.setMovable(False)
         self.addToolBar(tb)
 
-        act_add = QAction("Add", self)
+        act_add = QAction("➕  Add", self)
         act_add.setShortcut(QKeySequence.New)
         act_add.triggered.connect(self._action_add)
         tb.addAction(act_add)
 
-        act_edit = QAction("Edit", self)
+        act_edit = QAction("✏️  Edit", self)
         act_edit.triggered.connect(self._action_edit)
         tb.addAction(act_edit)
 
-        act_remove = QAction("Remove", self)
+        act_remove = QAction("🗑  Remove", self)
         act_remove.setShortcut(QKeySequence.Delete)
         act_remove.triggered.connect(self._action_remove)
         tb.addAction(act_remove)
 
         tb.addSeparator()
 
-        act_scan = QAction("Scan network", self)
+        act_scan = QAction("🔍  Scan network", self)
         act_scan.triggered.connect(self._action_scan)
         tb.addAction(act_scan)
 
-        act_open = QAction("Open PiP", self)
+        act_open = QAction("📺  Open PiP", self)
         act_open.triggered.connect(self._action_open_pip)
         tb.addAction(act_open)
 
-        act_grid = QAction("Open 2x2 grid", self)
+        act_grid = QAction("▦  Open 2×2 grid", self)
         act_grid.triggered.connect(self._action_open_grid)
         tb.addAction(act_grid)
 
-        act_close_pip = QAction("Close PiP windows", self)
+        act_close_pip = QAction("✕  Close PiP windows", self)
         act_close_pip.triggered.connect(self._action_close_pip)
         tb.addAction(act_close_pip)
 
         tb.addSeparator()
 
-        act_reload = QAction("Reload", self)
+        act_reload = QAction("⟳  Reload", self)
         act_reload.setShortcut(QKeySequence.Refresh)
         act_reload.triggered.connect(self.reload)
         tb.addAction(act_reload)
-
-        act_config = QAction("Config file…", self)
-        act_config.triggered.connect(self._action_show_config)
-        tb.addAction(act_config)
 
     def _build_central(self) -> None:
         central = QWidget(self)
@@ -105,7 +149,7 @@ class MainWindow(QMainWindow):
         left = QWidget(central)
         left_layout = QVBoxLayout(left)
         left_layout.setContentsMargins(0, 0, 0, 0)
-        left_layout.addWidget(QLabel("Cameras"))
+        left_layout.addWidget(QLabel("<b>Cameras</b>"))
         self._list = QListWidget(left)
         self._list.itemSelectionChanged.connect(self._on_select)
         self._list.itemDoubleClicked.connect(lambda _i: self._action_edit())
@@ -113,9 +157,9 @@ class MainWindow(QMainWindow):
 
         list_btns = QHBoxLayout()
         for text, slot in (
-            ("Add", self._action_add),
-            ("Edit", self._action_edit),
-            ("Remove", self._action_remove),
+            ("➕ Add", self._action_add),
+            ("✏️ Edit", self._action_edit),
+            ("🗑 Remove", self._action_remove),
         ):
             b = QPushButton(text, left)
             b.clicked.connect(slot)
@@ -124,22 +168,27 @@ class MainWindow(QMainWindow):
 
         outer.addWidget(left, 1)
 
-        # Right: preview grid.
+        # Right: preview grid (or empty state).
         right = QWidget(central)
         right_layout = QVBoxLayout(right)
         right_layout.setContentsMargins(0, 0, 0, 0)
-        right_layout.addWidget(QLabel("Live previews (click to select)"))
+        right_layout.addWidget(QLabel("<b>Live previews</b>"))
         self._grid_wrap = QWidget(right)
         self._grid = QGridLayout(self._grid_wrap)
         self._grid.setContentsMargins(0, 0, 0, 0)
         self._grid.setSpacing(8)
         right_layout.addWidget(self._grid_wrap, 1)
 
+        # Empty state overlay.
+        self._empty_state = EmptyStateWidget(right)
+        self._empty_state.setVisible(False)
+        right_layout.addWidget(self._empty_state)
+
         # Buttons under the grid.
         grid_btns = QHBoxLayout()
         for text, slot in (
-            ("Open selected in PiP", self._action_open_pip),
-            ("Open all in 2x2 grid", self._action_open_grid),
+            ("📺 Open selected in PiP", self._action_open_pip),
+            ("▦ Open all in 2×2 grid", self._action_open_grid),
         ):
             b = QPushButton(text, right)
             b.clicked.connect(slot)
@@ -158,6 +207,12 @@ class MainWindow(QMainWindow):
             item = QListWidgetItem(cam.display())
             self._list.addItem(item)
         self._rebuild_previews(cams)
+
+        # Show empty state if no cameras.
+        has_cams = len(cams) > 0
+        self._empty_state.setVisible(not has_cams)
+        self._grid_wrap.setVisible(has_cams)
+
         self._set_status_ready(f"Loaded {len(cams)} camera(s) from {cfg.config_path()}")
 
     def _rebuild_previews(self, cams: List[Camera]) -> None:
@@ -202,6 +257,11 @@ class MainWindow(QMainWindow):
     # --- actions -----------------------------------------------------------
     def _action_add(self) -> None:
         dlg = CameraEditDialog(self)
+        # Pre-fill with default credentials if set.
+        if self._default_user:
+            dlg._user.setText(self._default_user)
+        if self._default_pass:
+            dlg._pass.setText(self._default_pass)
         if dlg.exec() == dlg.Accepted:
             cam = dlg.get_camera()
             cams = cfg.load_cameras()
@@ -241,6 +301,11 @@ class MainWindow(QMainWindow):
 
     def _action_scan(self) -> None:
         dlg = ScanDialog(self)
+        # Pre-fill with default credentials if set.
+        if self._default_user:
+            dlg._user.setText(self._default_user)
+        if self._default_pass:
+            dlg._pass.setText(self._default_pass)
         if dlg.exec() == dlg.Accepted:
             self.reload()
 
@@ -270,20 +335,11 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "No cameras", "Add at least one camera first.")
             return
         opened = self._pip.open_grid(cams)
-        self._set_status_ready(f"Opened {opened} PiP window(s) in 2x2 grid")
+        self._set_status_ready(f"Opened {opened} PiP window(s) in 2×2 grid")
 
     def _action_close_pip(self) -> None:
         self._pip.close_all()
         self._set_status_ready("Closed all PiP windows.")
-
-    def _action_show_config(self) -> None:
-        path = cfg.config_path()
-        QMessageBox.information(
-            self, "Config file",
-            f"Camera config file:\n{path}\n\n"
-            "Format: NAME|URL|USER|PASS|NOTES (one per line). "
-            "Lines starting with '#' are ignored.",
-        )
 
     # --- status ------------------------------------------------------------
     def _set_status_ready(self, msg: str = "") -> None:

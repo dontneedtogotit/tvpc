@@ -17,19 +17,23 @@ class CameraEditDialog(QDialog):
     def __init__(self, parent=None, camera: Optional[Camera] = None) -> None:
         super().__init__(parent)
         self.setWindowTitle("Edit camera" if camera else "Add camera")
-        self.setMinimumWidth(420)
+        self.setMinimumWidth(460)
 
         self._name = QLineEdit(self)
+        self._name.setPlaceholderText("e.g. Front Door")
         self._url = QLineEdit(self)
+        self._url.setPlaceholderText("rtsp://192.168.1.42/Streaming/Channels/101")
         self._user = QLineEdit(self)
+        self._user.setPlaceholderText("(optional)")
         self._pass = QLineEdit(self)
         self._pass.setEchoMode(QLineEdit.Password)
+        self._pass.setPlaceholderText("(optional)")
         self._show_pass = QCheckBox("Show password", self)
         self._show_pass.toggled.connect(
             lambda on: self._pass.setEchoMode(QLineEdit.Normal if on else QLineEdit.Password)
         )
         self._notes = QTextEdit(self)
-        self._notes.setFixedHeight(70)
+        self._notes.setFixedHeight(60)
         self._notes.setPlaceholderText("Optional notes (location, model, etc.)")
 
         if camera is not None:
@@ -56,6 +60,7 @@ class CameraEditDialog(QDialog):
         hint.setStyleSheet("color: #888;")
 
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel, parent=self)
+        buttons.button(QDialogButtonBox.Ok).setText("💾 Save")
         buttons.accepted.connect(self._on_accept)
         buttons.rejected.connect(self.reject)
 
