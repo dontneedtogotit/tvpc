@@ -415,6 +415,57 @@ launcher (Kickoff) too, so this mainly matters for the curated / Bigscreen home.
 
 ---
 
+## Security cameras — `tvpc-cameras` / `tvpc-cameras-gui`
+
+Two front-ends, one config file. Both read and write
+`~/.config/tvpc/cameras.conf` (one `NAME|URL|USER|PASS|NOTES` per line), so a
+camera added in the GUI shows up in the bash script and vice versa.
+
+| | Bash CLI / kdialog menu | PySide6 GUI |
+|---|---|---|
+| Open | `tvpc-cameras menu` (or `make cameras-menu`) | `tvpc-cameras-gui` (or `make cameras-gui`) |
+| Discover cameras on the LAN | `tvpc-cameras scan` (RTSP + ONVIF) | **Scan network** button |
+| Add / edit / remove | CLI: `add`, `remove` | Form dialogs for name, URL, user, pass, notes |
+| View a camera | `view ID` (mpv PiP) | Click in preview, then **Open PiP** |
+| View 2x2 grid | `grid` | **Open 2x2 grid** button |
+| Live preview thumbnails | — | Up to 4 cameras at once (ffmpeg) |
+| PiP | `mpv` always-on-top borderless window | same |
+
+The GUI needs `python3-pyside6`, `ffmpeg`, and (for the PiP views) `mpv`.
+`install.sh` installs all three; `tvpc-update.sh --check` will tell you if
+anything is out of sync.
+
+The config file is plain text, so the GUI is optional — `tvpc-cameras add NAME
+rtsp://…` from a headless install still works.
+
+### What the discovery does
+
+The GUI (and the bash CLI) look for cameras on the network using several
+methods in parallel:
+
+* **Parallel TCP sweep** on RTSP (554, 8554, 10554) and HTTP (80, 8080,
+  8000, 443) across every active interface, not just the default route.
+  A /24 finishes in a couple of seconds instead of 30+.
+* **Raw RTSP DESCRIBE** — no `ffprobe` required. Identifies the vendor
+  from the `Server` header and SDP body (Hikvision, Dahua, Reolink,
+  Axis, Bosch, Vivotek, ONVIF, generic Chinese OEM).
+* **HTTP probe** of vendor endpoints: Hikvision ISAPI, Dahua CGI,
+  Reolink `api.cgi`, generic MJPEG streams, ONVIF device service.
+* **ONVIF WS-Discovery** (UDP/3702) plus, when the user provides
+  credentials, **GetDeviceInformation / GetProfiles / GetStreamUri**
+  so the real manufacturer / model / firmware and stream URL are
+  reported instead of an educated guess.
+* **ARP table** read from `/proc/net/arp` to seed candidates without
+  a full sweep — useful for cameras on other subnets that have talked
+  to this host before.
+* **mDNS** queries for `_rtsp._tcp`, `_onvif._tcp`, `_http._tcp` to
+  pick up cameras that don't expose port 554.
+
+You can also supply your own CIDR (e.g. `10.0.0.0/16`) in the dialog
+for larger networks.
+
+---
+
 ## Configuration — `/etc/default/tvpc`
 
 | Setting | Default | Meaning |

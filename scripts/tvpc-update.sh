@@ -45,6 +45,7 @@ ITEMS=(
   "user|0|user '$HTPC_USER' exists, is in the right groups and can log in"
   "badfiles|0|configuration known to break the display is absent"
   "helpers|1|helper programs in /usr/local/bin match the repo"
+  "cameras_gui|1|tvpc_cameras_gui Python package matches the repo"
   "overlays|1|files under overlays/ are applied to /"
   "kernel_cmdline|0|kernel command line has no splash or Broadwell-era flags"
   "graphical_target|0|default systemd target is graphical.target"
@@ -135,6 +136,7 @@ HELPERS=(
   "scripts/tvpc-controller.sh:/usr/local/bin/tvpc-controller"
   "scripts/tvpc-status.sh:/usr/local/bin/tvpc-status"
   "scripts/tvpc-cameras.sh:/usr/local/bin/tvpc-cameras"
+  "scripts/tvpc-cameras-gui.sh:/usr/local/bin/tvpc-cameras-gui"
   "scripts/tvpc-bigscreen-topbar.sh:/usr/local/bin/tvpc-bigscreen-topbar"
   "scripts/tvpc-hdmi-audio.sh:/usr/local/bin/tvpc-hdmi-audio"
   "scripts/tvpc-doctor.sh:/usr/local/bin/tvpc-doctor"
@@ -158,6 +160,26 @@ fix_helpers() {
     src="$REPO_ROOT/${pair%%:*}"; dst="${pair##*:}"
     [[ -f $src ]] && install -D -m 0755 "$src" "$dst"
   done
+}
+
+# The cameras GUI is a Python package, not a single binary. Compare each
+# .py file in the repo against the installed copy and resync on mismatch.
+PKG_DIR="tvpc_cameras_gui"
+PKG_DST="/usr/local/lib/python3/dist-packages/tvpc_cameras_gui"
+check_cameras_gui() {
+  [[ -d "$REPO_ROOT/$PKG_DIR" ]] || return 0  # not present in this checkout
+  [[ -d "$PKG_DST" ]] || return 1
+  local f
+  while IFS= read -r f; do
+    cmp -s "$REPO_ROOT/$f" "$PKG_DST/${f#"$PKG_DIR/"}" || return 1
+  done < <(find "$REPO_ROOT/$PKG_DIR" -type f -name "*.py")
+  return 0
+}
+fix_cameras_gui() {
+  [[ -d "$REPO_ROOT/$PKG_DIR" ]] || return 0
+  install -d "$PKG_DST"
+  cp -r "$REPO_ROOT/$PKG_DIR"/. "$PKG_DST"/
+  find "$PKG_DST" -type f -name "*.py" -exec chmod 0644 {} +
 }
 
 # --- Plasma Bigscreen -------------------------------------------------------

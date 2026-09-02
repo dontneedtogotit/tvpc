@@ -1,6 +1,6 @@
 .PHONY: help install update update-check repair check-boot logs session \
         customize postboot doctor cec-remote cec-poweron check-updates check \
-        offline-usb clean cameras-menu status controller-status controller-pair
+        offline-usb clean cameras-menu cameras-gui status controller-status controller-pair
 
 help:
 	@echo "tvpc — Android-like HTPC Linux (Intel NUC7i5BNH + 2013 Samsung TV)"
@@ -22,7 +22,8 @@ help:
 	@echo "  make status           Open the visual status dashboard (tvpc-status)"
 	@echo "  make controller-status Show paired gamepads / input devices"
 	@echo "  make controller-pair  Pair a Bluetooth gamepad interactively"
-	@echo "  make cameras-menu     Open the security-camera discovery + PiP app"
+	@echo "  make cameras-menu     Open the security-camera kdialog menu (bash)"
+	@echo "  make cameras-gui      Open the security-camera PySide6 GUI"
 	@echo "  make tweaks-menu      Run the TV Tweaks app interactively"
 	@echo "  make postboot         Post-boot: SSH + Wi-Fi + polish"
 	@echo "  make doctor           Run full health check"
@@ -71,6 +72,9 @@ tweaks-menu:
 
 cameras-menu:
 	./scripts/tvpc-cameras.sh menu
+
+cameras-gui:
+	./scripts/tvpc-cameras-gui.sh
 
 status:
 	./scripts/tvpc-status.sh

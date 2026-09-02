@@ -11,3 +11,8 @@ overlays/etc/pipewire/pipewire-pulse.d/99-htpc.conf.bak
 *.tmp
 tmp/
 /tmp/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class

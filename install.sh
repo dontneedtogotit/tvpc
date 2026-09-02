@@ -105,6 +105,12 @@ apt_install flatpak software-properties-common openssh-server network-manager \
   tlp powertop zram-tools i2c-tools unattended-upgrades \
   curl wget git rsync
 
+# Security-camera GUI: the PySide6 package plus the media tools it shells out
+# to (ffmpeg for thumbnails, ffprobe for the scan probe, mpv for the PiP
+# windows). mpv is only strictly needed if the user opens a PiP window,
+# but the GUI is useless without ffmpeg/ffprobe, so install all three.
+apt_install python3-pyside6 ffmpeg mpv
+
 # Plasma Mobile is opt-in: it is a touchscreen shell, it pulls in an on-screen
 # keyboard, and on Ubuntu 24.04 its shell failing to start is the classic cause
 # of a black screen with a cursor.
@@ -205,6 +211,15 @@ install -m 0755 "$REPO_ROOT/scripts/tvpc-tweaks.sh"        /usr/local/bin/tvpc-t
 install -m 0755 "$REPO_ROOT/scripts/tvpc-controller.sh"    /usr/local/bin/tvpc-controller
 install -m 0755 "$REPO_ROOT/scripts/tvpc-status.sh"       /usr/local/bin/tvpc-status
 install -m 0755 "$REPO_ROOT/scripts/tvpc-cameras.sh"      /usr/local/bin/tvpc-cameras
+install -m 0755 "$REPO_ROOT/scripts/tvpc-cameras-gui.sh"  /usr/local/bin/tvpc-cameras-gui
+# The Python GUI package: install the source where `python3 -m
+# tvpc_cameras_gui` can find it for any user. --no-compile keeps the
+# install fast; .pyc files are regenerated on first import anyway.
+if [[ -d "$REPO_ROOT/tvpc_cameras_gui" ]]; then
+  install -d /usr/local/lib/python3/dist-packages
+  cp -r "$REPO_ROOT/tvpc_cameras_gui" /usr/local/lib/python3/dist-packages/
+  find /usr/local/lib/python3/dist-packages/tvpc_cameras_gui -type f -name "*.py" -exec chmod 0644 {} +
+fi
 install -m 0755 "$REPO_ROOT/scripts/tvpc-power.sh"          /usr/local/bin/tvpc-power
 install -m 0755 "$REPO_ROOT/scripts/tvpc-allapps.sh"         /usr/local/bin/tvpc-allapps
 # The All Apps launcher: every installed app in one browseable list (used when the
@@ -246,6 +261,19 @@ Terminal=true
 Icon=preferences-system
 Categories=Settings;
 Keywords=tvpc;tweaks;scaling;home screen;
+EOF
+# The Cameras GUI: discover, configure, and PiP IP security cameras.
+cat >/usr/share/applications/tvpc-cameras-gui.desktop <<'EOF'
+[Desktop Entry]
+Type=Application
+Name=Cameras
+GenericName=tvpc IP cameras
+Comment=Discover, configure, and view IP security cameras as picture-in-picture
+Exec=/usr/local/bin/tvpc-cameras-gui
+Terminal=false
+Icon=security-camera
+Categories=Settings;AudioVideo;
+Keywords=tvpc;camera;rtsp;onvif;pip;security;
 EOF
 
 # ---------------------------------------------------------------------------
