@@ -59,6 +59,31 @@ def _inject_credentials(url: str, user: str, password: str) -> str:
     return f"{prefix}{user}:{password}@{rest}"
 
 
+_LOADING_BG = QColor("#1a1a2e")
+_LOADING_FG = QColor("#4fc3f7")
+_RECONNECT_ATTEMPTS = 3
+_RECONNECT_DELAY = 2.0
+
+
+def _render_text(pix: QPixmap, text: str, color: QColor, sub: str = "") -> None:
+    if pix.isNull():
+        return
+    painter = QPainter(pix)
+    painter.setRenderHint(QPainter.Antialiasing)
+    painter.setPen(color)
+    font: QFont = painter.font()
+    font.setPointSize(12)
+    painter.setFont(font)
+    rect = pix.rect()
+    painter.drawText(rect, Qt.AlignCenter, text)
+    if sub:
+        font.setPointSize(9)
+        painter.setFont(font)
+        sub_rect = rect.adjusted(0, rect.height() // 2, 0, 0)
+        painter.drawText(sub_rect, Qt.AlignHCenter | Qt.AlignTop, sub)
+    painter.end()
+
+
 class PreviewWidget(QWidget):
     """A bordered label showing the latest frame from a stream.
 
@@ -93,6 +118,12 @@ class PreviewWidget(QWidget):
         self._tmpdir: Optional[tempfile.TemporaryDirectory] = None
         self._jpeg_path: Optional[Path] = None
         self._current_url: str = ""
+        self._current_user: str = ""
+        self._current_password: str = ""
+        self._reconnect_count: int = 0
+        self._reconnect_timer = QTimer(self)
+        self._reconnect_timer.setSingleShot(True)
+        self._reconnect_timer.timeout.connect(self._on_reconnect)
         self._timer = QTimer(self)
         self._timer.setInterval(1500)
         self._timer.timeout.connect(self._poll_frame)
@@ -105,14 +136,18 @@ class PreviewWidget(QWidget):
     def start(self, url: str, user: str, password: str, caption: str = "") -> None:
         self.stop()
         self._current_url = url
+        self._current_user = user
+        self._current_password = password
         self._caption.setText(caption or url)
         self._online = None
+        self._reconnect_count = 0
         if not _have_ffmpeg():
             self._show_error("ffmpeg not installed")
             return
         if not url:
             self._show_placeholder()
             return
+        self._show_loading()
         try:
             self._tmpdir = tempfile.TemporaryDirectory(prefix="tvpc-thumb-")
             self._jpeg_path = Path(self._tmpdir.name) / "frame.jpg"
@@ -131,6 +166,7 @@ class PreviewWidget(QWidget):
         self._poll_frame()
 
     def stop(self) -> None:
+        self._reconnect_timer.stop()
         self._timer.stop()
         if self._proc is not None:
             try:
@@ -152,6 +188,30 @@ class PreviewWidget(QWidget):
         self._pixmap = None
         self._online = None
         self._show_placeholder()
+
+    def _on_reconnect(self) -> None:
+        if self._reconnect_count < _RECONNECT_ATTEMPTS and self._current_url:
+            self._reconnect_count += 1
+            self._show_loading()
+            try:
+                self._tmpdir = tempfile.TemporaryDirectory(prefix="tvpc-thumb-")
+                self._jpeg_path = Path(self._tmpdir.name) / "frame.jpg"
+                cmd = build_ffmpeg_cmd(
+                    self._current_url, self._current_user, self._current_password,
+                    self._jpeg_path,
+                )
+                self._proc = subprocess.Popen(
+                    cmd,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.PIPE,
+                    stdin=subprocess.DEVNULL,
+                    start_new_session=True,
+                )
+            except Exception:  # noqa: BLE001
+                self._show_error("reconnect failed")
+                return
+            self._timer.start()
+            self._poll_frame()
 
     def set_online_status(self, online: bool) -> None:
         """Update the online/offline indicator dot."""
@@ -180,13 +240,19 @@ class PreviewWidget(QWidget):
         self._render_text(pix, "no signal", PLACEHOLDER_FG)
         self._label.setPixmap(pix)
 
+    def _show_loading(self) -> None:
+        pix = QPixmap(self._label.size())
+        pix.fill(_LOADING_BG)
+        self._render_text(pix, "Connecting…", _LOADING_FG, "waiting for stream")
+        self._label.setPixmap(pix)
+
     def _show_error(self, msg: str) -> None:
         pix = QPixmap(self._label.size())
         pix.fill(_ERROR_BG)
-        self._render_text(pix, msg, _ERROR_FG)
+        self._render_text(pix, "Stream error", _ERROR_FG, msg[:60])
         self._label.setPixmap(pix)
 
-    def _render_text(self, pix: QPixmap, text: str, color: QColor) -> None:
+    def _render_text(self, pix: QPixmap, text: str, color: QColor, sub: str = "") -> None:
         if pix.isNull():
             return
         painter = QPainter(pix)
@@ -195,7 +261,13 @@ class PreviewWidget(QWidget):
         font: QFont = painter.font()
         font.setPointSize(12)
         painter.setFont(font)
-        painter.drawText(pix.rect(), Qt.AlignCenter, text)
+        rect = pix.rect()
+        painter.drawText(rect, Qt.AlignCenter, text)
+        if sub:
+            font.setPointSize(9)
+            painter.setFont(font)
+            sub_rect = rect.adjusted(0, rect.height() // 2, 0, 0)
+            painter.drawText(sub_rect, Qt.AlignHCenter | Qt.AlignTop, sub)
         painter.end()
 
     def _update_caption_style(self) -> None:
@@ -223,7 +295,7 @@ class PreviewWidget(QWidget):
             return
         self._pixmap = QPixmap.fromImage(img)
         self._label.setPixmap(self._pixmap)
-        # If the ffmpeg process died, surface that.
+        # If the ffmpeg process died, surface that and attempt reconnect.
         if self._proc is not None and self._proc.poll() is not None:
             err = b""
             try:
@@ -233,6 +305,8 @@ class PreviewWidget(QWidget):
             msg = err.decode("utf-8", "replace").strip().splitlines()[-1] if err else "stream ended"
             self._proc = None
             self._show_error(msg or "stream ended")
+            if self._reconnect_count < _RECONNECT_ATTEMPTS:
+                self._reconnect_timer.start(int(_RECONNECT_DELAY * 1000))
 
     def closeEvent(self, event) -> None:  # noqa: N802
         self.stop()

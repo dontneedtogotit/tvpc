@@ -11,6 +11,7 @@ from typing import List
 CONF_DIR = Path(os.environ.get("XDG_CONFIG_HOME", str(Path.home() / ".config"))) / "tvpc"
 CONF_FILE = CONF_DIR / "cameras.conf"
 RECORD_DIR = CONF_DIR / "recordings"
+LAYOUT_FILE = CONF_DIR / "layout.conf"
 
 
 @dataclass
@@ -23,6 +24,7 @@ class Camera:
     group: str = ""
     profile: str = "main"       # "main" or "sub"
     audio: bool = True          # play audio in PiP windows
+    enabled: bool = True        # show in list and previews
 
     def credential_args(self) -> List[str]:
         args: List[str] = []
@@ -56,7 +58,7 @@ def ensure_conf() -> Path:
 def load_cameras() -> List[Camera]:
     """Read cameras.conf, ignoring blanks and lines starting with '#'.
 
-    Format is `NAME|URL|USER|PASS|NOTES|GROUP|PROFILE|AUDIO`.
+    Format is `NAME|URL|USER|PASS|NOTES|GROUP|PROFILE|AUDIO|ENABLED`.
     Legacy formats with fewer fields are accepted and padded.
     """
     ensure_conf()
@@ -66,19 +68,20 @@ def load_cameras() -> List[Camera]:
         if not line or line.startswith("#"):
             continue
         parts = line.split("|")
-        while len(parts) < 8:
+        while len(parts) < 9:
             parts.append("")
-        name, url, user, password, notes, group, profile, audio = parts[:8]
+        name, url, user, password, notes, group, profile, audio, enabled = parts[:9]
         if not name or not url:
             continue
-        # Parse audio as bool (default True).
         audio_str = audio.strip().lower()
         audio_val = audio_str not in ("0", "false", "no", "off")
         profile_val = profile.strip() or "main"
+        enabled_str = enabled.strip().lower()
+        enabled_val = enabled_str not in ("0", "false", "no", "off")
         out.append(Camera(
             name=name, url=url, user=user, password=password,
             notes=notes, group=group.strip(), profile=profile_val,
-            audio=audio_val,
+            audio=audio_val, enabled=enabled_val,
         ))
     return out
 
@@ -87,15 +90,16 @@ def save_cameras(cameras: List[Camera]) -> None:
     ensure_conf()
     tmp = CONF_FILE.with_suffix(".conf.tmp")
     lines = [
-        "# tvpc cameras — one per line: NAME|URL|USER|PASS|NOTES|GROUP|PROFILE|AUDIO",
+        "# tvpc cameras — one per line: NAME|URL|USER|PASS|NOTES|GROUP|PROFILE|AUDIO|ENABLED",
         "# Edited by tvpc-cameras-gui. Also readable by the bash tvpc-cameras script.",
-        "# AUDIO: 1/true = play audio, 0/false = mute. PROFILE: main or sub.",
+        "# AUDIO/ENABLED: 1/true = yes, 0/false = no. PROFILE: main or sub.",
     ]
     for cam in cameras:
         audio_str = "1" if cam.audio else "0"
+        enabled_str = "1" if cam.enabled else "0"
         lines.append("|".join([
             cam.name, cam.url, cam.user, cam.password, cam.notes,
-            cam.group, cam.profile, audio_str,
+            cam.group, cam.profile, audio_str, enabled_str,
         ]))
     tmp.write_text("\n".join(lines) + "\n", encoding="utf-8")
     shutil.move(str(tmp), str(CONF_FILE))
@@ -131,3 +135,23 @@ def config_path() -> Path:
 def record_path() -> Path:
     ensure_conf()
     return RECORD_DIR
+
+
+def load_layout() -> str:
+    """Return the saved grid layout name, or '2x2' if none saved."""
+    try:
+        if LAYOUT_FILE.exists():
+            val = LAYOUT_FILE.read_text(encoding="utf-8").strip()
+            if val:
+                return val
+    except OSError:
+        pass
+    return "2x2"
+
+
+def save_layout(layout: str) -> None:
+    try:
+        CONF_DIR.mkdir(parents=True, exist_ok=True)
+        LAYOUT_FILE.write_text(layout + "\n", encoding="utf-8")
+    except OSError:
+        pass

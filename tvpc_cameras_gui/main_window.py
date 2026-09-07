@@ -11,6 +11,8 @@ from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QListWidget,
     QListWidgetItem, QPushButton, QToolBar, QStatusBar, QMessageBox,
     QGridLayout, QSizePolicy, QComboBox, QMenu, QFileDialog,
+    QDialog, QDialogButtonBox, QFormLayout, QLineEdit, QTextEdit,
+    QCheckBox, QGroupBox, QSplitter, QFrame,
 )
 
 from . import config as cfg
@@ -31,7 +33,7 @@ class EmptyStateWidget(QWidget):
         super().__init__(parent)
 
         title = QLabel("No cameras yet")
-        title.setStyleSheet("font-size: 18px; font-weight: bold;")
+        title.setStyleSheet("font-size: 22px; font-weight: bold; color: #4fc3f7;")
         title.setAlignment(Qt.AlignCenter)
 
         body = QLabel(
@@ -44,28 +46,39 @@ class EmptyStateWidget(QWidget):
         )
         body.setWordWrap(True)
         body.setAlignment(Qt.AlignCenter)
-        body.setStyleSheet("color: #555;")
+        body.setStyleSheet("color: #aaa; font-size: 13px;")
 
         scan_btn = QPushButton("🔍  Scan network for cameras")
-        scan_btn.setStyleSheet("padding: 10px 20px; font-size: 14px;")
+        scan_btn.setStyleSheet(
+            "padding: 12px 24px; font-size: 14px; "
+            "background: #2a6ebb; border: none; color: white; border-radius: 6px;"
+        )
         scan_btn.clicked.connect(lambda: self.parent()._action_scan())  # type: ignore[attr-defined]
 
         add_btn = QPushButton("➕  Add camera manually")
-        add_btn.setStyleSheet("padding: 8px 16px;")
+        add_btn.setStyleSheet("padding: 10px 18px; border-radius: 6px;")
         add_btn.clicked.connect(lambda: self.parent()._action_add())  # type: ignore[attr-defined]
+
+        self._readd_btn = QPushButton("↩  Re-add from last scan")
+        self._readd_btn.setStyleSheet("padding: 10px 18px; border-radius: 6px;")
+        self._readd_btn.clicked.connect(self._action_readd_last_scan)
+        self._readd_btn.setVisible(False)
 
         btn_row = QHBoxLayout()
         btn_row.addStretch(1)
         btn_row.addWidget(scan_btn)
+        btn_row.addSpacing(12)
         btn_row.addWidget(add_btn)
+        btn_row.addSpacing(12)
+        btn_row.addWidget(self._readd_btn)
         btn_row.addStretch(1)
 
         layout = QVBoxLayout(self)
         layout.addStretch(1)
         layout.addWidget(title)
-        layout.addSpacing(12)
+        layout.addSpacing(16)
         layout.addWidget(body)
-        layout.addSpacing(24)
+        layout.addSpacing(32)
         layout.addLayout(btn_row)
         layout.addStretch(1)
 
@@ -84,10 +97,11 @@ class MainWindow(QMainWindow):
         self._recording = RecordingManager()
         self._previews: List[PreviewWidget] = []
         self._selected_index: int = -1
-        self._current_layout = "2x2"
+        self._current_layout = cfg.load_layout()
         self._health_thread = None
         self._health_worker = None
         self._camera_status: dict[str, bool] = {}
+        self._last_scan_results: List[config.DiscoveredCamera] = []
 
         self._build_toolbar()
         self._build_central()
@@ -165,6 +179,25 @@ class MainWindow(QMainWindow):
 
         tb.addSeparator()
 
+        act_shortcuts = QAction("⌨  Shortcuts", self)
+        act_shortcuts.triggered.connect(self._action_show_shortcuts)
+        tb.addAction(act_shortcuts)
+
+        act_export = QAction("📤 Export config", self)
+        act_export.triggered.connect(self._action_export_config)
+        tb.addAction(act_export)
+
+        act_import = QAction("📥 Import config", self)
+        act_import.triggered.connect(self._action_import_config)
+        tb.addAction(act_import)
+
+        act_toggle = QAction("👁 Toggle enable", self)
+        act_toggle.setShortcut("E")
+        act_toggle.triggered.connect(self._action_toggle_enable)
+        tb.addAction(act_toggle)
+
+        tb.addSeparator()
+
         act_reload = QAction("⟳  Reload", self)
         act_reload.setShortcut(QKeySequence.Refresh)
         act_reload.triggered.connect(self.reload)
@@ -176,7 +209,7 @@ class MainWindow(QMainWindow):
         outer.setContentsMargins(8, 8, 8, 8)
         outer.setSpacing(8)
 
-        # Left: list of cameras with group filter.
+        # Left: list of cameras with group filter and search.
         left = QWidget(central)
         left_layout = QVBoxLayout(left)
         left_layout.setContentsMargins(0, 0, 0, 0)
@@ -190,10 +223,55 @@ class MainWindow(QMainWindow):
         list_header.addWidget(self._group_filter)
         left_layout.addLayout(list_header)
 
+        # Sortable column headers.
+        sort_row = QHBoxLayout()
+        sort_row.setContentsMargins(0, 0, 0, 0)
+        for label, slot in (
+            ("Name", lambda: self._sort_by("name")),
+            ("Group", lambda: self._sort_by("group")),
+            ("Status", lambda: self._sort_by("status")),
+        ):
+            btn = QPushButton(label)
+            btn.setStyleSheet("padding: 2px 8px; font-size: 11px; background: transparent; border: none; text-decoration: underline;")
+            btn.clicked.connect(slot)
+            sort_row.addWidget(btn)
+        sort_row.addStretch(1)
+        left_layout.addLayout(sort_row)
+
+        self._search = QLineEdit()
+        self._search.setPlaceholderText("🔍  Search cameras…")
+        self._search.textChanged.connect(self._on_search_changed)
+        left_layout.addWidget(self._search)
+
         self._list = QListWidget(left)
+        self._list.setContextMenuPolicy(Qt.CustomContextMenu)
+        self._list.customContextMenuRequested.connect(self._on_list_context_menu)
         self._list.itemSelectionChanged.connect(self._on_select)
         self._list.itemDoubleClicked.connect(lambda _i: self._action_edit())
+        self._list.setSortingEnabled(False)
         left_layout.addWidget(self._list, 1)
+
+        # Details panel below the list.
+        self._details = QGroupBox("Camera details")
+        self._details.setVisible(False)
+        details_layout = QFormLayout()
+        self._detail_name = QLabel("")
+        self._detail_url = QLabel("")
+        self._detail_url.setWordWrap(True)
+        self._detail_url.setStyleSheet("color: #4fc3f7;")
+        self._detail_vendor = QLabel("")
+        self._detail_group = QLabel("")
+        self._detail_profile = QLabel("")
+        self._detail_notes = QLabel("")
+        self._detail_notes.setWordWrap(True)
+        details_layout.addRow("Name:", self._detail_name)
+        details_layout.addRow("URL:", self._detail_url)
+        details_layout.addRow("Vendor:", self._detail_vendor)
+        details_layout.addRow("Group:", self._detail_group)
+        details_layout.addRow("Profile:", self._detail_profile)
+        details_layout.addRow("Notes:", self._detail_notes)
+        self._details.setLayout(details_layout)
+        left_layout.addWidget(self._details, 0)
 
         list_btns = QHBoxLayout()
         for text, slot in (
@@ -255,18 +333,26 @@ class MainWindow(QMainWindow):
         self._list.clear()
         for cam in cams:
             item = QListWidgetItem(cam.display())
+            item.setData(Qt.UserRole, cam)
+            online = self._camera_status.get(cam.name)
+            if online is not None:
+                icon_text = "🟢" if online else "🔴"
+                item.setText(f"{icon_text}  {cam.display()}")
+            if not cam.enabled:
+                item.setForeground(Qt.gray)
+                item.setText("🚫  " + cam.display())
             self._list.addItem(item)
-        self._rebuild_previews(cams)
+        self._rebuild_previews([c for c in cams if c.enabled])
         self._rebuild_group_filter(cams)
 
-        # Show empty state if no cameras.
         has_cams = len(cams) > 0
         self._empty_state.setVisible(not has_cams)
+        if hasattr(self, '_readd_btn'):
+            self._readd_btn.setVisible(not has_cams and len(self._last_scan_results) > 0)
         self._grid_wrap.setVisible(has_cams)
 
         self._set_status_ready(f"Loaded {len(cams)} camera(s) from {cfg.config_path()}")
 
-        # Restart health monitor with new camera list.
         self._start_health_monitor(cams)
 
     def _rebuild_group_filter(self, cams: List[Camera]) -> None:
@@ -288,11 +374,79 @@ class MainWindow(QMainWindow):
             filtered = cams
         else:
             filtered = [c for c in cams if c.group == text]
+        self._apply_list_filter(filtered)
+
+    def _on_search_changed(self, text: str) -> None:
+        cams = cfg.load_cameras()
+        group = self._group_filter.currentText()
+        if group != "All groups":
+            cams = [c for c in cams if c.group == group]
+        if text.strip():
+            lower = text.strip().lower()
+            cams = [c for c in cams if lower in c.name.lower() or lower in c.url.lower()]
+        self._apply_list_filter(cams)
+
+    def _sort_by(self, key: str) -> None:
+        cams = cfg.load_cameras()
+        rev = getattr(self, f"_sort_rev_{key}", False)
+        setattr(self, f"_sort_rev_{key}", not rev)
+        rev = not rev
+        if key == "name":
+            cams.sort(key=lambda c: c.name.lower(), reverse=rev)
+        elif key == "group":
+            cams.sort(key=lambda c: c.group.lower(), reverse=rev)
+        elif key == "status":
+            def status_key(c):
+                st = self._camera_status.get(c.name)
+                if st is True:
+                    return 0 if not rev else 2
+                if st is False:
+                    return 1 if not rev else 1
+                return 2 if not rev else 0
+            cams.sort(key=status_key)
+        self._apply_list_filter(cams)
+
+    def _on_search_changed(self, text: str) -> None:
+        cams = cfg.load_cameras()
+        group = self._group_filter.currentText()
+        if group != "All groups":
+            cams = [c for c in cams if c.group == group]
+        if text.strip():
+            lower = text.strip().lower()
+            cams = [c for c in cams if lower in c.name.lower() or lower in c.url.lower()]
+        self._apply_list_filter(cams)
+
+    def _apply_list_filter(self, cams: List[Camera]) -> None:
         self._list.clear()
-        for cam in filtered:
+        for cam in cams:
             item = QListWidgetItem(cam.display())
+            item.setData(Qt.UserRole, cam)
+            online = self._camera_status.get(cam.name)
+            if online is not None:
+                icon_text = "🟢" if online else "🔴"
+                item.setText(f"{icon_text}  {cam.display()}")
+            if not cam.enabled:
+                item.setForeground(Qt.gray)
+                item.setText("🚫  " + cam.display())
             self._list.addItem(item)
-        self._rebuild_previews(filtered)
+        self._rebuild_previews([c for c in cams if c.enabled])
+
+    def _on_list_context_menu(self, pos) -> None:
+        item = self._list.itemAt(pos)
+        if item is None:
+            return
+        self._list.setCurrentItem(item)
+        menu = QMenu(self)
+        menu.addAction("✏️ Edit", self._action_edit)
+        menu.addAction("📺 Open in PiP", self._action_open_pip)
+        menu.addAction("⛶ Fullscreen", self._action_fullscreen)
+        menu.addAction("⏺ Record", self._action_toggle_record)
+        menu.addAction("📷 Snapshot", self._action_snapshot)
+        menu.addSeparator()
+        menu.addAction("👁 Toggle enable/disable", self._action_toggle_enable)
+        menu.addSeparator()
+        menu.addAction("🗑 Remove", self._action_remove)
+        menu.exec(self._list.viewport().mapToGlobal(pos))
 
     def _rebuild_previews(self, cams: List[Camera]) -> None:
         # Stop and remove existing previews.
@@ -308,7 +462,6 @@ class MainWindow(QMainWindow):
                 if w is not None:
                     w.setParent(None)
 
-        # Determine grid size from layout.
         layout_cols = {"1x1": 1, "2x2": 2, "3x3": 3, "4x4": 4, "1+3": 2}
         cols = layout_cols.get(self._current_layout, 2)
         max_cams = cols * cols if self._current_layout != "1+3" else 4
@@ -316,6 +469,8 @@ class MainWindow(QMainWindow):
         for idx, cam in enumerate(cams[:max_cams]):
             prev = PreviewWidget(self._grid_wrap)
             prev.clicked.connect(lambda i=idx: self._select_index(i))
+            if hasattr(prev, '_cached_vendor'):
+                prev._cached_vendor = cam.notes
             # Restore online status if known.
             if cam.name in self._camera_status:
                 prev.set_online_status(self._camera_status[cam.name])
@@ -333,6 +488,22 @@ class MainWindow(QMainWindow):
         cams = cfg.load_cameras()
         if 0 <= idx < len(cams):
             self._list.setCurrentRow(idx)
+            cam = cams[idx]
+            self._details.setVisible(True)
+            self._detail_name.setText(cam.name)
+            self._detail_url.setText(cam.url)
+            vendor_text = cam.notes.split("vendor:")[-1].split(";")[0].strip() if "vendor:" in cam.notes else ""
+            if not vendor_text:
+                for prev in self._previews:
+                    if prev._caption.text() == cam.name:
+                        vendor_text = getattr(prev, "_cached_vendor", "")
+                        break
+            self._detail_vendor.setText(vendor_text or "—")
+            self._detail_group.setText(cam.group or "—")
+            self._detail_profile.setText(cam.profile or "—")
+            self._detail_notes.setText(cam.notes or "—")
+        else:
+            self._details.setVisible(False)
 
     def _selected_camera(self) -> Optional[tuple[int, Camera]]:
         cams = cfg.load_cameras()
@@ -369,11 +540,17 @@ class MainWindow(QMainWindow):
 
     def _on_health_status_changed(self, name: str, online: bool, url: str) -> None:
         self._camera_status[name] = online
-        # Update preview widget if visible.
         for prev in self._previews:
             if prev._caption.text() == name:
                 prev.set_online_status(online)
-        # Notify on transitions.
+        for i in range(self._list.count()):
+            item = self._list.item(i)
+            text = item.text()
+            if name in text:
+                icon_text = "🟢" if online else "🔴"
+                # Strip existing emoji prefix if present.
+                base = text.lstrip("🟢🔴 ")
+                item.setText(f"{icon_text}  {base}")
         if not online:
             send_camera_offline(name)
         elif name in self._camera_status and not self._camera_status.get(name):
@@ -430,7 +607,43 @@ class MainWindow(QMainWindow):
         if self._default_pass:
             dlg._pass.setText(self._default_pass)
         if dlg.exec() == dlg.Accepted:
+            self._last_scan_results = dlg._results
             self.reload()
+
+    def _action_readd_last_scan(self) -> None:
+        if not self._last_scan_results:
+            QMessageBox.information(self, "No scan results", "No previous scan results available.")
+            return
+        from . import config as cfg
+        cams = cfg.load_cameras()
+        existing_urls = {c.url for c in cams}
+        added = 0
+        for res in self._last_scan_results:
+            if not res.url or res.url in existing_urls:
+                continue
+            base = res.vendor.lower().replace(" ", "_") if res.vendor else res.method
+            tag = res.host or (res.url.split("//", 1)[-1].split("/", 1)[0]
+                                if "//" in res.url else res.url)
+            name = f"{base}-{tag}" if base and tag else tag or res.url
+            n = 2
+            existing_names = {c.name for c in cams}
+            while name in existing_names:
+                name = f"{base}-{tag}-{n}"
+                n += 1
+            note_bits = [f"discovered via {res.method}"]
+            if res.vendor: note_bits.append(f"vendor: {res.vendor}")
+            if res.model: note_bits.append(f"model: {res.model}")
+            if res.firmware: note_bits.append(f"firmware: {res.firmware}")
+            cams.append(Camera(
+                name=name, url=res.url,
+                user=self._default_user, password=self._default_pass,
+                notes="; ".join(note_bits),
+            ))
+            existing_urls.add(res.url)
+            added += 1
+        cfg.save_cameras(cams)
+        QMessageBox.information(self, "Added", f"Added {added} camera(s) from last scan.")
+        self.reload()
 
     def _action_open_pip(self) -> None:
         if not self._pip.is_available():
@@ -469,6 +682,7 @@ class MainWindow(QMainWindow):
         idx = layouts.index(self._current_layout) if self._current_layout in layouts else 0
         self._current_layout = layouts[(idx + 1) % len(layouts)]
         self._layout_label.setText(self._current_layout.replace("x", "×"))
+        cfg.save_layout(self._current_layout)
         self._rebuild_previews(self._visible_cameras())
         self._set_status_ready(f"Layout: {self._current_layout}")
 
@@ -529,6 +743,81 @@ class MainWindow(QMainWindow):
         from .recording_history import RecordingHistoryDialog
         dlg = RecordingHistoryDialog(self)
         dlg.exec()
+
+    def _action_show_shortcuts(self) -> None:
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Keyboard shortcuts")
+        dlg.setMinimumWidth(400)
+        layout = QFormLayout(dlg)
+        shortcuts = [
+            ("Ctrl+N / A", "Add camera"),
+            ("Ctrl+E", "Edit selected camera"),
+            ("Delete", "Remove selected camera"),
+            ("Ctrl+Shift+S", "Scan network"),
+            ("P", "Open selected in PiP"),
+            ("F", "Fullscreen selected"),
+            ("G", "Cycle grid layout"),
+            ("R", "Toggle recording"),
+            ("S", "Snapshot selected"),
+            ("E", "Toggle enable/disable selected"),
+            ("Esc", "Close all PiP windows"),
+            ("F5 / Ctrl+R", "Reload"),
+        ]
+        for key, desc in shortcuts:
+            layout.addRow(QLabel(f"<b>{key}</b>"), QLabel(desc))
+        btns = QDialogButtonBox(QDialogButtonBox.Close, parent=dlg)
+        btns.rejected.connect(dlg.reject)
+        layout.addRow(btns)
+        dlg.exec()
+
+    def _action_export_config(self) -> None:
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Export cameras.conf", str(cfg.config_path()),
+            "Config files (*.conf);;All files (*.*)",
+        )
+        if not path:
+            return
+        try:
+            import shutil
+            shutil.copy2(str(cfg.config_path()), path)
+            QMessageBox.information(self, "Exported", f"Config exported to:\n{path}")
+        except OSError as e:
+            QMessageBox.warning(self, "Error", f"Could not export: {e}")
+
+    def _action_import_config(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Import cameras.conf", str(Path.home()),
+            "Config files (*.conf);;All files (*.*)",
+        )
+        if not path:
+            return
+        ok = QMessageBox.question(
+            self, "Import",
+            f"This will replace the current camera config with:\n{path}\n\nContinue?",
+        )
+        if ok != QMessageBox.Yes:
+            return
+        try:
+            import shutil
+            shutil.copy2(path, str(cfg.config_path()))
+            self.reload()
+            QMessageBox.information(self, "Imported", "Config imported successfully.")
+        except OSError as e:
+            QMessageBox.warning(self, "Error", f"Could not import: {e}")
+
+    def _action_toggle_enable(self) -> None:
+        sel = self._selected_camera()
+        if not sel:
+            QMessageBox.information(self, "No selection", "Select a camera first.")
+            return
+        idx, cam = sel
+        cams = cfg.load_cameras()
+        if 0 <= idx < len(cams):
+            cams[idx].enabled = not cams[idx].enabled
+            cfg.save_cameras(cams)
+            state = "enabled" if cams[idx].enabled else "disabled"
+            self._set_status_ready(f"{cam.name} {state}")
+            self.reload()
 
     # --- periodic reap -----------------------------------------------------
     def _on_reap(self) -> None:

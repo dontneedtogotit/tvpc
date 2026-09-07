@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=tvpc Cameras
+Comment=IP security camera manager with live previews
+Exec=tvpc-cameras-gui
+Icon=tvpc-cameras-gui
+Terminal=false
+Categories=Utility;Video;Network;
+Keywords=camera;security;rtsp;onvif;surveillance;
+StartupNotify=true
+StartupWMClass=tvpc-cameras-gui

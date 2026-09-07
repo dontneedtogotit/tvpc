@@ -45,13 +45,23 @@ class ScanWorker(QObject):
                  password: str = "",
                  cidr: Optional[str] = None,
                  workers: int = 64,
-                 do_onvif_enrich: bool = True) -> None:
+                 do_onvif_enrich: bool = True,
+                 quick: bool = False,
+                 mdns_timeout: float = 2.0,
+                 mdns_retries: int = 1,
+                 exclude_subnets: Optional[List[str]] = None,
+                 include_subnets: Optional[List[str]] = None) -> None:
         super().__init__()
         self.user = user
         self.password = password
         self.cidr = cidr  # user-supplied CIDR; None = auto-detect
         self.workers = workers
         self.do_onvif_enrich = do_onvif_enrich
+        self.quick = quick
+        self.mdns_timeout = mdns_timeout
+        self.mdns_retries = mdns_retries
+        self.exclude_subnets = exclude_subnets or []
+        self.include_subnets = include_subnets or []
         self._cancel = False
 
     def cancel(self) -> None:
@@ -65,7 +75,6 @@ class ScanWorker(QObject):
                 self.failed.emit("No IPv4 subnets found. Connect to a network first.")
                 return
             for n in nets:
-                # /32 networks have 1 address; bigger subnets have (size-2).
                 host_count = n.num_addresses - 2 if n.prefixlen < 31 else n.num_addresses
                 self.progress.emit(f"Scanning {n} ({host_count} host{'s' if host_count != 1 else ''})")
 
@@ -80,33 +89,10 @@ class ScanWorker(QObject):
                 results.append(cam)
                 self.found.emit(cam)
 
-            # 1) ARP table — instant.
-            arp = disc.arp_hosts()
-            if arp:
-                self.progress.emit(f"ARP table: {len(arp)} host(s) with a known MAC")
-            for host in arp:
-                if self._cancel:
-                    return
-                # Treat the host as an RTSP candidate, the real DESCRIBE
-                # will confirm whether anything is there.
-                cam = disc.rtsp_probe_paths(host, port=554,
-                                            user=self.user, password=self.password)
-                if cam is not None:
-                    _emit(cam)
-
-            # 2) mDNS.
-            if not self._cancel:
-                self.progress.emit("mDNS query (_rtsp / _onvif / _http)…")
-                for c in disc.mdns_discover():
-                    _emit(c)
-
-            # 3) Parallel TCP sweep, all subnets, all ports.
-            if not self._cancel:
-                self._sweep_and_probe(nets, _emit)
-
-            # 4) ONVIF WS-Discovery + enrichment.
-            if not self._cancel:
-                self._onvif_phase(_emit)
+            if self.quick:
+                self._quick_scan(_emit)
+            else:
+                self._full_scan(nets, _emit)
 
             self.progress.emit(f"Done. {len(results)} unique camera(s) found.")
         except Exception as exc:  # noqa: BLE001
@@ -115,12 +101,91 @@ class ScanWorker(QObject):
             self.finished.emit()
 
     # ------------------------------------------------------------------
+    def _quick_scan(self, _emit) -> None:
+        """Fast scan: ARP + mDNS + ONVIF only, no TCP sweep."""
+        # 1) ARP table — instant.
+        arp = disc.arp_hosts()
+        if arp:
+            self.progress.emit(f"ARP table: {len(arp)} host(s) with a known MAC")
+        for host in arp:
+            if self._cancel:
+                return
+            cam = disc.rtsp_probe_paths(host, port=554,
+                                        user=self.user, password=self.password)
+            if cam is not None:
+                _emit(cam)
+
+        # 2) mDNS.
+        if not self._cancel:
+            self.progress.emit("mDNS query (_rtsp / _onvif / _http)…")
+            for c in disc.mdns_discover(
+                timeout_per_service=self.mdns_timeout,
+                retries=self.mdns_retries,
+            ):
+                _emit(c)
+
+        # 3) ONVIF WS-Discovery (fast multicast).
+        if not self._cancel:
+            self._onvif_phase(_emit)
+
+    # ------------------------------------------------------------------
+    def _full_scan(self, nets, _emit) -> None:
+        """Full scan: ARP + mDNS + TCP sweep + ONVIF."""
+        # 1) ARP table — instant.
+        arp = disc.arp_hosts()
+        if arp:
+            self.progress.emit(f"ARP table: {len(arp)} host(s) with a known MAC")
+        for host in arp:
+            if self._cancel:
+                return
+            cam = disc.rtsp_probe_paths(host, port=554,
+                                        user=self.user, password=self.password)
+            if cam is not None:
+                _emit(cam)
+
+        # 2) mDNS.
+        if not self._cancel:
+            self.progress.emit("mDNS query (_rtsp / _onvif / _http)…")
+            for c in disc.mdns_discover(
+                timeout_per_service=self.mdns_timeout,
+                retries=self.mdns_retries,
+            ):
+                _emit(c)
+
+        # 3) Parallel TCP sweep, all subnets, all ports.
+        if not self._cancel:
+            self._sweep_and_probe(nets, _emit)
+
+        # 4) ONVIF WS-Discovery + enrichment.
+        if not self._cancel:
+            self._onvif_phase(_emit)
+
+    # ------------------------------------------------------------------
     def _resolve_subnets(self) -> List[ipaddress.IPv4Network]:
         if self.cidr:
             net = disc.parse_cidr_or_subnet(self.cidr)
             if net is not None:
                 return [net]
-        return disc.all_local_subnets()
+        nets = disc.all_local_subnets()
+        # Apply whitelist/blacklist.
+        if self.include_subnets:
+            inc = set()
+            for s in self.include_subnets:
+                n = disc.parse_cidr_or_subnet(s)
+                if n:
+                    inc.add(n)
+            nets = [n for n in nets if n in inc]
+        filtered: List[ipaddress.IPv4Network] = []
+        for n in nets:
+            skip = False
+            for ex in self.exclude_subnets:
+                en = disc.parse_cidr_or_subnet(ex)
+                if en and (n.subnet_of(en) or en.subnet_of(n)):
+                    skip = True
+                    break
+            if not skip:
+                filtered.append(n)
+        return filtered
 
     # ------------------------------------------------------------------
     def _sweep_and_probe(self,
@@ -269,16 +334,25 @@ class ScanWorker(QObject):
 
 
 def start_scan(parent,
-               user: str = "",
-               password: str = "",
-               cidr: Optional[str] = None,
-               on_found=None,
-               on_progress=None,
-               on_finished=None,
-               on_failed=None) -> Tuple[QThread, "ScanWorker"]:
+                user: str = "",
+                password: str = "",
+                cidr: Optional[str] = None,
+                on_found=None,
+                on_progress=None,
+                on_finished=None,
+                on_failed=None,
+                quick: bool = False,
+                mdns_timeout: float = 2.0,
+                mdns_retries: int = 1,
+                exclude_subnets: Optional[List[str]] = None,
+                include_subnets: Optional[List[str]] = None) -> Tuple[QThread, "ScanWorker"]:
     """Convenience helper: start a scan on a new QThread."""
     thread = QThread(parent)
-    worker = ScanWorker(user=user, password=password, cidr=cidr)
+    worker = ScanWorker(
+        user=user, password=password, cidr=cidr, quick=quick,
+        mdns_timeout=mdns_timeout, mdns_retries=mdns_retries,
+        exclude_subnets=exclude_subnets, include_subnets=include_subnets,
+    )
     worker.moveToThread(thread)
     thread.started.connect(worker.run)
     if on_found is not None:

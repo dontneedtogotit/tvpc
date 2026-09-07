@@ -120,8 +120,47 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     # Now safe to import Qt.
     from PySide6.QtWidgets import QApplication
+    from PySide6.QtGui import QPalette, QColor
     app = QApplication.instance() or QApplication(sys.argv)
     app.setApplicationName("tvpc-cameras-gui")
+
+    # Apply a modern dark-ish palette for better readability on big screens.
+    palette = QPalette()
+    palette.setColor(QPalette.Window, QColor("#1e1e1e"))
+    palette.setColor(QPalette.WindowText, QColor("#e0e0e0"))
+    palette.setColor(QPalette.Base, QColor("#252525"))
+    palette.setColor(QPalette.AlternateBase, QColor("#2a2a2a"))
+    palette.setColor(QPalette.ToolTipBase, QColor("#ffffff"))
+    palette.setColor(QPalette.ToolTipText, QColor("#ffffff"))
+    palette.setColor(QPalette.Text, QColor("#e0e0e0"))
+    palette.setColor(QPalette.Button, QColor("#333333"))
+    palette.setColor(QPalette.ButtonText, QColor("#e0e0e0"))
+    palette.setColor(QPalette.BrightText, QColor("#ff4444"))
+    palette.setColor(QPalette.Link, QColor("#4fc3f7"))
+    palette.setColor(QPalette.Highlight, QColor("#2a6ebb"))
+    palette.setColor(QPalette.HighlightedText, QColor("#ffffff"))
+    app.setPalette(palette)
+    app.setStyleSheet(
+        "QToolBar { background: #2d2d2d; border: none; spacing: 4px; padding: 4px; }"
+        "QToolBar QToolButton { padding: 4px 8px; border-radius: 4px; }"
+        "QToolBar QToolButton:hover { background: #3d3d3d; }"
+        "QStatusBar { background: #2d2d2d; color: #aaa; }"
+        "QListWidget { background: #252525; color: #e0e0e0; border: 1px solid #3a3a3a; }"
+        "QListWidget::item { padding: 6px; border-bottom: 1px solid #333; }"
+        "QListWidget::item:selected { background: #2a6ebb; }"
+        "QPushButton { background: #3a3a3a; color: #e0e0e0; border: 1px solid #555; padding: 6px 12px; border-radius: 4px; }"
+        "QPushButton:hover { background: #4a4a4a; }"
+        "QPushButton:pressed { background: #2a6ebb; }"
+        "QLineEdit, QTextEdit { background: #252525; color: #e0e0e0; border: 1px solid #3a3a3a; padding: 4px; }"
+        "QComboBox { background: #333; color: #e0e0e0; border: 1px solid #555; padding: 4px; }"
+        "QLabel { color: #e0e0e0; }"
+        "QDialog { background: #1e1e1e; }"
+        "QGroupBox { color: #e0e0e0; border: 1px solid #444; margin-top: 8px; padding-top: 8px; }"
+        "QGroupBox::title { subcontrol-origin: margin; left: 8px; padding: 0 4px; }"
+        "QCheckBox { color: #e0e0e0; }"
+        "QProgressBar { background: #333; border: 1px solid #555; text-align: center; color: #e0e0e0; }"
+        "QProgressBar::chunk { background: #2a6ebb; }"
+    )
 
     # Step 2: run the first-run wizard (unless skipped).
     default_user = ""

@@ -38,9 +38,19 @@ class CameraEditDialog(QDialog):
         self._profile.addItems(["main", "sub"])
         self._audio = QCheckBox("Play audio in PiP windows", self)
         self._audio.setChecked(True)
+        self._enabled = QCheckBox("Camera enabled", self)
+        self._enabled.setChecked(True)
         self._notes = QTextEdit(self)
         self._notes.setFixedHeight(50)
         self._notes.setPlaceholderText("Optional notes")
+
+        self._test_result = QLabel("")
+        self._test_result.setStyleSheet("color: #888;")
+        self._test_result.setWordWrap(True)
+        self._test_btn = QPushButton("🔗 Test connection")
+        self._test_btn.clicked.connect(self._test_connection)
+        self._test_btn.setEnabled(False)
+        self._url.textChanged.connect(lambda: self._test_btn.setEnabled(bool(self._url.text().strip())))
 
         if camera is not None:
             self._name.setText(camera.name)
@@ -50,6 +60,7 @@ class CameraEditDialog(QDialog):
             self._group.setText(camera.group)
             self._profile.setCurrentText(camera.profile if camera.profile in ("main", "sub") else "main")
             self._audio.setChecked(camera.audio)
+            self._enabled.setChecked(camera.enabled)
             self._notes.setPlainText(camera.notes)
 
         form = QFormLayout()
@@ -61,6 +72,7 @@ class CameraEditDialog(QDialog):
         form.addRow("Group", self._group)
         form.addRow("Profile", self._profile)
         form.addRow("", self._audio)
+        form.addRow("", self._enabled)
         form.addRow("Notes", self._notes)
 
         hint = QLabel(
@@ -78,13 +90,43 @@ class CameraEditDialog(QDialog):
 
         layout = QVBoxLayout(self)
         layout.addLayout(form)
+        layout.addWidget(self._test_btn)
+        layout.addWidget(self._test_result)
         layout.addWidget(hint)
         layout.addWidget(buttons)
+
+    def _test_connection(self) -> None:
+        from PySide6.QtCore import QThread
+        url = self._url.text().strip()
+        user = self._user.text().strip()
+        password = self._pass.text()
+        if not url:
+            self._test_result.setText("Enter a URL first.")
+            return
+        self._test_result.setText("Testing…")
+        self._test_btn.setEnabled(False)
+        QApplication.processEvents()
+
+        from .health import _probe_url
+        ok = _probe_url(url, user=user, password=password, timeout=5.0)
+        if ok:
+            self._test_result.setText("✅ Connection successful — camera is reachable.")
+            self._test_result.setStyleSheet("color: #4caf50;")
+        else:
+            self._test_result.setText("❌ Connection failed — check URL, credentials, and network.")
+            self._test_result.setStyleSheet("color: #f44336;")
+        self._test_btn.setEnabled(True)
 
     def _on_accept(self) -> None:
         if not self._name.text().strip() or not self._url.text().strip():
             from PySide6.QtWidgets import QMessageBox
             QMessageBox.warning(self, "Missing fields", "Name and URL are required.")
+            return
+        url = self._url.text().strip()
+        if not (url.startswith("rtsp://") or url.startswith("http://") or url.startswith("https://")):
+            from PySide6.QtWidgets import QMessageBox
+            QMessageBox.warning(self, "Invalid URL",
+                                "URL must start with rtsp://, http://, or https://")
             return
         self.accept()
 
@@ -98,4 +140,5 @@ class CameraEditDialog(QDialog):
             group=self._group.text().strip(),
             profile=self._profile.currentText(),
             audio=self._audio.isChecked(),
+            enabled=self._enabled.isChecked(),
         )

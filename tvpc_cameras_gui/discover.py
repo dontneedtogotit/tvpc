@@ -108,6 +108,68 @@ HTTP_PROBES: List[Tuple[str, str, str]] = [
 # mDNS service types to query.
 MDNS_SERVICE_TYPES = ("_rtsp._tcp.local", "_onvif._tcp.local", "_http._tcp.local")
 
+# Cache of working RTSP paths keyed by (host_lower, port, vendor_lower).
+# Persists for the lifetime of the process; speeds up rescans.
+_RTSP_PATH_CACHE: dict[tuple[str, int, str], str] = {}
+
+
+# ---------------------------------------------------------------------------
+# Vendor-specific RTSP path hints
+# ---------------------------------------------------------------------------
+# Maps vendor patterns to preferred RTSP paths. Used to speed up discovery
+# by trying the most likely paths first for a given vendor.
+VENDOR_RTSP_PATH_HINTS: dict[str, List[str]] = {
+    "hikvision": [
+        "/Streaming/Channels/101",
+        "/Streaming/Channels/1",
+        "/Streaming/Channels/102",
+    ],
+    "dahua": [
+        "/cam/realmonitor",
+        "/live/main",
+        "/live/sub",
+    ],
+    "reolink": [
+        "/live/main",
+        "/live/sub",
+        "/live/0/main",
+        "/11",
+    ],
+    "axis": [
+        "/axis-cgi/mjpg/video.cgi",
+        "/h264Preview_01_main",
+        "/mpeg4/1/media.amp",
+    ],
+    "hisilicon": [
+        "/11",
+        "/0",
+        "/1",
+        "/ch0_0.h264",
+        "/stream_0",
+        "/cam1/mpeg4",
+    ],
+    "tuya": [
+        "/stream_0",
+        "/cam1/mpeg4",
+        "/stream1",
+        "/",
+    ],
+    "onvif": [
+        "/onvif/Streaming/Channels/101",
+        "/onvif/Streaming/Channels/1",
+        "/live/main",
+    ],
+}
+
+
+def _hint_paths_for_vendor(vendor: str) -> List[str]:
+    """Return preferred RTSP paths for a vendor, or the default list."""
+    key = vendor.lower()
+    for k, v in VENDOR_RTSP_PATH_HINTS.items():
+        if k in key:
+            return v
+    return RTSP_PATHS
+
 
 # ---------------------------------------------------------------------------
 # Data model
@@ -258,6 +320,20 @@ def parallel_tcp_open(hosts: Iterable[str], port: int, *,
     return open_hosts
 
 
+def quick_probe_host(host: str, ports: Tuple[int, ...] = (554, 80, 8080, 8000),
+                     timeout: float = 0.4) -> Set[int]:
+    """Quickly check which ports are open on a host.
+
+    Returns the set of open ports. Useful for fast pre-filtering before
+    deeper probes.
+    """
+    open_ports: Set[int] = set()
+    for port in ports:
+        if tcp_open(host, port, timeout=timeout):
+            open_ports.add(port)
+    return open_ports
+
+
 # ---------------------------------------------------------------------------
 # Raw RTSP DESCRIBE — no ffmpeg required.
 # ---------------------------------------------------------------------------
@@ -374,23 +450,45 @@ def rtsp_probe_paths(host: str, port: int = 554,
                      user: str = "", password: str = "",
                      paths: List[str] = None,
                      timeout: float = _RTSP_TIMEOUT,
-                     workers: int = 8) -> Optional[DiscoveredCamera]:
+                     workers: int = 8,
+                     vendor_hint: str = "") -> Optional[DiscoveredCamera]:
     """Try each path in RTSP_PATHS in parallel until one returns a valid RTSP response.
 
     Paths are probed concurrently so a single unreachable host only blocks
     for `timeout` seconds (not `timeout * len(paths)`).
+
+    If `vendor_hint` is provided, vendor-specific paths are tried first.
+    Results are cached per (host, port, vendor) to speed up rescans.
     """
     import concurrent.futures
-    paths = paths or RTSP_PATHS
-    with concurrent.futures.ThreadPoolExecutor(max_workers=min(workers, len(paths))) as ex:
+    cache_key = (host.lower(), port, vendor_hint.lower())
+    cached = _RTSP_PATH_CACHE.get(cache_key)
+    if cached:
+        info = rtsp_describe(host, port, cached, user, password, timeout)
+        if info is not None:
+            vendor = identify_vendor_from_rtsp(info)
+            return DiscoveredCamera(
+                host=host,
+                url=f"rtsp://{host}:{port}{cached}",
+                method="rtsp",
+                vendor=vendor,
+                note=f"Server: {info['server']}" if info.get("server") else "",
+                port=port,
+            )
+    # Reorder paths: vendor-specific hints first, then defaults.
+    hint_paths = _hint_paths_for_vendor(vendor_hint) if vendor_hint else []
+    remaining = [p for p in (paths or RTSP_PATHS) if p not in hint_paths]
+    ordered = hint_paths + remaining
+    with concurrent.futures.ThreadPoolExecutor(max_workers=min(workers, len(ordered))) as ex:
         futs = {ex.submit(rtsp_describe, host, port, p, user, password, timeout): p
-                for p in paths}
+                for p in ordered}
         for fut in concurrent.futures.as_completed(futs):
             info = fut.result()
             if info is None:
                 continue
             vendor = identify_vendor_from_rtsp(info)
             path = futs[fut]
+            _RTSP_PATH_CACHE[cache_key] = path
             return DiscoveredCamera(
                 host=host,
                 url=f"rtsp://{host}:{port}{path}",
@@ -570,9 +668,10 @@ def _tcp_ping(host: str, timeout: float = 0.5) -> bool:
 
 
 def alive_hosts(hosts: Iterable[str], timeout: int = 1) -> Set[str]:
-    """Return the subset of `hosts` that respond to ICMP ping.
+    """Return the subset of `hosts` that respond to ICMP ping or TCP connect.
 
     Uses the system ping utility with -c 1 -W timeout for ICMP echo.
+    Falls back to a TCP connect probe if ping fails (unprivileged environments).
     Safe to call from a worker thread.
     Handles subprocess exceptions (TimeoutExpired, CalledProcessError, OSError).
     """
@@ -582,35 +681,31 @@ def alive_hosts(hosts: Iterable[str], timeout: int = 1) -> Set[str]:
     def ping_host(host: str) -> bool:
         """Ping a single host and return True if it responds."""
         try:
-            # Use system ping utility: -c 1 (count), -W timeout (Linux) or -w timeout (macOS/BSD)
-            # Linux uses -W for timeout in seconds, macOS/BSD uses -w
-            # We'll try Linux format first, then fall back to macOS/BSD if needed
             result = subprocess.run(
                 ['ping', '-c', '1', '-W', str(timeout), host],
                 capture_output=True,
                 text=True,
-                timeout=timeout + 1  # Add a second to the subprocess timeout
+                timeout=timeout + 1
             )
-            return result.returncode == 0
-        except subprocess.TimeoutExpired:
-            return False
-        except (subprocess.CalledProcessError, OSError):
-            return False
+            if result.returncode == 0:
+                return True
+        except (subprocess.TimeoutExpired, subprocess.CalledProcessError, OSError):
+            pass
+        # Fallback: TCP connect to port 80 (many cameras respond here).
+        return _tcp_ping(host, timeout=timeout * 0.8)
 
     host_list = list(hosts)
     if not host_list:
         return set()
 
     alive: Set[str] = set()
-    # Use ThreadPoolExecutor to ping hosts in parallel
-    # Limit workers to avoid overwhelming the system
     max_workers = min(32, len(host_list))
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         future_to_host = {executor.submit(ping_host, host): host for host in host_list}
         for future in as_completed(future_to_host):
             if future.result():
                 alive.add(future_to_host[future])
-    
+
     return alive
 
 
@@ -750,28 +845,37 @@ def _parse_dns_ptr_answers(data: bytes) -> List[str]:
     return names
 
 
-def mdns_discover(timeout_per_service: float = 1.5) -> List[DiscoveredCamera]:
+def mdns_discover(timeout_per_service: float = 2.0, retries: int = 1) -> List[DiscoveredCamera]:
+    """Send mDNS PTR queries with retries for better reliability.
+
+    Some cameras are slow to respond to mDNS. We retry each service type
+    and merge results.
+    """
     found: List[DiscoveredCamera] = []
+    seen_names: Set[str] = set()
     for svc in MDNS_SERVICE_TYPES:
-        for name in _mdns_query(svc, timeout=timeout_per_service):
-            # name looks like "Front Door._rtsp._tcp.local"
-            try:
-                short = name.split(".")[0]
-            except IndexError:
-                short = name
-            method = "mdns"
-            if "rtsp" in name:
-                method = "rtsp"
-            elif "onvif" in name:
-                method = "onvif"
-            elif "http" in name:
-                method = "http"
-            found.append(DiscoveredCamera(
-                host="",  # mDNS name only — host resolved later
-                url=name,
-                method=method,
-                note=f"mDNS: {name}",
-            ))
+        for attempt in range(retries + 1):
+            for name in _mdns_query(svc, timeout=timeout_per_service):
+                if name in seen_names:
+                    continue
+                seen_names.add(name)
+                try:
+                    short = name.split(".")[0]
+                except IndexError:
+                    short = name
+                method = "mdns"
+                if "rtsp" in name:
+                    method = "rtsp"
+                elif "onvif" in name:
+                    method = "onvif"
+                elif "http" in name:
+                    method = "http"
+                found.append(DiscoveredCamera(
+                    host="",  # mDNS name only — host resolved later
+                    url=name,
+                    method=method,
+                    note=f"mDNS: {name}",
+                ))
     return found
 
 
@@ -796,10 +900,12 @@ def _onvif_soap(action: str, body_xml: str) -> bytes:
     ).encode("utf-8")
 
 
-def onvif_post(xaddr: str, action: str, body_xml: str,
-               user: str = "", password: str = "",
-               timeout: float = 4.0) -> Optional[str]:
-    """POST a SOAP envelope to an ONVIF XAddr and return the response body."""
+# ---------------------------------------------------------------------------
+# ONVIF
+# ---------------------------------------------------------------------------
+def _onvif_post_once(xaddr: str, action: str, body_xml: str,
+                     user: str = "", password: str = "",
+                     timeout: float = 4.0) -> Optional[str]:
     from urllib.parse import urlparse
     p = urlparse(xaddr)
     host = p.hostname or ""
@@ -838,6 +944,25 @@ def onvif_post(xaddr: str, action: str, body_xml: str,
             conn.close()
         except Exception:  # noqa: BLE001
             pass
+
+
+def onvif_post(xaddr: str, action: str, body_xml: str,
+               user: str = "", password: str = "",
+               timeout: float = 4.0, retries: int = 2) -> Optional[str]:
+    """POST a SOAP envelope to an ONVIF XAddr with retries.
+
+    Some cameras fail the first request due to firmware bugs or busy
+    CPUs. We retry a few times before giving up.
+    """
+    last_err: Optional[Exception] = None
+    for attempt in range(1, retries + 1):
+        try:
+            return _onvif_post_once(xaddr, action, body_xml, user, password, timeout)
+        except (OSError, http.client.HTTPException) as exc:
+            last_err = exc
+            if attempt < retries:
+                time.sleep(0.3 * attempt)
+    return None
 
 
 def onvif_getdeviceinformation(xaddr: str, user: str = "", password: str = "",

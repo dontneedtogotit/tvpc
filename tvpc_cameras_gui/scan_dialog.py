@@ -15,8 +15,19 @@ from .scan import ScanWorker
 from .discover import DiscoveredCamera
 
 
+_METHOD_ICONS = {
+    "rtsp": "📹",
+    "http": "🌐",
+    "onvif": "🔌",
+    "mdns": "📡",
+    "arp": "🔗",
+    "cloud": "☁️",
+}
+
+
 def _result_text(cam: DiscoveredCamera) -> str:
     """One-line summary used in the QListWidget."""
+    icon = _METHOD_ICONS.get(cam.method, "📷")
     bits: List[str] = []
     if cam.vendor or cam.model:
         bits.append(f"{cam.vendor} {cam.model}".strip())
@@ -25,7 +36,7 @@ def _result_text(cam: DiscoveredCamera) -> str:
     bits.append(cam.host or cam.url)
     if cam.note:
         bits.append(f"— {cam.note}")
-    return "  |  ".join(b for b in bits if b)
+    return f"{icon}  " + "  |  ".join(b for b in bits if b)
 
 
 class ScanDialog(QDialog):
@@ -69,6 +80,29 @@ class ScanDialog(QDialog):
         self._enrich = QCheckBox("ONVIF GetDeviceInformation / GetProfiles")
         self._enrich.setChecked(True)
         range_row.addWidget(self._enrich)
+        self._quick = QCheckBox("Quick scan (ARP + mDNS + ONVIF only)")
+        self._quick.setChecked(False)
+        self._quick.setToolTip(
+            "Skips the TCP port sweep. Faster but may miss cameras "
+            "that don't respond to mDNS or ONVIF."
+        )
+        range_row.addWidget(self._quick)
+
+        # Advanced options.
+        adv_row = QHBoxLayout()
+        adv_row.addWidget(QLabel("mDNS timeout (s):"))
+        self._mdns_timeout = QLineEdit("2.0")
+        self._mdns_timeout.setFixedWidth(40)
+        adv_row.addWidget(self._mdns_timeout)
+        adv_row.addWidget(QLabel("Retries:"))
+        self._mdns_retries = QLineEdit("1")
+        self._mdns_retries.setFixedWidth(30)
+        adv_row.addWidget(self._mdns_retries)
+        adv_row.addWidget(QLabel("Exclude subnets:"))
+        self._exclude_subnets = QLineEdit()
+        self._exclude_subnets.setPlaceholderText("e.g. 10.0.0.0/8, 172.16.0.0/12")
+        adv_row.addWidget(self._exclude_subnets)
+        adv_row.addStretch(1)
 
         self._list = QListWidget()
         self._list.setSelectionMode(QListWidget.ExtendedSelection)
@@ -83,14 +117,21 @@ class ScanDialog(QDialog):
         self._stop_btn.clicked.connect(self._stop)
         self._add_btn = QPushButton("Add selected to config")
         self._add_btn.clicked.connect(self._add_selected)
+        self._add_all_btn = QPushButton("Add all")
+        self._add_all_btn.clicked.connect(self._add_all)
+        self._add_all_btn.setEnabled(False)
 
         top_btns = QHBoxLayout()
         top_btns.addWidget(self._start_btn)
         top_btns.addWidget(self._stop_btn)
         top_btns.addStretch(1)
         top_btns.addWidget(self._add_btn)
+        top_btns.addWidget(self._add_all_btn)
 
         self._status = QLabel("Idle.")
+        self._progress = QProgressBar()
+        self._progress.setVisible(False)
+        self._progress.setRange(0, 0)
 
         buttons = QDialogButtonBox(QDialogButtonBox.Close, parent=self)
         buttons.rejected.connect(self.reject)
@@ -105,6 +146,7 @@ class ScanDialog(QDialog):
         layout.addWidget(self._list, 1)
         layout.addWidget(QLabel("Log:"))
         layout.addWidget(self._log)
+        layout.addWidget(self._progress)
         layout.addWidget(self._status)
         layout.addWidget(buttons)
 
@@ -117,7 +159,19 @@ class ScanDialog(QDialog):
         self._log.clear()
         self._start_btn.setEnabled(False)
         self._stop_btn.setEnabled(True)
+        self._add_all_btn.setEnabled(False)
+        self._progress.setVisible(True)
         self._status.setText("Scanning…")
+
+        try:
+            mdns_timeout = float(self._mdns_timeout.text().strip() or "2.0")
+        except ValueError:
+            mdns_timeout = 2.0
+        try:
+            mdns_retries = int(self._mdns_retries.text().strip() or "1")
+        except ValueError:
+            mdns_retries = 1
+        exclude = [s.strip() for s in self._exclude_subnets.text().split(",") if s.strip()]
 
         self._thread = QThread(self)
         self._worker = ScanWorker(
@@ -125,6 +179,10 @@ class ScanDialog(QDialog):
             password=self._pass.text(),
             cidr=self._cidr.text().strip() or None,
             do_onvif_enrich=self._enrich.isChecked(),
+            quick=self._quick.isChecked(),
+            mdns_timeout=mdns_timeout,
+            mdns_retries=mdns_retries,
+            exclude_subnets=exclude,
         )
         self._worker.moveToThread(self._thread)
         self._thread.started.connect(self._worker.run)
@@ -163,6 +221,8 @@ class ScanDialog(QDialog):
     def _on_finished(self) -> None:
         self._start_btn.setEnabled(True)
         self._stop_btn.setEnabled(False)
+        self._add_all_btn.setEnabled(len(self._results) > 0)
+        self._progress.setVisible(False)
         self._status.setText(f"Done. Found {len(self._results)} camera(s).")
 
     def _add_selected(self) -> None:
@@ -170,6 +230,16 @@ class ScanDialog(QDialog):
         if not items:
             QMessageBox.information(self, "No selection", "Select one or more cameras to add.")
             return
+        self._add_items(items)
+
+    def _add_all(self) -> None:
+        items = [self._list.item(i) for i in range(self._list.count())]
+        if not items:
+            QMessageBox.information(self, "Nothing found", "No cameras to add.")
+            return
+        self._add_items(items)
+
+    def _add_items(self, items) -> None:
         from . import config as cfg
         cams = cfg.load_cameras()
         existing = {c.name for c in cams}
@@ -179,10 +249,6 @@ class ScanDialog(QDialog):
         for item in items:
             res: DiscoveredCamera = item.data(Qt.UserRole)
             if not res.url:
-                # Cloud-only stub (e.g. ORION/Grid Connect with no local
-                # service yet). The user has to enable ONVIF/RTSP in the
-                # vendor app, then re-scan to get a real URL. We surface
-                # this clearly in the result message at the end.
                 skipped_no_url += 1
                 continue
             if res.url in existing_urls:
