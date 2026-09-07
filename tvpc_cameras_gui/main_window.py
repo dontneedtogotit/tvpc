@@ -27,7 +27,9 @@ from .health import start_health_monitor
 
 
 class EmptyStateWidget(QWidget):
-    """Shown when no cameras are configured."""
+    scan_requested = Signal()
+    add_requested = Signal()
+    readd_requested = Signal()
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -53,15 +55,15 @@ class EmptyStateWidget(QWidget):
             "padding: 12px 24px; font-size: 14px; "
             "background: #2a6ebb; border: none; color: white; border-radius: 6px;"
         )
-        scan_btn.clicked.connect(lambda: self.parent()._action_scan())  # type: ignore[attr-defined]
+        scan_btn.clicked.connect(self.scan_requested)
 
         add_btn = QPushButton("➕  Add camera manually")
         add_btn.setStyleSheet("padding: 10px 18px; border-radius: 6px;")
-        add_btn.clicked.connect(lambda: self.parent()._action_add())  # type: ignore[attr-defined]
+        add_btn.clicked.connect(self.add_requested)
 
         self._readd_btn = QPushButton("↩  Re-add from last scan")
         self._readd_btn.setStyleSheet("padding: 10px 18px; border-radius: 6px;")
-        self._readd_btn.clicked.connect(self._action_readd_last_scan)
+        self._readd_btn.clicked.connect(self.readd_requested)
         self._readd_btn.setVisible(False)
 
         btn_row = QHBoxLayout()
@@ -307,6 +309,9 @@ class MainWindow(QMainWindow):
 
         # Empty state overlay.
         self._empty_state = EmptyStateWidget(right)
+        self._empty_state.scan_requested.connect(self._action_scan)
+        self._empty_state.add_requested.connect(self._action_add)
+        self._empty_state.readd_requested.connect(self._action_readd_last_scan)
         self._empty_state.setVisible(False)
         right_layout.addWidget(self._empty_state)
 
@@ -347,8 +352,8 @@ class MainWindow(QMainWindow):
 
         has_cams = len(cams) > 0
         self._empty_state.setVisible(not has_cams)
-        if hasattr(self, '_readd_btn'):
-            self._readd_btn.setVisible(not has_cams and len(self._last_scan_results) > 0)
+        if hasattr(self, '_empty_state') and hasattr(self._empty_state, '_readd_btn'):
+            self._empty_state._readd_btn.setVisible(not has_cams and len(self._last_scan_results) > 0)
         self._grid_wrap.setVisible(has_cams)
 
         self._set_status_ready(f"Loaded {len(cams)} camera(s) from {cfg.config_path()}")
@@ -539,21 +544,21 @@ class MainWindow(QMainWindow):
         )
 
     def _on_health_status_changed(self, name: str, online: bool, url: str) -> None:
+        prev = self._camera_status.get(name)
         self._camera_status[name] = online
-        for prev in self._previews:
-            if prev._caption.text() == name:
-                prev.set_online_status(online)
+        for prev_widget in self._previews:
+            if prev_widget._caption.text() == name:
+                prev_widget.set_online_status(online)
         for i in range(self._list.count()):
             item = self._list.item(i)
             text = item.text()
             if name in text:
                 icon_text = "🟢" if online else "🔴"
-                # Strip existing emoji prefix if present.
                 base = text.lstrip("🟢🔴 ")
                 item.setText(f"{icon_text}  {base}")
         if not online:
             send_camera_offline(name)
-        elif name in self._camera_status and not self._camera_status.get(name):
+        elif prev is False:
             send_camera_online(name)
 
     # --- actions -----------------------------------------------------------

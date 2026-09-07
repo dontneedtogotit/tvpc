@@ -542,14 +542,6 @@ def http_get(host: str, port: int, path: str, *,
             pass
 
 
-def identify_vendor_from_http(body: str, headers: dict) -> str:
-    haystack = " ".join([body, headers.get("server", ""), headers.get("x-powered-by", "")])
-    for rx, name in _VENDOR_RE:
-        if rx.search(haystack):
-            return name
-    return ""
-
-
 def http_probe(host: str, port: int = 80,
                user: str = "", password: str = "",
                timeout: float = 3.0) -> List[DiscoveredCamera]:
