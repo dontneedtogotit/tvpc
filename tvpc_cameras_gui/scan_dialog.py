@@ -13,6 +13,9 @@ from PySide6.QtWidgets import (
 from .config import Camera
 from .scan import ScanWorker
 from .discover import DiscoveredCamera
+from .settings import load_settings
+
+_SETTINGS = load_settings()
 
 
 _METHOD_ICONS = {
@@ -65,10 +68,13 @@ class ScanDialog(QDialog):
         cred_row.addWidget(QLabel("Username:"))
         self._user = QLineEdit()
         self._user.setPlaceholderText("(optional — used for RTSP, HTTP, and ONVIF)")
+        self._user.setText(_SETTINGS.get("default_user", ""))
         cred_row.addWidget(self._user)
         cred_row.addWidget(QLabel("Password:"))
         self._pass = QLineEdit()
         self._pass.setEchoMode(QLineEdit.Password)
+        self._pass.setPlaceholderText("(optional)")
+        self._pass.setText(_SETTINGS.get("default_password", ""))
         cred_row.addWidget(self._pass)
 
         # Range row.

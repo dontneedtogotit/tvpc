@@ -172,6 +172,13 @@ def main(argv: Optional[List[str]] = None) -> int:
                 )
                 return 1
 
+    from .settings import load_settings
+    settings = load_settings()
+    if not default_user:
+        default_user = settings.get("default_user", "")
+    if not default_pass:
+        default_pass = settings.get("default_password", "")
+
     # Step 3: show the main window.
     from .main_window import MainWindow
     win = MainWindow(default_user=default_user, default_pass=default_pass)

@@ -9,6 +9,9 @@ from PySide6.QtWidgets import (
 )
 
 from .config import Camera
+from .settings import load_settings
+
+_SETTINGS = load_settings()
 
 
 class CameraEditDialog(QDialog):
@@ -25,9 +28,13 @@ class CameraEditDialog(QDialog):
         self._url.setPlaceholderText("rtsp://192.168.1.42/Streaming/Channels/101")
         self._user = QLineEdit(self)
         self._user.setPlaceholderText("(optional)")
+        if camera is None:
+            self._user.setText(_SETTINGS.get("default_user", ""))
         self._pass = QLineEdit(self)
         self._pass.setEchoMode(QLineEdit.Password)
         self._pass.setPlaceholderText("(optional)")
+        if camera is None:
+            self._pass.setText(_SETTINGS.get("default_password", ""))
         self._show_pass = QCheckBox("Show password", self)
         self._show_pass.toggled.connect(
             lambda on: self._pass.setEchoMode(QLineEdit.Normal if on else QLineEdit.Password)

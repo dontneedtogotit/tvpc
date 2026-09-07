@@ -5,14 +5,14 @@ import shutil
 from pathlib import Path
 from typing import List, Optional
 
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QListWidget,
     QListWidgetItem, QPushButton, QToolBar, QStatusBar, QMessageBox,
     QGridLayout, QSizePolicy, QComboBox, QMenu, QFileDialog,
     QDialog, QDialogButtonBox, QFormLayout, QLineEdit, QTextEdit,
-    QCheckBox, QGroupBox, QSplitter, QFrame,
+    QCheckBox, QGroupBox, QSplitter, QFrame, QSpinBox, QDoubleSpinBox,
 )
 
 from . import config as cfg
@@ -24,6 +24,7 @@ from .scan_dialog import ScanDialog
 from .recording import RecordingManager
 from .notifications import send as notify, send_camera_online, send_camera_offline
 from .health import start_health_monitor
+from .settings import SettingsDialog, load_settings, save_settings
 
 
 class EmptyStateWidget(QWidget):
@@ -104,6 +105,7 @@ class MainWindow(QMainWindow):
         self._health_worker = None
         self._camera_status: dict[str, bool] = {}
         self._last_scan_results: List[config.DiscoveredCamera] = []
+        self._settings = load_settings()
 
         self._build_toolbar()
         self._build_central()
@@ -184,6 +186,10 @@ class MainWindow(QMainWindow):
         act_shortcuts = QAction("⌨  Shortcuts", self)
         act_shortcuts.triggered.connect(self._action_show_shortcuts)
         tb.addAction(act_shortcuts)
+
+        act_settings = QAction("⚙  Settings", self)
+        act_settings.triggered.connect(self._action_open_settings)
+        tb.addAction(act_settings)
 
         act_export = QAction("📤 Export config", self)
         act_export.triggered.connect(self._action_export_config)
@@ -538,8 +544,9 @@ class MainWindow(QMainWindow):
         if not cams:
             return
 
+        interval = float(self._settings.get("health_interval", 30.0))
         self._health_thread, self._health_worker = start_health_monitor(
-            self, cams, interval=30.0,
+            self, cams, interval=interval,
             on_status_change=self._on_health_status_changed,
         )
 
@@ -788,6 +795,21 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "Exported", f"Config exported to:\n{path}")
         except OSError as e:
             QMessageBox.warning(self, "Error", f"Could not export: {e}")
+
+    def _action_open_settings(self) -> None:
+        dlg = SettingsDialog(self, settings=self._settings)
+        if dlg.exec() == dlg.Accepted and dlg.changed():
+            self._settings = load_settings()
+            self._default_user = self._settings.get("default_user", "")
+            self._default_pass = self._settings.get("default_password", "")
+            layout = self._settings.get("default_layout", "2x2")
+            if layout != self._current_layout:
+                self._current_layout = layout
+                self._layout_label.setText(layout.replace("x", "×"))
+                self._rebuild_previews(self._visible_cameras())
+            cams = cfg.load_cameras()
+            self._start_health_monitor(cams)
+            self._set_status_ready("Settings saved")
 
     def _action_import_config(self) -> None:
         path, _ = QFileDialog.getOpenFileName(

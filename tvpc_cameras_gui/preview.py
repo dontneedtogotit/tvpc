@@ -17,6 +17,10 @@ from PySide6.QtCore import Qt, QTimer, Signal, QSize
 from PySide6.QtGui import QPixmap, QImage, QPainter, QColor, QFont
 from PySide6.QtWidgets import QLabel, QWidget, QVBoxLayout, QSizePolicy
 
+from .settings import load_settings
+
+_SETTINGS = load_settings()
+
 
 PLACEHOLDER_BG = QColor("#222")
 PLACEHOLDER_FG = QColor("#888")
@@ -125,7 +129,8 @@ class PreviewWidget(QWidget):
         self._reconnect_timer.setSingleShot(True)
         self._reconnect_timer.timeout.connect(self._on_reconnect)
         self._timer = QTimer(self)
-        self._timer.setInterval(1500)
+        poll_ms = max(200, int(_SETTINGS.get("preview_poll_ms", 1500)))
+        self._timer.setInterval(poll_ms)
         self._timer.timeout.connect(self._poll_frame)
         self._label.mousePressEvent = self._on_press  # type: ignore[assignment]
 
