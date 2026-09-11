@@ -118,6 +118,36 @@ scan_rtsp() {
                 local url="rtsp://$host$path"
                 if probe_url "$url" $cred; then
                     printf '    \033[1;32mLIVE\033[0m  %s\n' "$url"
+                    # Check if this is a DVR with multiple connected cameras
+                    local dvr_ch
+                    if [[ "$path" == *"/Streaming/Channels/101"* ]]; then
+                        for dvr_ch in $(seq 2 16); do
+                            local dvr_url="rtsp://$host/Streaming/Channels/${dvr_ch}01"
+                            if probe_url "$dvr_url" $cred; then
+                                printf '    \033[1;35mDVR-CH%d\033[0m  %s\n' "$dvr_ch" "$dvr_url"
+                            else
+                                break
+                            fi
+                        done
+                    elif [[ "$path" == *"/cam/realmonitor"* ]]; then
+                        for dvr_ch in $(seq 2 16); do
+                            local dvr_url="rtsp://$host/cam/realmonitor?channel=${dvr_ch}&subtype=0"
+                            if probe_url "$dvr_url" $cred; then
+                                printf '    \033[1;35mDVR-CH%d\033[0m  %s\n' "$dvr_ch" "$dvr_url"
+                            else
+                                break
+                            fi
+                        done
+                    elif [[ "$path" == *"/h264Preview_01_main"* ]]; then
+                        for dvr_ch in $(seq 2 16); do
+                            local dvr_url=$(printf "rtsp://$host/h264Preview_%02d_main" "$dvr_ch")
+                            if probe_url "$dvr_url" $cred; then
+                                printf '    \033[1;35mDVR-CH%d\033[0m  %s\n' "$dvr_ch" "$dvr_url"
+                            else
+                                break
+                            fi
+                        done
+                    fi
                     return 0
                 fi
             done

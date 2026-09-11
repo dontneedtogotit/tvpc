@@ -82,6 +82,20 @@ class ScanWorker(QObject):
             results: List[disc.DiscoveredCamera] = []
 
             def _emit(cam: disc.DiscoveredCamera) -> None:
+                # Ensure MAC is attached if known
+                if not cam.mac and cam.host:
+                    cam.mac = disc.get_mac_for_host(cam.host)
+                # Ensure vendor is identified if MAC is known
+                if cam.mac and (not cam.vendor or cam.vendor in ("ONVIF device", "HiSilicon (generic)", "generic")):
+                    mac_v = disc.identify_vendor_from_mac(cam.mac)
+                    if mac_v:
+                        cam.vendor = mac_v
+                # Ensure model is identified if available in ONVIF scopes or SSDP cache
+                if not cam.model and cam.host:
+                    scopes_info = disc.get_onvif_scopes_info(cam.host)
+                    ssdp_info = disc.get_ssdp_info(cam.host)
+                    cam.model = scopes_info.get("model", "") or ssdp_info.get("modelName", "") or ssdp_info.get("modelNumber", "")
+
                 k = cam.key()
                 if k in seen:
                     return
@@ -90,7 +104,7 @@ class ScanWorker(QObject):
                 self.found.emit(cam)
 
             if self.quick:
-                self._quick_scan(_emit)
+                self._quick_scan(nets, _emit)
             else:
                 self._full_scan(nets, _emit)
 
@@ -101,21 +115,40 @@ class ScanWorker(QObject):
             self.finished.emit()
 
     # ------------------------------------------------------------------
-    def _quick_scan(self, _emit) -> None:
-        """Fast scan: ARP + mDNS + ONVIF only, no TCP sweep."""
-        # 1) ARP table — instant.
-        arp = disc.arp_hosts()
+    def _quick_scan(self, nets: List[ipaddress.IPv4Network], _emit) -> None:
+        """Fast scan: ARP + SSDP/UPnP + mDNS + ONVIF only, no TCP sweep."""
+        # 1) ARP table — filtered to target subnets.
+        all_arp = disc.arp_hosts()
+        arp = {
+            h for h in all_arp
+            if any(ipaddress.ip_address(h) in n for n in nets)
+        }
         if arp:
             self.progress.emit(f"ARP table: {len(arp)} host(s) with a known MAC")
-        for host in arp:
-            if self._cancel:
-                return
-            cam = disc.rtsp_probe_paths(host, port=554,
-                                        user=self.user, password=self.password)
-            if cam is not None:
-                _emit(cam)
+            # Probe known hosts in parallel on all camera ports (RTSP + HTTP)
+            with concurrent.futures.ThreadPoolExecutor(
+                max_workers=min(self.workers, 16)
+            ) as ex:
+                futs = {
+                    ex.submit(
+                        disc.quick_probe_all_ports, host, self.user, self.password,
+                    ): host
+                    for host in arp
+                }
+                for fut in concurrent.futures.as_completed(futs):
+                    if self._cancel:
+                        return
+                    for cam in fut.result():
+                        _emit(cam)
 
-        # 2) mDNS.
+        # 2) SSDP / UPnP multicast discovery
+        if not self._cancel:
+            self.progress.emit("SSDP/UPnP multicast discovery…")
+            for c in disc.ssdp_discover(timeout=1.5):
+                _emit(c)
+
+        # 3) mDNS.
+        mdns_ips: Set[str] = set()
         if not self._cancel:
             self.progress.emit("mDNS query (_rtsp / _onvif / _http)…")
             for c in disc.mdns_discover(
@@ -123,27 +156,66 @@ class ScanWorker(QObject):
                 retries=self.mdns_retries,
             ):
                 _emit(c)
+                if c.host:
+                    mdns_ips.add(c.host)
 
-        # 3) ONVIF WS-Discovery (fast multicast).
+            # Probe any resolved mDNS IPs that were not already in ARP
+            new_hosts = mdns_ips - arp
+            if new_hosts and not self._cancel:
+                with concurrent.futures.ThreadPoolExecutor(
+                    max_workers=min(self.workers, 16)
+                ) as ex:
+                    futs = {
+                        ex.submit(
+                            disc.quick_probe_all_ports, host, self.user, self.password,
+                        ): host
+                        for host in new_hosts
+                    }
+                    for fut in concurrent.futures.as_completed(futs):
+                        if self._cancel:
+                            return
+                        for cam in fut.result():
+                            _emit(cam)
+
+        # 4) ONVIF WS-Discovery (fast multicast).
         if not self._cancel:
             self._onvif_phase(_emit)
 
     # ------------------------------------------------------------------
-    def _full_scan(self, nets, _emit) -> None:
-        """Full scan: ARP + mDNS + TCP sweep + ONVIF."""
-        # 1) ARP table — instant.
-        arp = disc.arp_hosts()
+    def _full_scan(self, nets: List[ipaddress.IPv4Network], _emit) -> None:
+        """Full scan: ARP + SSDP + mDNS + TCP sweep + ONVIF."""
+        # 1) ARP table — filtered to target subnets.
+        all_arp = disc.arp_hosts()
+        arp = {
+            h for h in all_arp
+            if any(ipaddress.ip_address(h) in n for n in nets)
+        }
         if arp:
             self.progress.emit(f"ARP table: {len(arp)} host(s) with a known MAC")
-        for host in arp:
-            if self._cancel:
-                return
-            cam = disc.rtsp_probe_paths(host, port=554,
-                                        user=self.user, password=self.password)
-            if cam is not None:
-                _emit(cam)
+            # Probe known hosts immediately on all camera ports
+            with concurrent.futures.ThreadPoolExecutor(
+                max_workers=min(self.workers, 16)
+            ) as ex:
+                futs = {
+                    ex.submit(
+                        disc.quick_probe_all_ports, host, self.user, self.password,
+                    ): host
+                    for host in arp
+                }
+                for fut in concurrent.futures.as_completed(futs):
+                    if self._cancel:
+                        return
+                    for cam in fut.result():
+                        _emit(cam)
 
-        # 2) mDNS.
+        # 2) SSDP / UPnP multicast discovery
+        if not self._cancel:
+            self.progress.emit("SSDP/UPnP multicast discovery…")
+            for c in disc.ssdp_discover(timeout=1.5):
+                _emit(c)
+
+        # 3) mDNS.
+        mdns_ips: Set[str] = set()
         if not self._cancel:
             self.progress.emit("mDNS query (_rtsp / _onvif / _http)…")
             for c in disc.mdns_discover(
@@ -151,12 +223,14 @@ class ScanWorker(QObject):
                 retries=self.mdns_retries,
             ):
                 _emit(c)
+                if c.host:
+                    mdns_ips.add(c.host)
 
-        # 3) Parallel TCP sweep, all subnets, all ports.
+        # 4) Parallel TCP sweep, all subnets, all ports.
         if not self._cancel:
-            self._sweep_and_probe(nets, _emit)
+            self._sweep_and_probe(nets, _emit, extra_hosts=mdns_ips)
 
-        # 4) ONVIF WS-Discovery + enrichment.
+        # 5) ONVIF WS-Discovery + enrichment.
         if not self._cancel:
             self._onvif_phase(_emit)
 
@@ -190,20 +264,27 @@ class ScanWorker(QObject):
     # ------------------------------------------------------------------
     def _sweep_and_probe(self,
                          nets: List[ipaddress.IPv4Network],
-                         _emit) -> None:
+                         _emit,
+                         extra_hosts: Optional[Set[str]] = None) -> None:
         # All hosts, deduplicated.
         all_hosts: Set[str] = set()
         for n in nets:
             for h in disc.hosts_in(n):
                 all_hosts.add(h)
         for h in disc.arp_hosts():
-            all_hosts.add(h)
+            try:
+                if any(ipaddress.ip_address(h) in n for n in nets):
+                    all_hosts.add(h)
+            except ValueError:
+                pass
+        if extra_hosts:
+            all_hosts.update(extra_hosts)
         if not all_hosts:
             return
 
         # Parallel TCP probe on every interesting port.
         open_map: dict = {}  # port -> set(hosts)
-        for port in (*disc.RTSP_PORTS, *disc.HTTP_PORTS):
+        for port in (*disc.RTSP_PORTS, *disc.HTTP_PORTS, *disc.TUYA_PORTS, *disc.DVR_PORTS):
             if self._cancel:
                 return
             self.progress.emit(f"  TCP/{port} sweep ({len(all_hosts)} hosts)…")
@@ -219,10 +300,46 @@ class ScanWorker(QObject):
         for s in open_map.values():
             any_open |= s
 
-        # RTSP DESCRIBE on hosts that have any RTSP port open.
+        found_stream_hosts: Set[str] = set()
+
+        # DVR / NVR probe: check hosts with DVR ports or RTSP ports open
+        dvr_candidates: Set[str] = set()
+        for p in (*disc.DVR_PORTS, *disc.RTSP_PORTS):
+            dvr_candidates |= open_map.get(p, set())
+
+        dvr_hosts: Set[str] = set()
+        if dvr_candidates and not self._cancel:
+            self.progress.emit(f"  DVR / NVR probe on {len(dvr_candidates)} host(s)…")
+            with concurrent.futures.ThreadPoolExecutor(
+                max_workers=min(self.workers, 16)
+            ) as ex:
+                futs = {
+                    ex.submit(
+                        disc.detect_dvr_channels,
+                        host,
+                        user=self.user,
+                        password=self.password,
+                        open_ports={p for p in open_map if host in open_map[p]},
+                    ): host
+                    for host in dvr_candidates
+                }
+                for fut in concurrent.futures.as_completed(futs):
+                    if self._cancel:
+                        return
+                    cams = fut.result()
+                    if cams:
+                        host = futs[fut]
+                        dvr_hosts.add(host)
+                        found_stream_hosts.add(host)
+                        v_name = cams[0].vendor or cams[0].dvr_type or "DVR"
+                        self.progress.emit(f"    Found {v_name} with {len(cams)} camera(s) at {host}")
+                        for cam in cams:
+                            _emit(cam)
+
+        # RTSP DESCRIBE on hosts that have any RTSP port open and were not already handled as DVRs.
         rtsp_candidates: Set[str] = set()
         for p in disc.RTSP_PORTS:
-            rtsp_candidates |= open_map.get(p, set())
+            rtsp_candidates |= (open_map.get(p, set()) - dvr_hosts)
         if rtsp_candidates and not self._cancel:
             self.progress.emit(f"  RTSP DESCRIBE on {len(rtsp_candidates)} host(s)…")
             with concurrent.futures.ThreadPoolExecutor(
@@ -242,6 +359,7 @@ class ScanWorker(QObject):
                         return
                     cam = fut.result()
                     if cam is not None:
+                        found_stream_hosts.add(cam.host)
                         _emit(cam)
 
         # HTTP probe on hosts with any HTTP port open.
@@ -263,31 +381,37 @@ class ScanWorker(QObject):
                     if self._cancel:
                         return
                     for cam in fut.result():
+                        found_stream_hosts.add(cam.host)
                         _emit(cam)
 
-        # Cloud-only fallback: for any ARP host that responded to NO
-        # known camera port, do a quick ICMP ping. If it's alive, it
-        # is almost certainly a Tuya/ORION/Grid Connect camera that
-        # does not expose RTSP/ONVIF by default. Report a stub so the
-        # user can add it manually after enabling ONVIF/RTSP in the
-        # vendor app.
-        silent_alive = disc.alive_hosts(all_hosts - any_open)
-        for host in silent_alive:
+        # Cloud-only Tuya detection: report hosts where Tuya port (6668) is open
+        # but no local RTSP/HTTP stream was found.
+        # We do NOT report arbitrary ping-responsive hosts as cameras.
+        tuya_candidates: Set[str] = set()
+        for p in disc.TUYA_PORTS:
+            tuya_candidates |= open_map.get(p, set())
+        for host in tuya_candidates:
             if self._cancel:
                 return
+            mac = disc.get_mac_for_host(host)
+            vendor = disc.identify_vendor_from_mac(mac) if mac else ""
+            if not vendor:
+                vendor = "Orion / Tuya / Grid Connect"
             _emit(disc.DiscoveredCamera(
                 host=host,
                 url="",            # no stream URL yet
                 method="cloud",
-                vendor="Orion / Tuya / Grid Connect (likely)",
+                vendor=vendor,
+                mac=mac,
                 note=(
-                    "no local RTSP/ONVIF/HTTP service detected. "
-                    "Enable ONVIF/RTSP in the Grid Connect app and re-scan."
+                    f"Cloud-only ({vendor}, port 6668 detected). "
+                    "Enable ONVIF/PC View in vendor app and re-scan. Click '💡 Setup Guide' for help."
                 ),
             ))
 
     # ------------------------------------------------------------------
     def _onvif_phase(self, _emit) -> None:
+        from urllib.parse import urlparse
         self.progress.emit("ONVIF WS-Discovery multicast…")
         xaddrs = disc.onvif_ws_discovery()
         if not xaddrs:
@@ -296,12 +420,17 @@ class ScanWorker(QObject):
         for xaddr in xaddrs:
             if self._cancel:
                 return
+            p = urlparse(xaddr)
+            host = p.hostname or ""
+            scopes_info = disc.get_onvif_scopes_info(xaddr)
+            v_name = scopes_info.get("vendor", "")
+            m_name = scopes_info.get("model", "")
             # WS-Discovery gives us the XAddr, not a stream URL. We
             # emit it as a candidate (method=onvif) AND, if creds work,
             # enrich it with GetDeviceInformation + GetProfiles +
             # GetStreamUri and emit those as proper RTSP URLs.
             _emit(disc.DiscoveredCamera(
-                host="", url=xaddr, method="onvif", note="WS-Discovery XAddr",
+                host=host, url=xaddr, method="onvif", vendor=v_name, model=m_name, note="WS-Discovery XAddr",
             ))
             if not self.do_onvif_enrich:
                 continue
@@ -316,9 +445,17 @@ class ScanWorker(QObject):
             self.progress.emit(
                 f"  ONVIF {vendor} {model} {firmware} at {xaddr}"
             )
+            video_sources = disc.onvif_get_video_sources(
+                xaddr, user=self.user, password=self.password,
+            )
+            is_nvr = (
+                len(video_sources) > 1 or
+                any(k in (vendor + " " + model).upper() for k in ("NVR", "DVR", "RECORDER", "DS-7", "XVR", "HCVR"))
+            )
             profiles = disc.onvif_get_profiles(
                 xaddr, user=self.user, password=self.password,
             )
+            ch_idx = 0
             for prof in profiles:
                 uri = disc.onvif_get_stream_uri(
                     xaddr, prof["token"],
@@ -326,10 +463,21 @@ class ScanWorker(QObject):
                 )
                 if not uri:
                     continue
+                ch_idx += 1
+                uri_p = urlparse(uri)
+                uri_host = uri_p.hostname or host
+                is_dvr_stream = is_nvr or (len(profiles) > 2 and len(video_sources) > 1)
+                method = "dvr" if is_dvr_stream else "rtsp"
+                prof_name = prof.get('name', prof['token'])
+                note_str = f"DVR Channel {ch_idx} ({prof_name})" if is_dvr_stream else f"ONVIF profile {prof_name}"
                 _emit(disc.DiscoveredCamera(
-                    host="", url=uri, method="rtsp",
+                    host=uri_host, url=uri, method=method,
                     vendor=vendor, model=model, firmware=firmware,
-                    note=f"ONVIF profile {prof.get('name', prof['token'])}",
+                    note=note_str,
+                    is_dvr=is_dvr_stream,
+                    channel=ch_idx if is_dvr_stream else 0,
+                    total_channels=len(profiles) if is_dvr_stream else 0,
+                    dvr_type=f"{vendor} {len(profiles)}-Channel NVR" if is_dvr_stream else "",
                 ))
 
 

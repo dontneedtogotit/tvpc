@@ -38,10 +38,11 @@ from typing import Callable, Iterable, List, Optional, Set, Tuple
 # Common network ports probed during the sweep.
 # ---------------------------------------------------------------------------
 # RTSP:  554 standard, 8554/10554 common alt, 6554 Tuya, 10554 some OEMs
-# HTTP:  80/8080/8000/443 standard web, 5000 Tuya ONVIF service, 6668 Tuya
-#        local API
 RTSP_PORTS = (554, 8554, 10554, 6554)
-HTTP_PORTS = (80, 8080, 8000, 443, 5000, 6668)
+HTTP_PORTS = (80, 8080, 8000, 443, 5000, 8899)
+TUYA_PORTS = (6668,)
+DVR_PORTS = (8000, 37777, 34567, 9000, 8001)
+
 
 
 # ---------------------------------------------------------------------------
@@ -178,12 +179,17 @@ def _hint_paths_for_vendor(vendor: str) -> List[str]:
 class DiscoveredCamera:
     host: str
     url: str
-    method: str = "rtsp"            # "rtsp", "http", "onvif", "mdns", "arp", "cloud"
+    method: str = "rtsp"            # "rtsp", "http", "onvif", "mdns", "arp", "cloud", "dvr"
     vendor: str = ""
     model: str = ""
     firmware: str = ""
     note: str = ""
     port: int = 0
+    channel: int = 0                # 1-indexed channel number on DVR/NVR (0 = standalone camera)
+    total_channels: int = 0         # Total channels detected on the DVR/NVR
+    is_dvr: bool = False            # True if stream belongs to a DVR/NVR channel
+    dvr_type: str = ""              # DVR classification / vendor name
+    mac: str = ""
 
     def key(self) -> Tuple[str, str]:
         return (self.host, self.url)
@@ -194,9 +200,14 @@ class DiscoveredCamera:
         bits.append(self.host)
         if self.port:
             bits.append(f":{self.port}")
-        if self.vendor or self.model:
-            ident = " ".join(x for x in (self.vendor, self.model) if x)
-            bits.append(f"  ({ident})")
+        ident_parts = [x for x in (self.vendor, self.model) if x]
+        if self.is_dvr and self.channel:
+            ch_str = f"Camera {self.channel}" + (f"/{self.total_channels}" if self.total_channels else "")
+            ident_parts.append(f"[{ch_str}]")
+        if ident_parts:
+            bits.append(f"  ({' '.join(ident_parts)})")
+        if self.mac:
+            bits.append(f"  [{self.mac}]")
         if self.url:
             bits.append(f"  →  {self.url}")
         else:
@@ -322,15 +333,20 @@ def parallel_tcp_open(hosts: Iterable[str], port: int, *,
 
 def quick_probe_host(host: str, ports: Tuple[int, ...] = (554, 80, 8080, 8000),
                      timeout: float = 0.4) -> Set[int]:
-    """Quickly check which ports are open on a host.
+    """Quickly check which ports are open on a host in parallel.
 
     Returns the set of open ports. Useful for fast pre-filtering before
     deeper probes.
     """
     open_ports: Set[int] = set()
-    for port in ports:
-        if tcp_open(host, port, timeout=timeout):
-            open_ports.add(port)
+    port_list = list(ports)
+    if not port_list:
+        return open_ports
+    with concurrent.futures.ThreadPoolExecutor(max_workers=min(len(port_list), 16)) as ex:
+        futs = {ex.submit(tcp_open, host, p, timeout): p for p in port_list}
+        for fut in concurrent.futures.as_completed(futs):
+            if fut.result():
+                open_ports.add(futs[fut])
     return open_ports
 
 
@@ -394,6 +410,87 @@ def rtsp_describe(host: str, port: int, path: str,
         return None
 
 
+# ---------------------------------------------------------------------------
+# MAC OUI Vendor Table (Top IP Camera Manufacturers & Chipsets)
+# ---------------------------------------------------------------------------
+MAC_OUI_VENDORS: dict[str, str] = {
+    # Tuya / Smart Life / OEM WiFi chips (Shenzhen Bilian, Espressif, etc.)
+    "98:03:cf": "Tuya / Orion",
+    "10:5a:f7": "Tuya / Orion",
+    "d4:a6:51": "Tuya / Orion",
+    "70:89:76": "Tuya / Orion",
+    "18:69:d8": "Tuya / Smart Life",
+    "68:57:2c": "Tuya / Smart Life",
+    "20:f4:1b": "Tuya / Smart Life",
+    "40:22:d8": "Tuya / Smart Life",
+    "84:f3:eb": "Tuya / Smart Life",
+    "00:0c:43": "Ralink / Tuya OEM",
+    # TP-Link / Tapo
+    "50:d4:f7": "TP-Link Tapo",
+    "b0:a7:b9": "TP-Link Tapo",
+    "30:de:4b": "TP-Link Tapo",
+    "54:af:97": "TP-Link Tapo",
+    "ec:21:e5": "TP-Link Tapo",
+    "60:32:b1": "TP-Link Tapo",
+    "9c:53:22": "TP-Link Tapo",
+    "cc:32:e5": "TP-Link Tapo",
+    # Reolink
+    "ec:71:db": "Reolink",
+    "48:e7:da": "Reolink",
+    "bc:32:53": "Reolink",
+    "1c:3b:f3": "Reolink",
+    # Hikvision & Annke / Ezviz
+    "bc:ba:e1": "Hikvision",
+    "c8:02:8f": "Hikvision",
+    "44:19:b6": "Hikvision",
+    "10:12:fb": "Hikvision",
+    "00:40:48": "Hikvision",
+    "54:c4:15": "Hikvision",
+    "a4:14:37": "Hikvision / Ezviz",
+    "e0:50:8b": "Hikvision / Ezviz",
+    # Dahua & Amcrest / Imou
+    "3c:ef:8c": "Dahua",
+    "4c:11:bf": "Dahua",
+    "90:02:a9": "Dahua",
+    "a0:bd:cd": "Dahua",
+    "bc:54:51": "Amcrest",
+    # Axis Communications
+    "00:40:8c": "Axis Communications",
+    "ac:cc:8e": "Axis Communications",
+    "b8:a4:4f": "Axis Communications",
+    # Foscam (Shenzhen Foscam)
+    "00:62:6e": "Foscam",
+    "e4:3e:d7": "Foscam",
+    "c4:d6:55": "Foscam",
+    # Wyze
+    "2c:aa:8e": "Wyze",
+    "7c:78:b2": "Wyze",
+    "a4:da:22": "Wyze",
+    # Eufy (Anker)
+    "8c:85:80": "Eufy",
+    "ac:12:03": "Eufy",
+    # Ubiquiti / UniFi Protect
+    "74:83:c2": "Ubiquiti UniFi",
+    "b4:fb:e4": "Ubiquiti UniFi",
+    "fc:ec:da": "Ubiquiti UniFi",
+    "24:5a:4c": "Ubiquiti UniFi",
+    # Hanwha / Samsung Techwin
+    "00:09:18": "Hanwha Techwin",
+    "00:16:6c": "Samsung / Hanwha",
+    # Vivotek
+    "00:02:d1": "Vivotek",
+}
+
+
+def identify_vendor_from_mac(mac: str) -> str:
+    """Identify camera vendor from its MAC address (OUI prefix)."""
+    if not mac:
+        return ""
+    clean = mac.lower().replace("-", ":").strip()
+    prefix = ":".join(clean.split(":")[:3])
+    return MAC_OUI_VENDORS.get(prefix, "")
+
+
 _VENDOR_RE = [
     # Specific OEMs that identify themselves in the Server header or SDP body.
     (re.compile(r"\bOrion\b", re.I), "Orion"),
@@ -405,14 +502,26 @@ _VENDOR_RE = [
     (re.compile(r"\bTapo\b", re.I), "TP-Link Tapo"),
     (re.compile(r"\bTP-LINK\b", re.I), "TP-Link"),
     (re.compile(r"\bHikvision\b", re.I), "Hikvision"),
+    (re.compile(r"\bEzviz\b", re.I), "Ezviz (Hikvision)"),
+    (re.compile(r"\bAnnke\b", re.I), "Annke"),
     (re.compile(r"\bDahua\b", re.I), "Dahua"),
+    (re.compile(r"\bImou\b", re.I), "Imou (Dahua)"),
+    (re.compile(r"\bAmcrest\b", re.I), "Amcrest"),
+    (re.compile(r"\bLorex\b", re.I), "Lorex"),
     (re.compile(r"\bReolink\b", re.I), "Reolink"),
+    (re.compile(r"\bUniview\b|\bUNV\b", re.I), "Uniview"),
     (re.compile(r"\bAxis\b", re.I), "Axis"),
     (re.compile(r"\bBosch\b", re.I), "Bosch"),
     (re.compile(r"\bVivotek\b", re.I), "Vivotek"),
+    (re.compile(r"\bFoscam\b", re.I), "Foscam"),
+    (re.compile(r"\bWyze\b", re.I), "Wyze"),
+    (re.compile(r"\bEufy\b", re.I), "Eufy"),
+    (re.compile(r"\bUbiquiti\b|\bUniFi\b", re.I), "Ubiquiti UniFi"),
+    (re.compile(r"\bWansview\b", re.I), "Wansview"),
     (re.compile(r"\bHiSilicon\b", re.I), "HiSilicon (generic)"),
     (re.compile(r"\bONVIF\b", re.I), "ONVIF device"),
     (re.compile(r"NetSurveillance", re.I), "NetSurveillance (Chinese OEM)"),
+    (re.compile(r"\bXiongmai\b|\bXM\b", re.I), "Xiongmai (XM)"),
     # SDP origin fields that reveal a more specific chipset.
     (re.compile(r"o=-.*Hanwha", re.I), "Hanwha"),
 ]
@@ -581,9 +690,9 @@ def http_probe(host: str, port: int = 80,
 # ---------------------------------------------------------------------------
 # ARP table
 # ---------------------------------------------------------------------------
-def arp_hosts() -> Set[str]:
-    """Read /proc/net/arp and return IPs that have a resolved MAC."""
-    out: Set[str] = set()
+def arp_table() -> dict[str, str]:
+    """Read /proc/net/arp and `ip neigh` to return a mapping of IP -> MAC address."""
+    table: dict[str, str] = {}
     try:
         with open("/proc/net/arp", "r", encoding="ascii") as f:
             next(f)  # header
@@ -591,16 +700,86 @@ def arp_hosts() -> Set[str]:
                 parts = line.split()
                 if len(parts) < 6:
                     continue
-                ip, _hw, flags, _mac, _mask, _dev = parts[:6]
-                # flags: 0x0 = incomplete, 0x2 = reachable, 0x4 = stale, etc.
-                if flags == "0x0":
+                ip, _hw, flags, mac, _mask, _dev = parts[:6]
+                if flags == "0x0" or mac == "00:00:00:00:00:00":
                     continue
                 if ip.startswith("127."):
                     continue
-                out.add(ip)
+                table[ip] = mac.lower()
     except OSError:
         pass
-    return out
+
+    try:
+        import subprocess
+        res = subprocess.run(
+            ["ip", "-4", "neigh", "show"],
+            capture_output=True, text=True, timeout=2
+        )
+        for line in res.stdout.splitlines():
+            parts = line.split()
+            if len(parts) >= 4 and "lladdr" in parts:
+                ip = parts[0]
+                if ip.startswith("127."):
+                    continue
+                idx = parts.index("lladdr")
+                if idx + 1 < len(parts):
+                    mac = parts[idx + 1].lower()
+                    if mac != "00:00:00:00:00:00":
+                        table[ip] = mac
+    except Exception:
+        pass
+
+    return table
+
+
+def arp_hosts() -> Set[str]:
+    """Return IPs that have a resolved MAC."""
+    return set(arp_table().keys())
+
+
+def get_mac_for_host(host: str) -> str:
+    """Return MAC address for a host from the ARP table."""
+    return arp_table().get(host, "")
+
+
+def arp_scan(nets: List[ipaddress.IPv4Network], timeout: int = 1) -> Set[str]:
+    """Actively ping all hosts in the subnets to force ARP resolution.
+    
+    Uses standard `ping -b` or parallel `ping` as an unprivileged fallback,
+    which will populate the ARP table so `arp_hosts()` can see them.
+    """
+    import subprocess
+    import concurrent.futures
+    
+    alive: Set[str] = set()
+    hosts_to_ping = []
+    for net in nets:
+        for host in hosts_in(net):
+            hosts_to_ping.append(host)
+            
+    if not hosts_to_ping:
+        return set()
+        
+    def ping_host(h: str) -> Optional[str]:
+        try:
+            res = subprocess.run(
+                ["ping", "-c", "1", "-W", str(timeout), h],
+                capture_output=True, timeout=timeout + 1
+            )
+            if res.returncode == 0:
+                return h
+        except Exception:
+            pass
+        return None
+
+    # Limit workers to avoid too many processes
+    with concurrent.futures.ThreadPoolExecutor(max_workers=64) as ex:
+        for h in ex.map(ping_host, hosts_to_ping):
+            if h:
+                alive.add(h)
+                
+    # Now that we've pinged them, they will be in the ARP table.
+    return alive
 
 
 # ---------------------------------------------------------------------------
@@ -837,11 +1016,27 @@ def _parse_dns_ptr_answers(data: bytes) -> List[str]:
     return names
 
 
+def mdns_resolve_host(name: str) -> Optional[str]:
+    try:
+        import socket
+        return socket.gethostbyname(name)
+    except OSError:
+        pass
+    try:
+        import socket
+        res = socket.getaddrinfo(name, None, socket.AF_INET)
+        if res:
+            return res[0][4][0]
+    except OSError:
+        pass
+    return None
+
+
 def mdns_discover(timeout_per_service: float = 2.0, retries: int = 1) -> List[DiscoveredCamera]:
     """Send mDNS PTR queries with retries for better reliability.
 
     Some cameras are slow to respond to mDNS. We retry each service type
-    and merge results.
+    and merge results. Resolves .local names to IPs.
     """
     found: List[DiscoveredCamera] = []
     seen_names: Set[str] = set()
@@ -862,12 +1057,172 @@ def mdns_discover(timeout_per_service: float = 2.0, retries: int = 1) -> List[Di
                     method = "onvif"
                 elif "http" in name:
                     method = "http"
+                
+                # Resolve host IP
+                ip = mdns_resolve_host(name)
+                
                 found.append(DiscoveredCamera(
-                    host="",  # mDNS name only — host resolved later
+                    host=ip or "",  # resolved IP if possible
                     url=name,
                     method=method,
-                    note=f"mDNS: {name}",
+                    note=f"mDNS: {name}" + (f" (resolved to {ip})" if ip else ""),
                 ))
+    return found
+
+
+# ---------------------------------------------------------------------------
+# SSDP / UPnP Discovery
+# ---------------------------------------------------------------------------
+_SSDP_INFO_CACHE: dict[str, dict[str, str]] = {}
+
+
+def get_ssdp_info(host: str) -> dict[str, str]:
+    """Return cached SSDP/UPnP info for a host (manufacturer, model, friendlyName)."""
+    return _SSDP_INFO_CACHE.get(host, {})
+
+
+def _fetch_upnp_description(url: str, timeout: float = 1.5) -> dict[str, str]:
+    """Fetch and parse UPnP device description XML from LOCATION header."""
+    import urllib.request
+    import xml.etree.ElementTree as ET
+
+    info: dict[str, str] = {}
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "tvpc-cameras/1.0"})
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            data = resp.read()
+            root = ET.fromstring(data)
+            for elem in root.iter():
+                tag = elem.tag.split("}")[-1] if "}" in elem.tag else elem.tag
+                if tag in (
+                    "friendlyName", "manufacturer", "modelDescription",
+                    "modelName", "modelNumber", "modelURL", "serialNumber",
+                    "presentationURL", "deviceType",
+                ):
+                    if elem.text and tag not in info:
+                        info[tag] = elem.text.strip()
+    except Exception:
+        pass
+    return info
+
+
+def ssdp_discover(timeout: float = 2.0) -> List[DiscoveredCamera]:
+    """Discover IP cameras via SSDP / UPnP multicast (239.255.255.250:1900)."""
+    from urllib.parse import urlparse
+
+    msg = (
+        "M-SEARCH * HTTP/1.1\r\n"
+        "HOST: 239.255.255.250:1900\r\n"
+        'MAN: "ssdp:discover"\r\n'
+        "MX: 2\r\n"
+        "ST: ssdp:all\r\n"
+        "\r\n"
+    ).encode("ascii")
+
+    try:
+        out = subprocess.check_output(
+            ["ip", "-4", "-o", "addr", "show", "up"],
+            stderr=subprocess.DEVNULL, text=True, timeout=3,
+        )
+        iface_ips = []
+        for line in out.splitlines():
+            m = re.search(r"inet\s+(\d+\.\d+\.\d+\.\d+)/(\d+)", line)
+            if m and not m.group(1).startswith("127."):
+                iface_ips.append(m.group(1))
+    except Exception:
+        iface_ips = ["0.0.0.0"]
+
+    if not iface_ips:
+        iface_ips = ["0.0.0.0"]
+
+    sockets = []
+    for ip in set(iface_ips):
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, 2)
+            if ip != "0.0.0.0":
+                sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_IF, socket.inet_aton(ip))
+            sock.settimeout(0.5)
+            sock.sendto(msg, ("239.255.255.250", 1900))
+            sockets.append(sock)
+        except OSError:
+            pass
+
+    import select
+    end = time.time() + timeout
+    locations: dict[str, str] = {}  # host -> location_url
+    try:
+        while time.time() < end and sockets:
+            rem = max(0.05, min(0.5, end - time.time()))
+            r, _, _ = select.select(sockets, [], [], rem)
+            for sock in r:
+                try:
+                    data, (src_ip, _) = sock.recvfrom(4096)
+                    text = data.decode("utf-8", "ignore")
+                    m = re.search(r"LOCATION:\s*(\S+)", text, re.I)
+                    if m and src_ip not in locations:
+                        locations[src_ip] = m.group(1).strip()
+                except OSError:
+                    continue
+    finally:
+        for sock in sockets:
+            try:
+                sock.close()
+            except Exception:
+                pass
+
+    found: List[DiscoveredCamera] = []
+    _CAMERA_KEYWORDS = (
+        "cam", "camera", "cctv", "nvr", "dvr", "surveillance", "tapo",
+        "reolink", "hikvision", "dahua", "amcrest", "foscam", "ezviz",
+        "wyze", "eufy", "axis", "uniview", "video", "transmitter",
+    )
+
+    for host, loc_url in locations.items():
+        info = _fetch_upnp_description(loc_url)
+        if not info:
+            continue
+        _SSDP_INFO_CACHE[host] = info
+
+        haystack = " ".join([
+            info.get("deviceType", ""),
+            info.get("modelDescription", ""),
+            info.get("friendlyName", ""),
+            info.get("manufacturer", ""),
+            info.get("modelName", ""),
+        ]).lower()
+
+        is_cam = any(kw in haystack for kw in _CAMERA_KEYWORDS)
+        if not is_cam:
+            continue
+
+        p = urlparse(loc_url)
+        port = p.port or 80
+        vendor = info.get("manufacturer", "")
+        for rx, name in _VENDOR_RE:
+            if rx.search(haystack):
+                vendor = name
+                break
+
+        mac = get_mac_for_host(host)
+        if not vendor and mac:
+            vendor = identify_vendor_from_mac(mac)
+
+        model = info.get("modelName", "") or info.get("modelNumber", "")
+        friendly = info.get("friendlyName", "")
+        note = f"SSDP: {friendly or model or 'Camera'}"
+
+        found.append(DiscoveredCamera(
+            host=host,
+            url=info.get("presentationURL", ""),
+            method="ssdp",
+            vendor=vendor,
+            model=model,
+            note=note,
+            port=port,
+            mac=mac,
+        ))
+
     return found
 
 
@@ -1002,11 +1357,41 @@ def onvif_get_stream_uri(xaddr: str, profile_token: str,
     return m.group(1) if m else None
 
 
+def onvif_get_video_sources(xaddr: str, user: str = "", password: str = "",
+                            timeout: float = 4.0) -> List[dict]:
+    """Call GetVideoSources and return a list of {token, name} for each video input/channel."""
+    body = '<trt:GetVideoSources/>'
+    resp = onvif_post(xaddr, "http://www.onvif.org/ver10/media/wsdl/GetVideoSources",
+                      body, user=user, password=password, timeout=timeout)
+    if not resp:
+        return []
+    out: List[dict] = []
+    for m in re.finditer(r"<trt:VideoSources[^>]*token=\"([^\"]+)\"[^>]*>(.*?)</trt:VideoSources>", resp, re.S):
+        token, inner = m.group(1), m.group(2)
+        out.append({"token": token, "name": f"VideoSource {token}"})
+    if not out:
+        for m in re.finditer(r"token=\"([^\"]+)\"[^>]*>.*?VideoSources", resp, re.S):
+            out.append({"token": m.group(1), "name": f"VideoSource {m.group(1)}"})
+    return out
+
+
 # ---------------------------------------------------------------------------
-# WS-Discovery
+# WS-Discovery & Scopes Cache
 # ---------------------------------------------------------------------------
+_ONVIF_SCOPES_CACHE: dict[str, dict[str, str]] = {}
+
+
+def get_onvif_scopes_info(xaddr_or_host: str) -> dict[str, str]:
+    """Return cached vendor/model info extracted from ONVIF WS-Discovery Scopes."""
+    if xaddr_or_host in _ONVIF_SCOPES_CACHE:
+        return _ONVIF_SCOPES_CACHE[xaddr_or_host]
+    from urllib.parse import urlparse
+    host = urlparse(xaddr_or_host).hostname or xaddr_or_host
+    return _ONVIF_SCOPES_CACHE.get(host, {})
+
+
 def onvif_ws_discovery(timeout: float = 3.0) -> List[str]:
-    """Send WS-Discovery probe and return the XAddrs that respond."""
+    """Send WS-Discovery probe on all interfaces and return the XAddrs."""
     msg = (
         '<?xml version="1.0" encoding="utf-8"?>'
         '<Envelope xmlns:dn="http://www.onvif.org/ver10/network/wsdl"'
@@ -1026,32 +1411,93 @@ def onvif_ws_discovery(timeout: float = 3.0) -> List[str]:
         '</Body>'
         '</Envelope>'
     ).encode("utf-8")
-    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    
     xaddrs: List[str] = []
+    
+    # Try all subnets to bind to correct interfaces
+    nets = all_local_subnets()
+    iface_ips = [n.network_address.exploded[:-1] + "1" for n in nets] # Approximation
+    # A better way to get iface IPs:
+    import subprocess
     try:
-        sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, 2)
+        out = subprocess.check_output(
+            ["ip", "-4", "-o", "addr", "show", "up"],
+            stderr=subprocess.DEVNULL, text=True, timeout=3,
+        )
+        iface_ips = []
+        for line in out.splitlines():
+            m = re.search(r"inet\s+(\d+\.\d+\.\d+\.\d+)/(\d+)", line)
+            if m and not m.group(1).startswith("127."):
+                iface_ips.append(m.group(1))
+    except Exception:
         try:
-            iface_ip = socket.gethostbyname(socket.gethostname())
-            sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_IF,
-                            socket.inet_aton(iface_ip))
+            iface_ips = [socket.gethostbyname(socket.gethostname())]
+        except OSError:
+            iface_ips = ["0.0.0.0"]
+
+    if not iface_ips:
+        iface_ips = ["0.0.0.0"]
+
+    sockets = []
+    for ip in set(iface_ips):
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, 2)
+            if ip != "0.0.0.0":
+                sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_IF, socket.inet_aton(ip))
+            sock.settimeout(0.5)
+            # Send 2 probes to combat UDP drop
+            sock.sendto(msg, ("239.255.255.250", 3702))
+            sock.sendto(msg, ("239.255.255.250", 3702))
+            sockets.append(sock)
         except OSError:
             pass
-        sock.settimeout(1.0)
-        sock.sendto(msg, ("239.255.255.250", 3702))
-        end = time.time() + timeout
-        while time.time() < end:
-            try:
-                data, _ = sock.recvfrom(8192)
-            except socket.timeout:
-                break
-            text = data.decode("utf-8", "ignore")
-            for m in re.finditer(r"XAddrs>([^<]+)</", text):
-                for x in m.group(1).strip().split():
-                    xaddrs.append(x)
-    except OSError:
-        pass
+            
+    import select
+    end = time.time() + timeout
+    try:
+        while time.time() < end and sockets:
+            rem = max(0.05, min(0.5, end - time.time()))
+            r, _, _ = select.select(sockets, [], [], rem)
+            for sock in r:
+                try:
+                    data, (src_ip, _) = sock.recvfrom(8192)
+                    text = data.decode("utf-8", "ignore")
+
+                    # Extract scopes (vendor/name, hardware/model)
+                    scopes_vendor = ""
+                    scopes_model = ""
+                    scopes_m = re.search(r"<(?:\w+:)?Scopes>([^<]+)</", text, re.I)
+                    if scopes_m:
+                        from urllib.parse import unquote
+                        for scope in scopes_m.group(1).strip().split():
+                            unquoted = unquote(scope)
+                            if "/name/" in unquoted:
+                                scopes_vendor = unquoted.split("/name/", 1)[-1].strip()
+                            elif "/hardware/" in unquoted:
+                                scopes_model = unquoted.split("/hardware/", 1)[-1].strip()
+
+                    for m in re.finditer(r"XAddrs>([^<]+)</", text):
+                        for x in m.group(1).strip().split():
+                            xaddrs.append(x)
+                            if scopes_vendor or scopes_model:
+                                from urllib.parse import urlparse
+                                host = urlparse(x).hostname or src_ip
+                                info = {"vendor": scopes_vendor, "model": scopes_model}
+                                _ONVIF_SCOPES_CACHE[x] = info
+                                if host:
+                                    _ONVIF_SCOPES_CACHE[host] = info
+                    if (scopes_vendor or scopes_model) and src_ip:
+                        _ONVIF_SCOPES_CACHE[src_ip] = {"vendor": scopes_vendor, "model": scopes_model}
+                except OSError:
+                    continue
     finally:
-        sock.close()
+        for sock in sockets:
+            try:
+                sock.close()
+            except Exception:
+                pass
+
     # De-dup while preserving order
     seen: Set[str] = set()
     out: List[str] = []
@@ -1061,6 +1507,563 @@ def onvif_ws_discovery(timeout: float = 3.0) -> List[str]:
             out.append(x)
     return out
 
+
+# ---------------------------------------------------------------------------
+# DVR & Multi-Channel Detection
+# ---------------------------------------------------------------------------
+
+_DVR_SIGNATURE_RE = re.compile(
+    r"\b(DVR|NVR|XVR|HCVR|NetSurveillance|Recorder)\b|\bDS-[789]\d{3}\b|\bRLN\d+\b",
+    re.I,
+)
+
+
+def is_dvr_device(haystack: str) -> bool:
+    """Check if a string indicates a DVR/NVR device."""
+    return bool(_DVR_SIGNATURE_RE.search(haystack))
+
+
+DVR_RTSP_TEMPLATES = [
+    # Hikvision DVR / NVR: channels 101, 201, 301, 401...
+    {"vendor": "Hikvision", "fmt": "/Streaming/Channels/{ch}01", "type": "hik_100"},
+    # Dahua / Amcrest / Lorex DVR: channel=1, 2, 3...
+    {"vendor": "Dahua", "fmt": "/cam/realmonitor?channel={ch}&subtype=0", "type": "dahua"},
+    # Reolink NVR: 01, 02, 03...
+    {"vendor": "Reolink", "fmt": "/h264Preview_{ch:02d}_main", "type": "reolink"},
+    # Xiongmai / XM / NetSurveillance DVR
+    {"vendor": "NetSurveillance", "fmt": "/cam{ch}/h264", "type": "xm"},
+    # Generic channel paths
+    {"vendor": "Generic DVR", "fmt": "/ch{ch}/main", "type": "generic"},
+    {"vendor": "Generic DVR", "fmt": "/live/ch{ch}", "type": "generic"},
+    {"vendor": "Generic DVR", "fmt": "/channel{ch}", "type": "generic"},
+]
+
+
+def detect_hikvision_dvr(host: str, rtsp_port: int = 554, http_port: int = 80,
+                         user: str = "", password: str = "",
+                         open_ports: Optional[Set[int]] = None,
+                         timeout: float = 2.5) -> List[DiscoveredCamera]:
+    """Check for Hikvision DVR/NVR via ISAPI and RTSP channel probes."""
+    found: List[DiscoveredCamera] = []
+    model = ""
+    firmware = ""
+    device_type = ""
+
+    # 1. Try ISAPI System/deviceInfo
+    info_res = http_get(host, http_port, "/ISAPI/System/deviceInfo", user=user, password=password, timeout=timeout)
+    if info_res is not None:
+        _status, body, _headers = info_res
+        if _status == 200:
+            m_dt = re.search(r"<deviceType>([^<]+)</deviceType>", body)
+            if m_dt:
+                device_type = m_dt.group(1).strip()
+            m_mod = re.search(r"<model>([^<]+)</model>", body)
+            if m_mod:
+                model = m_mod.group(1).strip()
+            m_fw = re.search(r"<firmwareVersion>([^<]+)</firmwareVersion>", body)
+            if m_fw:
+                firmware = m_fw.group(1).strip()
+
+    # 2. Try ISAPI Streaming/channels
+    chan_res = http_get(host, http_port, "/ISAPI/Streaming/channels", user=user, password=password, timeout=timeout)
+    channel_ids: List[Tuple[int, str, str]] = []  # (ch_number, ch_id, ch_name)
+    if chan_res is not None and chan_res[0] == 200:
+        for m in re.finditer(r"<StreamingChannel[^>]*>(.*?)</StreamingChannel>", chan_res[1], re.S):
+            inner = m.group(1)
+            id_m = re.search(r"<id>([^<]+)</id>", inner)
+            name_m = re.search(r"<channelName>([^<]+)</channelName>", inner)
+            enabled_m = re.search(r"<enabled>([^<]+)</enabled>", inner)
+            if enabled_m and enabled_m.group(1).strip().lower() == "false":
+                continue
+            if id_m:
+                raw_id = id_m.group(1).strip()
+                if raw_id.endswith("01"):
+                    try:
+                        ch_num = int(raw_id[:-2])
+                    except ValueError:
+                        ch_num = len(channel_ids) + 1
+                    ch_name = name_m.group(1).strip() if name_m else f"Camera {ch_num}"
+                    channel_ids.append((ch_num, raw_id, ch_name))
+                elif raw_id.isdigit() and int(raw_id) < 100:
+                    ch_num = int(raw_id)
+                    ch_name = name_m.group(1).strip() if name_m else f"Camera {ch_num}"
+                    channel_ids.append((ch_num, raw_id, ch_name))
+
+    if not channel_ids:
+        proxy_res = http_get(host, http_port, "/ISAPI/ContentMgmt/InputProxy/channels", user=user, password=password, timeout=timeout)
+        if proxy_res is not None and proxy_res[0] == 200:
+            for m in re.finditer(r"<InputProxyChannel[^>]*>(.*?)</InputProxyChannel>", proxy_res[1], re.S):
+                inner = m.group(1)
+                id_m = re.search(r"<id>([^<]+)</id>", inner)
+                name_m = re.search(r"<name>([^<]+)</name>", inner)
+                if id_m:
+                    try:
+                        ch_num = int(id_m.group(1).strip())
+                    except ValueError:
+                        ch_num = len(channel_ids) + 1
+                    ch_name = name_m.group(1).strip() if name_m else f"Camera {ch_num}"
+                    channel_ids.append((ch_num, f"{ch_num}01", ch_name))
+
+    if len(channel_ids) >= 2:
+        total = len(channel_ids)
+        dvr_label = f"Hikvision {total}-Channel {device_type or 'DVR'}"
+        for ch_num, ch_id, ch_name in channel_ids:
+            found.append(DiscoveredCamera(
+                host=host,
+                url=f"rtsp://{host}:{rtsp_port}/Streaming/Channels/{ch_id}",
+                method="dvr",
+                vendor="Hikvision",
+                model=model,
+                firmware=firmware,
+                note=f"DVR Channel {ch_num} ({ch_name})",
+                port=rtsp_port,
+                channel=ch_num,
+                total_channels=total,
+                is_dvr=True,
+                dvr_type=dvr_label,
+            ))
+        return found
+
+    # 3. RTSP multi-channel DESCRIBE fallback
+    d1 = rtsp_describe(host, rtsp_port, "/Streaming/Channels/101", user=user, password=password, timeout=timeout)
+    if d1 is not None and d1.get("status", "").startswith(("RTSP/1.0 200", "RTSP/1.0 401")):
+        vendor_name = identify_vendor_from_rtsp(d1)
+        if vendor_name and vendor_name != "Hikvision":
+            return []
+        haystack = " ".join([d1.get("server", ""), d1.get("body", ""), model, device_type])
+        has_dvr_port = bool(open_ports and (8000 in open_ports or 37777 in open_ports or 34567 in open_ports or 9000 in open_ports))
+        if not (is_dvr_device(haystack) or has_dvr_port or "Embedded Net DVR" in haystack):
+            return []
+
+        d2 = rtsp_describe(host, rtsp_port, "/Streaming/Channels/201", user=user, password=password, timeout=timeout)
+        if d2 is not None and d2.get("status", "").startswith(("RTSP/1.0 200", "RTSP/1.0 401")):
+            active_channels: List[int] = [1, 2]
+            fails = 0
+            for ch in range(3, 33):
+                dc = rtsp_describe(host, rtsp_port, f"/Streaming/Channels/{ch}01", user=user, password=password, timeout=timeout)
+                if dc is not None and dc.get("status", "").startswith(("RTSP/1.0 200", "RTSP/1.0 401")):
+                    active_channels.append(ch)
+                    fails = 0
+                else:
+                    fails += 1
+                    if fails >= 2:
+                        break
+            total = len(active_channels)
+            dvr_label = f"Hikvision {total}-Channel DVR"
+            for ch in active_channels:
+                found.append(DiscoveredCamera(
+                    host=host,
+                    url=f"rtsp://{host}:{rtsp_port}/Streaming/Channels/{ch}01",
+                    method="dvr",
+                    vendor="Hikvision",
+                    model=model,
+                    firmware=firmware,
+                    note=f"DVR Channel {ch} (main stream)",
+                    port=rtsp_port,
+                    channel=ch,
+                    total_channels=total,
+                    is_dvr=True,
+                    dvr_type=dvr_label,
+                ))
+            return found
+
+    return found
+
+
+def detect_dahua_dvr(host: str, rtsp_port: int = 554, http_port: int = 80,
+                     user: str = "", password: str = "",
+                     open_ports: Optional[Set[int]] = None,
+                     timeout: float = 2.5) -> List[DiscoveredCamera]:
+    """Check for Dahua / Amcrest DVR/NVR via CGI and RTSP channel probes."""
+    found: List[DiscoveredCamera] = []
+    device_type = ""
+    vendor = "Dahua"
+
+    # 1. Try CGI devInfo
+    dev_res = http_get(host, http_port, "/cgi-bin/devInfo.cgi?action=get", user=user, password=password, timeout=timeout)
+    if dev_res is not None and dev_res[0] == 200:
+        m_dt = re.search(r"deviceType=([^\r\n]+)", dev_res[1])
+        if m_dt:
+            device_type = m_dt.group(1).strip()
+        m_vendor = re.search(r"vendor=([^\r\n]+)", dev_res[1], re.I)
+        if m_vendor:
+            vendor = m_vendor.group(1).strip()
+
+    # 2. Try CGI ChannelTitle
+    title_res = http_get(host, http_port, "/cgi-bin/configManager.cgi?action=getConfig&name=ChannelTitle",
+                         user=user, password=password, timeout=timeout)
+    channel_titles: dict[int, str] = {}
+    if title_res is not None and title_res[0] == 200:
+        for m in re.finditer(r"table\.ChannelTitle\[(\d+)\]\.Name=([^\r\n]+)", title_res[1]):
+            idx = int(m.group(1))
+            channel_titles[idx + 1] = m.group(2).strip()
+
+    if len(channel_titles) >= 2:
+        total = len(channel_titles)
+        dvr_label = f"{vendor} {total}-Channel {device_type or 'DVR'}"
+        for ch, name in sorted(channel_titles.items()):
+            found.append(DiscoveredCamera(
+                host=host,
+                url=f"rtsp://{host}:{rtsp_port}/cam/realmonitor?channel={ch}&subtype=0",
+                method="dvr",
+                vendor=vendor,
+                note=f"DVR Channel {ch} ({name})",
+                port=rtsp_port,
+                channel=ch,
+                total_channels=total,
+                is_dvr=True,
+                dvr_type=dvr_label,
+            ))
+        return found
+
+    # 3. RTSP multi-channel DESCRIBE fallback
+    d1 = rtsp_describe(host, rtsp_port, "/cam/realmonitor?channel=1&subtype=0", user=user, password=password, timeout=timeout)
+    if d1 is not None and d1.get("status", "").startswith(("RTSP/1.0 200", "RTSP/1.0 401")):
+        vendor_name = identify_vendor_from_rtsp(d1)
+        if vendor_name and vendor_name not in ("Dahua", "Amcrest", "Lorex"):
+            return []
+        haystack = " ".join([d1.get("server", ""), d1.get("body", ""), device_type])
+        has_dvr_port = bool(open_ports and 37777 in open_ports)
+        if not (is_dvr_device(haystack) or has_dvr_port):
+            return []
+
+        d2 = rtsp_describe(host, rtsp_port, "/cam/realmonitor?channel=2&subtype=0", user=user, password=password, timeout=timeout)
+        if d2 is not None and d2.get("status", "").startswith(("RTSP/1.0 200", "RTSP/1.0 401")):
+            active_channels: List[int] = [1, 2]
+            fails = 0
+            for ch in range(3, 33):
+                dc = rtsp_describe(host, rtsp_port, f"/cam/realmonitor?channel={ch}&subtype=0", user=user, password=password, timeout=timeout)
+                if dc is not None and dc.get("status", "").startswith(("RTSP/1.0 200", "RTSP/1.0 401")):
+                    active_channels.append(ch)
+                    fails = 0
+                else:
+                    fails += 1
+                    if fails >= 2:
+                        break
+            total = len(active_channels)
+            dvr_label = f"{vendor} {total}-Channel DVR"
+            for ch in active_channels:
+                found.append(DiscoveredCamera(
+                    host=host,
+                    url=f"rtsp://{host}:{rtsp_port}/cam/realmonitor?channel={ch}&subtype=0",
+                    method="dvr",
+                    vendor=vendor,
+                    note=f"DVR Channel {ch} (main stream)",
+                    port=rtsp_port,
+                    channel=ch,
+                    total_channels=total,
+                    is_dvr=True,
+                    dvr_type=dvr_label,
+                ))
+            return found
+
+    return found
+
+
+def detect_reolink_dvr(host: str, rtsp_port: int = 554, http_port: int = 80,
+                       user: str = "", password: str = "",
+                       open_ports: Optional[Set[int]] = None,
+                       timeout: float = 2.5) -> List[DiscoveredCamera]:
+    """Check for Reolink NVR via API and RTSP channel probes."""
+    import json
+    found: List[DiscoveredCamera] = []
+    model = ""
+
+    # 1. Reolink GetDevInfo
+    dev_res = http_get(host, http_port, "/api.cgi?cmd=GetDevInfo", user=user, password=password, timeout=timeout)
+    is_nvr = False
+    if dev_res is not None and dev_res[0] == 200:
+        try:
+            data = json.loads(dev_res[1])
+            if isinstance(data, list) and data:
+                val = data[0].get("value", {}).get("DevInfo", {})
+                if val.get("type") == "NVR" or str(val.get("model", "")).upper().startswith("RLN"):
+                    is_nvr = True
+                    model = val.get("model", "")
+        except Exception:
+            pass
+
+    # 2. Reolink GetChannelstatus
+    chan_res = http_get(host, http_port, "/api.cgi?cmd=GetChannelstatus", user=user, password=password, timeout=timeout)
+    active_channels: List[Tuple[int, str]] = []
+    if chan_res is not None and chan_res[0] == 200:
+        try:
+            data = json.loads(chan_res[1])
+            if isinstance(data, list) and data:
+                statuses = data[0].get("value", {}).get("status", [])
+                for item in statuses:
+                    if item.get("online") == 1:
+                        ch_idx = item.get("channel", 0) + 1
+                        name = item.get("name", "") or f"Camera {ch_idx}"
+                        active_channels.append((ch_idx, name))
+        except Exception:
+            pass
+
+    if active_channels and (is_nvr or len(active_channels) >= 2):
+        total = len(active_channels)
+        dvr_label = f"Reolink {total}-Channel NVR"
+        for ch, name in active_channels:
+            found.append(DiscoveredCamera(
+                host=host,
+                url=f"rtsp://{host}:{rtsp_port}/h264Preview_{ch:02d}_main",
+                method="dvr",
+                vendor="Reolink",
+                model=model,
+                note=f"DVR Channel {ch} ({name})",
+                port=rtsp_port,
+                channel=ch,
+                total_channels=total,
+                is_dvr=True,
+                dvr_type=dvr_label,
+            ))
+        return found
+
+    # 3. RTSP multi-channel fallback
+    d1 = rtsp_describe(host, rtsp_port, "/h264Preview_01_main", user=user, password=password, timeout=timeout)
+    if d1 is not None and d1.get("status", "").startswith(("RTSP/1.0 200", "RTSP/1.0 401")):
+        vendor_name = identify_vendor_from_rtsp(d1)
+        if vendor_name and vendor_name != "Reolink":
+            return []
+        haystack = " ".join([d1.get("server", ""), d1.get("body", ""), model])
+        has_dvr_port = bool(open_ports and 9000 in open_ports)
+        if not (is_dvr_device(haystack) or has_dvr_port):
+            return []
+
+        d2 = rtsp_describe(host, rtsp_port, "/h264Preview_02_main", user=user, password=password, timeout=timeout)
+        if d2 is not None and d2.get("status", "").startswith(("RTSP/1.0 200", "RTSP/1.0 401")):
+            channels: List[int] = [1, 2]
+            fails = 0
+            for ch in range(3, 17):
+                dc = rtsp_describe(host, rtsp_port, f"/h264Preview_{ch:02d}_main", user=user, password=password, timeout=timeout)
+                if dc is not None and dc.get("status", "").startswith(("RTSP/1.0 200", "RTSP/1.0 401")):
+                    channels.append(ch)
+                    fails = 0
+                else:
+                    fails += 1
+                    if fails >= 2:
+                        break
+            total = len(channels)
+            dvr_label = f"Reolink {total}-Channel NVR"
+            for ch in channels:
+                found.append(DiscoveredCamera(
+                    host=host,
+                    url=f"rtsp://{host}:{rtsp_port}/h264Preview_{ch:02d}_main",
+                    method="dvr",
+                    vendor="Reolink",
+                    model=model,
+                    note=f"DVR Channel {ch} (main stream)",
+                    port=rtsp_port,
+                    channel=ch,
+                    total_channels=total,
+                    is_dvr=True,
+                    dvr_type=dvr_label,
+                ))
+            return found
+
+    return found
+
+
+def detect_generic_rtsp_dvr(host: str, rtsp_port: int = 554,
+                            user: str = "", password: str = "",
+                            open_ports: Optional[Set[int]] = None,
+                            timeout: float = 2.5) -> List[DiscoveredCamera]:
+    """Probe generic RTSP channel patterns for multi-channel DVRs."""
+    found: List[DiscoveredCamera] = []
+
+    for t in DVR_RTSP_TEMPLATES:
+        fmt = t["fmt"]
+        v_name = t["vendor"]
+        p1 = fmt.format(ch=1)
+        p2 = fmt.format(ch=2)
+        d1 = rtsp_describe(host, rtsp_port, p1, user=user, password=password, timeout=timeout)
+        if d1 is None or not d1.get("status", "").startswith(("RTSP/1.0 200", "RTSP/1.0 401")):
+            continue
+
+        haystack = " ".join([d1.get("server", ""), d1.get("body", "")])
+        has_dvr_port = bool(open_ports and any(p in open_ports for p in DVR_PORTS))
+        if not (is_dvr_device(haystack) or has_dvr_port):
+            continue
+
+        d2 = rtsp_describe(host, rtsp_port, p2, user=user, password=password, timeout=timeout)
+        if d2 is None or not d2.get("status", "").startswith(("RTSP/1.0 200", "RTSP/1.0 401")):
+            continue
+
+        # Both channels 1 and 2 responded and device has DVR signature
+        channels: List[int] = [1, 2]
+        fails = 0
+        max_ch = 17 if "Reolink" in v_name else 33
+        for ch in range(3, max_ch):
+            path = fmt.format(ch=ch)
+            dc = rtsp_describe(host, rtsp_port, path, user=user, password=password, timeout=timeout)
+            if dc is not None and dc.get("status", "").startswith(("RTSP/1.0 200", "RTSP/1.0 401")):
+                channels.append(ch)
+                fails = 0
+            else:
+                fails += 1
+                if fails >= 2:
+                    break
+        total = len(channels)
+        vendor = identify_vendor_from_rtsp(d1) or v_name
+        dvr_label = f"{vendor} {total}-Channel DVR"
+        for ch in channels:
+            path = fmt.format(ch=ch)
+            found.append(DiscoveredCamera(
+                host=host,
+                url=f"rtsp://{host}:{rtsp_port}{path}",
+                method="dvr",
+                vendor=vendor,
+                note=f"DVR Channel {ch} (main stream)",
+                port=rtsp_port,
+                channel=ch,
+                total_channels=total,
+                is_dvr=True,
+                dvr_type=dvr_label,
+            ))
+        return found
+    return found
+
+
+def detect_dvr_channels(host: str,
+                        rtsp_port: int = 554,
+                        http_port: int = 80,
+                        user: str = "",
+                        password: str = "",
+                        open_ports: Optional[Set[int]] = None,
+                        timeout: float = 2.5) -> List[DiscoveredCamera]:
+    """Detect if a host is a DVR/NVR and discover all connected camera channels.
+
+    Returns a list of DiscoveredCamera records (one per connected camera channel)
+    if the host is a multi-channel DVR/NVR, or an empty list if not.
+    """
+    ports = open_ports or set()
+
+    candidate_rtsp = [p for p in RTSP_PORTS if p in ports] or [rtsp_port]
+    candidate_http = [p for p in HTTP_PORTS if p in ports] or [http_port]
+
+    # Dahua port 37777 prioritized
+    if 37777 in ports:
+        for rp in candidate_rtsp:
+            for hp in candidate_http:
+                cams = detect_dahua_dvr(host, rtsp_port=rp, http_port=hp, user=user, password=password, open_ports=ports, timeout=timeout)
+                if cams:
+                    return cams
+
+    # Hikvision port 8000 prioritized
+    if 8000 in ports or 8000 in candidate_http:
+        for rp in candidate_rtsp:
+            cams = detect_hikvision_dvr(host, rtsp_port=rp, http_port=8000, user=user, password=password, open_ports=ports, timeout=timeout)
+            if cams:
+                return cams
+
+    # Try vendor HTTP checks on available HTTP ports
+    for hp in candidate_http:
+        # Hikvision
+        for rp in candidate_rtsp:
+            cams = detect_hikvision_dvr(host, rtsp_port=rp, http_port=hp, user=user, password=password, open_ports=ports, timeout=timeout)
+            if cams:
+                return cams
+        # Dahua
+        for rp in candidate_rtsp:
+            cams = detect_dahua_dvr(host, rtsp_port=rp, http_port=hp, user=user, password=password, open_ports=ports, timeout=timeout)
+            if cams:
+                return cams
+        # Reolink
+        for rp in candidate_rtsp:
+            cams = detect_reolink_dvr(host, rtsp_port=rp, http_port=hp, user=user, password=password, open_ports=ports, timeout=timeout)
+            if cams:
+                return cams
+
+    # Xiongmai / NetSurveillance port 34567
+    if 34567 in ports:
+        for rp in candidate_rtsp:
+            cams = detect_generic_rtsp_dvr(host, rtsp_port=rp, user=user, password=password, open_ports=ports, timeout=timeout)
+            if cams:
+                return cams
+
+    # Generic multi-channel RTSP probe
+    for rp in candidate_rtsp:
+        cams = detect_generic_rtsp_dvr(host, rtsp_port=rp, user=user, password=password, open_ports=ports, timeout=timeout)
+        if cams:
+            return cams
+
+    return []
+
+
+# ---------------------------------------------------------------------------
+# Quick all-port probe for known hosts
+# ---------------------------------------------------------------------------
+def quick_probe_all_ports(host: str, user: str = "", password: str = "", workers: int = 16) -> List[DiscoveredCamera]:
+    """Given a known host (e.g. from ARP), sweep standard camera ports and fetch streams."""
+    mac = get_mac_for_host(host)
+    mac_vendor = identify_vendor_from_mac(mac) if mac else ""
+    ssdp_info = get_ssdp_info(host)
+    scopes_info = get_onvif_scopes_info(host)
+    vendor_hint = mac_vendor or ssdp_info.get("manufacturer", "") or scopes_info.get("vendor", "")
+
+    open_ports = quick_probe_host(host, ports=(*RTSP_PORTS, *HTTP_PORTS, *TUYA_PORTS, *DVR_PORTS), timeout=0.6)
+
+    # First check if this host is a DVR/NVR with connected cameras
+    dvr_cams = detect_dvr_channels(host, user=user, password=password, open_ports=open_ports)
+    if dvr_cams:
+        for cam in dvr_cams:
+            if not cam.mac:
+                cam.mac = mac
+            if not cam.vendor and vendor_hint:
+                cam.vendor = vendor_hint
+        return dvr_cams
+
+    found: List[DiscoveredCamera] = []
+
+    # Try RTSP on any open RTSP ports
+    import concurrent.futures
+    with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as ex:
+        rtsp_futs = []
+        for port in RTSP_PORTS:
+            if port in open_ports:
+                rtsp_futs.append(ex.submit(rtsp_probe_paths, host, port, user, password, vendor_hint=vendor_hint))
+
+        for fut in concurrent.futures.as_completed(rtsp_futs):
+            cam = fut.result()
+            if cam:
+                found.append(cam)
+
+    # Try HTTP on any open HTTP ports
+    with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as ex:
+        http_futs = []
+        for port in HTTP_PORTS:
+            if port in open_ports:
+                http_futs.append(ex.submit(http_probe, host, port, user, password))
+
+        for fut in concurrent.futures.as_completed(http_futs):
+            cams = fut.result()
+            if cams:
+                found.extend(cams)
+
+    # If no RTSP or HTTP camera stream found, but Tuya port (6668) is open:
+    if not found and any(p in open_ports for p in TUYA_PORTS):
+        vendor = vendor_hint or "Orion / Tuya / Grid Connect"
+        found.append(DiscoveredCamera(
+            host=host,
+            url="",
+            method="cloud",
+            vendor=vendor,
+            mac=mac,
+            note=(
+                f"Cloud-only ({vendor}, Tuya port 6668 detected). "
+                "Enable ONVIF/PC View in vendor app (Grid Connect / Tuya / Smart Life) and re-scan."
+            ),
+        ))
+
+    # Enrich all found cameras with MAC and discovered vendor/model
+    for cam in found:
+        if not cam.mac and mac:
+            cam.mac = mac
+        if (not cam.vendor or cam.vendor in ("ONVIF device", "HiSilicon (generic)")) and vendor_hint:
+            cam.vendor = vendor_hint
+        if not cam.model:
+            cam.model = scopes_info.get("model", "") or ssdp_info.get("modelName", "") or ssdp_info.get("modelNumber", "")
+
+    return found
 
 # ---------------------------------------------------------------------------
 # Orchestration

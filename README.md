@@ -140,9 +140,26 @@ after five minutes looks exactly like a boot failure.
 
 ```bash
 sudo tvpc-bigscreen --ui-scale 10      # whole UI too big? this is the knob
+sudo tvpc-bigscreen --theme midnight   # set homescreen theme (midnight, oled, cyberpunk, sunset, emerald)
 sudo tvpc-bigscreen --list-apps        # what the home screen shows, with ids
 sudo tvpc-bigscreen --hide firefox,org.kde.plasma-systemmonitor
 sudo tvpc-bigscreen --show firefox     # put one back
+```
+
+**Modern Themed Homescreen.** tvpc upgrades Bigscreen's home screen with frosted glass cards, a dynamic hero spotlight banner, an ambient digital clock and date bar, and five tuned color palettes:
+
+* **Midnight Glass** (`midnight` - default): Deep obsidian navy with vibrant sky-blue glow.
+* **OLED Stealth** (`oled`): Pure pitch black with high-contrast monochrome & silver accents.
+* **Cyberpunk Neon** (`cyberpunk`): Dark violet glass with electric magenta & neon cyan accents.
+* **Sunset Amber** (`sunset`): Dark charcoal glass with warm amber & radiant sunset glow.
+* **Emerald Pine** (`emerald`): Deep forest glass with lush mint & emerald accents.
+
+```bash
+tvpc-bigscreen-theme list              # list available themes & active theme
+tvpc-bigscreen-theme set cyberpunk     # switch theme instantly
+tvpc-bigscreen-theme preview sunset    # preview color palette in terminal
+sudo tvpc-bigscreen-theme install      # deploy modernized overlay system-wide
+sudo tvpc-bigscreen-theme revert       # restore upstream stock files
 ```
 
 `--ui-scale` sets the base font point size, which sounds unrelated but is the
@@ -309,13 +326,17 @@ sudo ./scripts/tvpc-postboot.sh   # SSH, Wi-Fi, password
 ## Keeping the machine where it is meant to be
 
 `tvpc-update` compares the running system against the state this repo intends,
-reports what is already done and what is not, and fixes the gaps.
+reports what is already done and what is not, and fixes the gaps. From the
+Plasma desktop, `tvpc-update-gui` provides the same maintenance flow with
+confirmation dialogs for repository, apt, and Flatpak updates.
 
 ```bash
 sudo ./scripts/tvpc-update.sh --list          # what it checks
 sudo ./scripts/tvpc-update.sh --check         # report only, changes nothing
 sudo ./scripts/tvpc-update.sh                 # converge, then apt + flatpak update
 sudo ./scripts/tvpc-update.sh --no-packages   # converge only
+tvpc-update-gui                               # interactive couch-friendly updater
+tvpc-update-gui --check                       # interactive report only
 ```
 
 It checks 18 items: the config file, the TV user and its groups, the absence of
@@ -349,12 +370,13 @@ works over the CEC remote *and* SSH, and it doubles as one-shot commands for
 scripted/headless use.
 
 ```bash
-make tweaks            # install /usr/local/bin/tvpc-tweaks + a home-screen launcher
+make tweaks            # install /usr/local/bin/tvpc-tweaks (+ All Apps entry)
 make tweaks-menu      # run it interactively right now
 ```
 
-Launch **TV Tweaks** from the home screen (it opens in a terminal) or run it
-from a shell. Both forms understand the same actions:
+Launch **TV Tweaks** from the **All Apps** menu (it opens in a
+terminal) or run it from a shell. Both forms understand the same
+actions:
 
 ```bash
 tvpc-tweaks scale 1.5            # global UI scale (live now, persisted via TVPC_SCALE)
@@ -384,10 +406,14 @@ tweaks apply immediately as the logged-in user.
 - dark theme,
 - a **Watch YouTube** hero tile (if VacuumTube is installed),
 - a **Power** tile (reboot / shut down / restart shell / log out) via `tvpc-power`,
-- **curates the home screen** down to a small whitelist — YouTube, a browser,
-  Kodi, Files, Settings, Power — so the remote never scrolls two hundred entries,
+- a **Setup** tile for gamepad, HDMI-CEC/Anynet+, and TV power-on configuration,
+- an **Update** tile for repository, apt, and Flatpak maintenance,
+- an **All Apps** tile to reach everything else,
 - a dark wallpaper (where Plasma's tooling allows it),
 - switches the session to **Plasma Bigscreen** when it is installed.
+
+The home screen shows only these five tiles — no browser, no settings,
+no utilities. Everything else is reachable through **All Apps**.
 
 ```bash
 make home                 # sudo ./scripts/tvpc-tweaks.sh home-preset

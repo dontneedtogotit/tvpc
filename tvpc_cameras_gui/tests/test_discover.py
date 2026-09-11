@@ -537,5 +537,310 @@ class TestScanWorkerEndToEnd(unittest.TestCase):
             time.sleep(0.2)
 
 
+class TestQuickProbeImprovements(unittest.TestCase):
+    """Tests for quick_probe_all_ports and multi-port quick scan."""
+
+    def test_quick_probe_all_ports_finds_rtsp(self) -> None:
+        s = _MockRtspServer()
+        try:
+            old_ports = discover.RTSP_PORTS
+            discover.RTSP_PORTS = (s.port, *old_ports)
+            try:
+                cams = discover.quick_probe_all_ports("127.0.0.1")
+                self.assertGreater(len(cams), 0)
+                self.assertTrue(any(c.method == "rtsp" and c.vendor == "Hikvision" for c in cams))
+            finally:
+                discover.RTSP_PORTS = old_ports
+        finally:
+            s.close()
+
+    def test_quick_probe_all_ports_finds_http(self) -> None:
+        s = _MockHttpServer()
+        try:
+            old_ports = discover.HTTP_PORTS
+            discover.HTTP_PORTS = (s.port, *old_ports)
+            try:
+                cams = discover.quick_probe_all_ports("127.0.0.1")
+                self.assertGreater(len(cams), 0)
+                self.assertTrue(any(c.method == "http" and c.vendor == "Hikvision" for c in cams))
+            finally:
+                discover.HTTP_PORTS = old_ports
+        finally:
+            s.close()
+
+    def test_quick_scan_finds_mock_on_nonstandard_port(self) -> None:
+        from PySide6.QtWidgets import QApplication
+        import socket as _socket
+        import threading as _threading
+
+        sock = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM)
+        sock.setsockopt(_socket.SOL_SOCKET, _socket.SO_REUSEADDR, 1)
+        for port in (8554, 10554, 11554, 12554, 13554):
+            try:
+                sock.bind(("127.0.0.1", port))
+                break
+            except OSError:
+                continue
+        else:
+            self.skipTest("no free high port for mock RTSP server")
+        sock.listen(8)
+        sock.settimeout(0.2)
+        bound_port = sock.getsockname()[1]
+
+        sdp = ("v=0\r\no=- 0 0 IN IP4 127.0.0.1\r\ns=Reolink Camera\r\n"
+               "c=IN IP4 127.0.0.1\r\nt=0 0\r\nm=video 0 RTP/AVP 96\r\n"
+               "a=rtpmap:96 H264/90000\r\n")
+
+        def _handle(conn) -> None:
+            try:
+                conn.settimeout(2.0)
+                data = b""
+                while b"\r\n\r\n" not in data and len(data) < 4096:
+                    chunk = conn.recv(1024)
+                    if not chunk:
+                        break
+                    data += chunk
+                resp = ("RTSP/1.0 200 OK\r\nCSeq: 1\r\n"
+                        "Content-Type: application/sdp\r\n"
+                        "Server: Reolink\r\n"
+                        f"Content-Length: {len(sdp)}\r\n\r\n{sdp}").encode()
+                conn.sendall(resp)
+            except OSError:
+                pass
+            finally:
+                try:
+                    conn.close()
+                except OSError:
+                    pass
+
+        stop = _threading.Event()
+
+        def _serve() -> None:
+            while not stop.is_set():
+                try:
+                    conn, _ = sock.accept()
+                except _socket.timeout:
+                    continue
+                except OSError:
+                    return
+                _threading.Thread(target=_handle, args=(conn,), daemon=True).start()
+            sock.close()
+
+        _threading.Thread(target=_serve, daemon=True).start()
+        try:
+            from tvpc_cameras_gui import discover
+            from tvpc_cameras_gui.scan import ScanWorker
+            old_ports = discover.RTSP_PORTS
+            discover.RTSP_PORTS = (bound_port, *old_ports)
+            try:
+                QApplication.instance() or QApplication.instance()
+                # Mock arp_hosts to include 127.0.0.1
+                orig_arp = discover.arp_hosts
+                discover.arp_hosts = lambda: {"127.0.0.1"}
+                try:
+                    worker = ScanWorker(cidr="127.0.0.1/32", quick=True, do_onvif_enrich=False)
+                    found: list = []
+                    worker.found.connect(lambda c: found.append(c))
+                    worker.run()
+                finally:
+                    discover.arp_hosts = orig_arp
+            finally:
+                discover.RTSP_PORTS = old_ports
+
+            self.assertGreater(len(found), 0, "Quick scan should now find cameras on non-554 ports")
+            self.assertTrue(any("Reolink" in c.vendor for c in found), f"Reolink not found: {found}")
+        finally:
+            stop.set()
+            time.sleep(0.2)
+
+
+
+class TestTuyaAndCloudDetection(unittest.TestCase):
+    """Verify isolation of Tuya port 6668 and accurate cloud camera detection."""
+
+    def test_ports_classification(self) -> None:
+        from tvpc_cameras_gui import discover
+        self.assertNotIn(6668, discover.HTTP_PORTS, "6668 is not an HTTP port and must not be in HTTP_PORTS")
+        self.assertIn(6668, discover.TUYA_PORTS, "6668 should be in TUYA_PORTS")
+
+    def test_non_camera_host_not_emitted_as_cloud_camera(self) -> None:
+        """A normal network host (no RTSP/HTTP/Tuya) must NOT be reported as a camera."""
+        from tvpc_cameras_gui import discover
+        # 127.0.0.1 without mock ports open
+        cams = discover.quick_probe_all_ports("127.0.0.1")
+        # Ensure loopback without camera ports open is not reported as an Orion/Tuya camera
+        cloud_cams = [c for c in cams if c.method == "cloud"]
+        self.assertEqual(len(cloud_cams), 0, f"Expected no cloud cams for clean host, got: {cloud_cams}")
+
+    def test_tuya_port_6668_detected_as_cloud_only(self) -> None:
+        """A host with port 6668 open (and no RTSP) should be reported as cloud-only Tuya camera."""
+        from tvpc_cameras_gui import discover
+        import socket as _socket
+        import threading as _threading
+
+        # Bind a mock TCP server simulating Tuya device on an ephemeral port
+        sock = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM)
+        sock.setsockopt(_socket.SOL_SOCKET, _socket.SO_REUSEADDR, 1)
+        sock.bind(("127.0.0.1", 0))
+        sock.listen(1)
+        sock.settimeout(0.2)
+        bound_port = sock.getsockname()[1]
+
+        stop = _threading.Event()
+        def _serve():
+            while not stop.is_set():
+                try:
+                    conn, _ = sock.accept()
+                    conn.close()
+                except (_socket.timeout, OSError):
+                    pass
+            sock.close()
+
+        _threading.Thread(target=_serve, daemon=True).start()
+        try:
+            old_tuya_ports = discover.TUYA_PORTS
+            discover.TUYA_PORTS = (bound_port,)
+            try:
+                cams = discover.quick_probe_all_ports("127.0.0.1")
+                self.assertEqual(len(cams), 1)
+                self.assertEqual(cams[0].method, "cloud")
+                self.assertEqual(cams[0].url, "")
+                self.assertIn("Tuya", cams[0].vendor)
+                self.assertIn("vendor app", cams[0].note)
+            finally:
+                discover.TUYA_PORTS = old_tuya_ports
+        finally:
+            stop.set()
+
+
+class TestMacAndBrandDetection(unittest.TestCase):
+    """Verify MAC OUI lookup, ARP table handling, and vendor resolution."""
+
+    def test_mac_oui_vendors_lookup(self) -> None:
+        from tvpc_cameras_gui import discover
+        # Tuya / Orion
+        self.assertEqual(discover.identify_vendor_from_mac("98:03:cf:11:22:33"), "Tuya / Orion")
+        self.assertEqual(discover.identify_vendor_from_mac("98-03-CF-11-22-33"), "Tuya / Orion")
+        # TP-Link Tapo
+        self.assertEqual(discover.identify_vendor_from_mac("50:d4:f7:00:11:22"), "TP-Link Tapo")
+        # Reolink
+        self.assertEqual(discover.identify_vendor_from_mac("ec:71:db:aa:bb:cc"), "Reolink")
+        # Hikvision
+        self.assertEqual(discover.identify_vendor_from_mac("bc:ba:e1:12:34:56"), "Hikvision")
+        # Dahua
+        self.assertEqual(discover.identify_vendor_from_mac("3c:ef:8c:78:9a:bc"), "Dahua")
+        # Wyze
+        self.assertEqual(discover.identify_vendor_from_mac("2c:aa:8e:00:00:00"), "Wyze")
+        # Eufy
+        self.assertEqual(discover.identify_vendor_from_mac("8c:85:80:11:11:11"), "Eufy")
+        # Unknown MAC
+        self.assertEqual(discover.identify_vendor_from_mac("02:00:00:00:00:01"), "")
+        self.assertEqual(discover.identify_vendor_from_mac(""), "")
+
+    def test_arp_table_and_hosts(self) -> None:
+        from tvpc_cameras_gui import discover
+        table = discover.arp_table()
+        self.assertIsInstance(table, dict)
+        hosts = discover.arp_hosts()
+        self.assertIsInstance(hosts, set)
+        self.assertEqual(set(table.keys()), hosts)
+
+
+class TestSsdpAndScopes(unittest.TestCase):
+    """Verify UPnP description XML and ONVIF Scopes parsing."""
+
+    def test_upnp_description_parsing(self) -> None:
+        from tvpc_cameras_gui import discover
+        import http.server
+        import socketserver
+        import threading
+
+        xml_data = """<?xml version="1.0"?>
+        <root xmlns="urn:schemas-upnp-org:device-1-0">
+            <device>
+                <deviceType>urn:schemas-upnp-org:device:DigitalSecurityCamera:1</deviceType>
+                <friendlyName>Front Porch Tapo C200</friendlyName>
+                <manufacturer>TP-Link</manufacturer>
+                <modelName>Tapo C200</modelName>
+                <modelNumber>C200 v1.0</modelNumber>
+                <presentationURL>http://192.168.1.50:80</presentationURL>
+            </device>
+        </root>"""
+
+        class MockHandler(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                self.send_response(200)
+                self.send_header("Content-Type", "text/xml")
+                self.end_headers()
+                self.wfile.write(xml_data.encode("utf-8"))
+
+            def log_message(self, *args):
+                pass
+
+        server = socketserver.TCPServer(("127.0.0.1", 0), MockHandler)
+        port = server.server_address[1]
+        t = threading.Thread(target=server.serve_forever, daemon=True)
+        t.start()
+        try:
+            info = discover._fetch_upnp_description(f"http://127.0.0.1:{port}/desc.xml", timeout=2.0)
+            self.assertEqual(info.get("manufacturer"), "TP-Link")
+            self.assertEqual(info.get("modelName"), "Tapo C200")
+            self.assertEqual(info.get("friendlyName"), "Front Porch Tapo C200")
+        finally:
+            server.shutdown()
+            server.server_close()
+
+    def test_onvif_scopes_cache(self) -> None:
+        from tvpc_cameras_gui import discover
+        discover._ONVIF_SCOPES_CACHE["http://192.168.1.99:8000/onvif/device_service"] = {
+            "vendor": "TP-Link",
+            "model": "TAPO_C200",
+        }
+        discover._ONVIF_SCOPES_CACHE["192.168.1.99"] = {
+            "vendor": "TP-Link",
+            "model": "TAPO_C200",
+        }
+        info = discover.get_onvif_scopes_info("192.168.1.99")
+        self.assertEqual(info.get("vendor"), "TP-Link")
+        self.assertEqual(info.get("model"), "TAPO_C200")
+
+        info_by_xaddr = discover.get_onvif_scopes_info("http://192.168.1.99:8000/onvif/device_service")
+        self.assertEqual(info_by_xaddr.get("vendor"), "TP-Link")
+
+
+class TestBrandHelpGuide(unittest.TestCase):
+    """Verify Brand Help definitions and brand matching."""
+
+    def test_brand_guides_completeness(self) -> None:
+        from tvpc_cameras_gui.brand_help import BRAND_GUIDES
+        self.assertGreaterEqual(len(BRAND_GUIDES), 10)
+        for brand, data in BRAND_GUIDES.items():
+            self.assertIn("steps", data, f"{brand} missing steps")
+            self.assertIn("urls", data, f"{brand} missing urls")
+            self.assertIn("credentials", data, f"{brand} missing credentials")
+            self.assertIn("ports", data, f"{brand} missing ports")
+            self.assertTrue(len(data["steps"]) > 0, f"{brand} has empty steps")
+            self.assertTrue(len(data["urls"]) > 0, f"{brand} has empty urls")
+
+    def test_find_brand_guide_matching(self) -> None:
+        from tvpc_cameras_gui.brand_help import find_brand_guide
+        self.assertEqual(find_brand_guide("Tapo C200"), "TP-Link Tapo")
+        self.assertEqual(find_brand_guide("TP-Link"), "TP-Link Tapo")
+        self.assertEqual(find_brand_guide("Orion"), "Tuya / Orion / Grid Connect")
+        self.assertEqual(find_brand_guide("Grid Connect"), "Tuya / Orion / Grid Connect")
+        self.assertEqual(find_brand_guide("Tuya"), "Tuya / Orion / Grid Connect")
+        self.assertEqual(find_brand_guide("Hikvision DS-2CD"), "Hikvision / Annke")
+        self.assertEqual(find_brand_guide("Annke"), "Hikvision / Annke")
+        self.assertEqual(find_brand_guide("Reolink E1"), "Reolink")
+        self.assertEqual(find_brand_guide("Dahua Technology"), "Dahua / Amcrest / Imou")
+        self.assertEqual(find_brand_guide("Amcrest"), "Dahua / Amcrest / Imou")
+        self.assertEqual(find_brand_guide("Ezviz C6N"), "Ezviz")
+        self.assertEqual(find_brand_guide("Wyze Cam"), "Wyze")
+        self.assertEqual(find_brand_guide("Eufy Indoor"), "Eufy (Anker)")
+        self.assertEqual(find_brand_guide("Axis M3005"), "Axis Communications")
+        self.assertEqual(find_brand_guide("Foscam FI9821"), "Foscam")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+

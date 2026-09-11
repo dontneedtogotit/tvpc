@@ -2,16 +2,55 @@
 from __future__ import annotations
 
 from typing import Optional
+from urllib.parse import urlparse
 
+from PySide6.QtCore import Qt, QThread, Signal, QObject
 from PySide6.QtWidgets import (
     QDialog, QDialogButtonBox, QFormLayout, QLineEdit, QTextEdit,
-    QVBoxLayout, QLabel, QCheckBox, QComboBox,
+    QVBoxLayout, QHBoxLayout, QLabel, QCheckBox, QComboBox,
+    QPushButton, QMessageBox, QApplication,
 )
 
 from .config import Camera
 from .settings import load_settings
+from .brand_help import show_brand_help
 
 _SETTINGS = load_settings()
+
+CAMERA_PRESETS = [
+    ("Preset URL templates (select brand)…", ""),
+    ("Hikvision / Annke (Main Stream)", "rtsp://{IP}:554/Streaming/Channels/101"),
+    ("Hikvision / Annke (Sub Stream)", "rtsp://{IP}:554/Streaming/Channels/102"),
+    ("Dahua / Amcrest (Main Stream)", "rtsp://{IP}:554/cam/realmonitor?channel=1&subtype=0"),
+    ("Dahua / Amcrest (Sub Stream)", "rtsp://{IP}:554/cam/realmonitor?channel=1&subtype=1"),
+    ("Reolink (Main Stream)", "rtsp://{IP}:554/h264Preview_01_main"),
+    ("Reolink (Sub Stream)", "rtsp://{IP}:554/h264Preview_01_sub"),
+    ("TP-Link Tapo (Main Stream)", "rtsp://{IP}:554/stream1"),
+    ("TP-Link Tapo (Sub Stream)", "rtsp://{IP}:554/stream2"),
+    ("Axis Communications", "rtsp://{IP}:554/axis-media/media.amp"),
+    ("Foscam", "rtsp://{IP}:554/videoMain"),
+    ("Generic RTSP (Port 554)", "rtsp://{IP}:554/live"),
+    ("Generic RTSP (Port 8554)", "rtsp://{IP}:8554/live"),
+    ("Tuya / Orion / Grid Connect (Main Stream)", "rtsp://{IP}:554/live/ch0"),
+    ("Tuya / Orion / Grid Connect (Port 6554)", "rtsp://{IP}:6554/stream_0"),
+    ("Generic MJPEG HTTP", "http://{IP}:80/video.mjpg"),
+]
+
+
+class _ProbeWorker(QObject):
+    finished = Signal(bool)
+
+    def __init__(self, url: str, user: str, password: str, timeout: float = 4.0):
+        super().__init__()
+        self.url = url
+        self.user = user
+        self.password = password
+        self.timeout = timeout
+
+    def run(self) -> None:
+        from .health import _probe_url
+        ok = _probe_url(self.url, user=self.user, password=self.password, timeout=self.timeout)
+        self.finished.emit(ok)
 
 
 class CameraEditDialog(QDialog):
@@ -20,10 +59,26 @@ class CameraEditDialog(QDialog):
     def __init__(self, parent=None, camera: Optional[Camera] = None) -> None:
         super().__init__(parent)
         self.setWindowTitle("Edit camera" if camera else "Add camera")
-        self.setMinimumWidth(480)
+        self.setMinimumWidth(520)
+
+        self._probe_thread: Optional[QThread] = None
+        self._probe_worker: Optional[_ProbeWorker] = None
 
         self._name = QLineEdit(self)
         self._name.setPlaceholderText("e.g. Front Door")
+
+        self._preset_combo = QComboBox(self)
+        for label, _ in CAMERA_PRESETS:
+            self._preset_combo.addItem(label)
+        self._preset_combo.currentIndexChanged.connect(self._on_preset_selected)
+
+        preset_row = QHBoxLayout()
+        preset_row.addWidget(self._preset_combo, 1)
+        self._guide_btn = QPushButton("💡 Brand Guide")
+        self._guide_btn.setToolTip("Open step-by-step connection guide for your camera brand")
+        self._guide_btn.clicked.connect(self._on_brand_guide)
+        preset_row.addWidget(self._guide_btn)
+
         self._url = QLineEdit(self)
         self._url.setPlaceholderText("rtsp://192.168.1.42/Streaming/Channels/101")
         self._user = QLineEdit(self)
@@ -69,9 +124,11 @@ class CameraEditDialog(QDialog):
             self._audio.setChecked(camera.audio)
             self._enabled.setChecked(camera.enabled)
             self._notes.setPlainText(camera.notes)
+            self._test_btn.setEnabled(bool(camera.url.strip()))
 
         form = QFormLayout()
         form.addRow("Name *", self._name)
+        form.addRow("Preset", preset_row)
         form.addRow("Stream URL *", self._url)
         form.addRow("Username", self._user)
         form.addRow("Password", self._pass)
@@ -102,36 +159,68 @@ class CameraEditDialog(QDialog):
         layout.addWidget(hint)
         layout.addWidget(buttons)
 
+    def _on_preset_selected(self, index: int) -> None:
+        if index <= 0 or index >= len(CAMERA_PRESETS):
+            return
+        _, template = CAMERA_PRESETS[index]
+        current_url = self._url.text().strip()
+        host = "192.168.1.100"
+        if "://" in current_url:
+            p = urlparse(current_url)
+            if p.hostname:
+                host = p.hostname
+        self._url.setText(template.replace("{IP}", host))
+
+    def _on_brand_guide(self) -> None:
+        host = ""
+        current_url = self._url.text().strip()
+        if "://" in current_url:
+            p = urlparse(current_url)
+            if p.hostname:
+                host = p.hostname
+        hint = ""
+        preset_text = self._preset_combo.currentText()
+        if self._preset_combo.currentIndex() > 0:
+            hint = preset_text.split("(")[0].strip()
+        if not hint:
+            hint = self._name.text().strip() or self._notes.toPlainText().strip()
+        show_brand_help(self, brand_hint=hint, host=host)
+
     def _test_connection(self) -> None:
-        from PySide6.QtCore import QThread
         url = self._url.text().strip()
         user = self._user.text().strip()
         password = self._pass.text()
         if not url:
             self._test_result.setText("Enter a URL first.")
+            self._test_result.setStyleSheet("color: #f44336;")
             return
-        self._test_result.setText("Testing…")
+        self._test_result.setText("⏳ Probing camera connection…")
+        self._test_result.setStyleSheet("color: #4fc3f7;")
         self._test_btn.setEnabled(False)
-        QApplication.processEvents()
 
-        from .health import _probe_url
-        ok = _probe_url(url, user=user, password=password, timeout=5.0)
+        self._probe_thread = QThread(self)
+        self._probe_worker = _ProbeWorker(url, user, password, timeout=4.0)
+        self._probe_worker.moveToThread(self._probe_thread)
+        self._probe_thread.started.connect(self._probe_worker.run)
+        self._probe_worker.finished.connect(self._on_probe_finished)
+        self._probe_worker.finished.connect(self._probe_thread.quit)
+        self._probe_thread.start()
+
+    def _on_probe_finished(self, ok: bool) -> None:
+        self._test_btn.setEnabled(True)
         if ok:
             self._test_result.setText("✅ Connection successful — camera is reachable.")
-            self._test_result.setStyleSheet("color: #4caf50;")
+            self._test_result.setStyleSheet("color: #4caf50; font-weight: bold;")
         else:
             self._test_result.setText("❌ Connection failed — check URL, credentials, and network.")
-            self._test_result.setStyleSheet("color: #f44336;")
-        self._test_btn.setEnabled(True)
+            self._test_result.setStyleSheet("color: #f44336; font-weight: bold;")
 
     def _on_accept(self) -> None:
         if not self._name.text().strip() or not self._url.text().strip():
-            from PySide6.QtWidgets import QMessageBox
             QMessageBox.warning(self, "Missing fields", "Name and URL are required.")
             return
         url = self._url.text().strip()
         if not (url.startswith("rtsp://") or url.startswith("http://") or url.startswith("https://")):
-            from PySide6.QtWidgets import QMessageBox
             QMessageBox.warning(self, "Invalid URL",
                                 "URL must start with rtsp://, http://, or https://")
             return

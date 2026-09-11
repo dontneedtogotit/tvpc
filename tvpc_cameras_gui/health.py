@@ -72,6 +72,8 @@ class HealthWorker(QObject):
         self._cameras = cameras
 
     def run(self) -> None:
+        if not self._cameras:
+            return
         try:
             while not self._cancel:
                 self._check_all()
@@ -107,6 +109,5 @@ def start_health_monitor(parent, cameras: List[Camera],
         worker.status_changed.connect(on_status_change)
     if on_all_checked is not None:
         worker.all_checked.connect(on_all_checked)
-    worker.all_checked.connect(thread.quit)
     thread.start()
     return thread, worker

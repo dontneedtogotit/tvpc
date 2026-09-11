@@ -1,6 +1,7 @@
 .PHONY: help install update update-check repair check-boot logs session \
         customize postboot doctor cec-remote cec-poweron check-updates check \
-        offline-usb clean cameras-menu cameras-gui status controller-status controller-pair
+        offline-usb clean cameras-menu cameras-gui status controller-status controller-pair \
+        setup-gui update-gui test theme theme-set theme-install
 
 help:
 	@echo "tvpc — Android-like HTPC Linux (Intel NUC7i5BNH + 2013 Samsung TV)"
@@ -16,12 +17,16 @@ help:
 	@echo "  make session S=plasma Session: auto|plasma|plasma-mobile|plasma-x11|kiosk"
 	@echo "                        opt-in: bigscreen|bigscreen-x11|phosh"
 	@echo "  make customize        Apply idempotent UI/theme tweaks"
-	@echo "  make tweaks           Install the TV Tweaks app + home-screen launcher"
-	@echo "  make home             Apply the full home-screen preset (curate + hero + power)"
+	@echo "  make theme            List Bigscreen modern themes"
+	@echo "  make theme-set T=...  Set Bigscreen theme (midnight|oled|cyberpunk|sunset|emerald)"
+	@echo "  make tweaks           Install the TV Tweaks app (+ All Apps entry)"
+	@echo "  make home             Apply the full home-screen preset (VacuumTube + Power + Setup + Update + All Apps)"
 	@echo "  make home-vacuum      Curate the home to VacuumTube only + All Apps launcher"
 	@echo "  make status           Open the visual status dashboard (tvpc-status)"
 	@echo "  make controller-status Show paired gamepads / input devices"
 	@echo "  make controller-pair  Pair a Bluetooth gamepad interactively"
+	@echo "  make setup-gui        Open gamepad, CEC/Anynet+, and TV power-on setup"
+	@echo "  make update-gui       Open the repo/package/Flatpak updater"
 	@echo "  make cameras-menu     Open the security-camera kdialog menu (bash)"
 	@echo "  make cameras-gui      Open the security-camera PySide6 GUI"
 	@echo "  make tweaks-menu      Run the TV Tweaks app interactively"
@@ -58,6 +63,15 @@ session:
 customize:
 	sudo ./scripts/customize.sh
 
+theme:
+	./scripts/tvpc-bigscreen-theme.sh list
+
+theme-set:
+	./scripts/tvpc-bigscreen-theme.sh set $(or $(T),midnight)
+
+theme-install:
+	sudo ./scripts/tvpc-bigscreen-theme.sh install
+
 tweaks:
 	sudo ./scripts/tvpc-tweaks.sh install-launcher
 
@@ -85,6 +99,12 @@ controller-status:
 controller-pair:
 	sudo ./scripts/tvpc-controller.sh pair-gamepad
 
+setup-gui:
+	./scripts/tvpc-setup-gui.sh
+
+update-gui:
+	./scripts/tvpc-update-gui.sh
+
 postboot:
 	sudo ./scripts/tvpc-postboot.sh
 
@@ -105,8 +125,10 @@ offline-usb:
 	sudo ./scripts/make-offline-usb.sh $(USB)
 
 check:
-	@bash -n install.sh scripts/*.sh && echo "bash syntax OK"
-	@command -v shellcheck >/dev/null && shellcheck -x -S warning install.sh scripts/*.sh || echo "shellcheck not installed (skipping)"
+	@bash -n install.sh scripts/*.sh tests/*.sh && echo "bash syntax OK"
+	@bash tests/test-tvpc-gui.sh
+	@bash tests/test-tvpc-bigscreen-theme.sh
+	@command -v shellcheck >/dev/null && shellcheck -x -S warning install.sh scripts/*.sh tests/*.sh || echo "shellcheck not installed (skipping)"
 	@./scripts/check-hyprland-config.sh
 
 clean:

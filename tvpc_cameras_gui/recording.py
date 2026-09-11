@@ -41,11 +41,23 @@ def _have_ffmpeg() -> bool:
     return shutil.which("ffmpeg") is not None
 
 
+def _inject_credentials(url: str, user: str, password: str) -> str:
+    """For rtsp://, embed user:pass in the URL itself; otherwise pass through."""
+    if not user or not url.startswith("rtsp://"):
+        return url
+    prefix = "rtsp://"
+    rest = url[len(prefix):]
+    if "@" in rest.split("/", 1)[0]:
+        return url
+    return f"{prefix}{user}:{password}@{rest}"
+
+
 def _build_record_cmd(cam: Camera, output: Path) -> List[str]:
+    url = _inject_credentials(cam.url, cam.user, cam.password)
     cmd = [
         "ffmpeg", "-hide_banner", "-loglevel", "warning",
         "-rtsp_transport", "tcp",
-        "-i", cam.url,
+        "-i", url,
         "-c", "copy",
         "-f", "matroska",
         "-y",

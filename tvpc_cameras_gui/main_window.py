@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
 
 from . import config as cfg
 from .config import Camera
+from .discover import DiscoveredCamera
 from .edit_dialog import CameraEditDialog
 from .pip import PipManager
 from .preview import PreviewWidget
@@ -25,6 +26,7 @@ from .recording import RecordingManager
 from .notifications import send as notify, send_camera_online, send_camera_offline
 from .health import start_health_monitor
 from .settings import SettingsDialog, load_settings, save_settings
+from .brand_help import show_brand_help
 
 
 class EmptyStateWidget(QWidget):
@@ -104,7 +106,7 @@ class MainWindow(QMainWindow):
         self._health_thread = None
         self._health_worker = None
         self._camera_status: dict[str, bool] = {}
-        self._last_scan_results: List[config.DiscoveredCamera] = []
+        self._last_scan_results: List[DiscoveredCamera] = []
         self._settings = load_settings()
 
         self._build_toolbar()
@@ -145,6 +147,11 @@ class MainWindow(QMainWindow):
         act_scan = QAction("🔍  Scan network", self)
         act_scan.triggered.connect(self._action_scan)
         tb.addAction(act_scan)
+
+        act_guide = QAction("💡 Camera Setup Guide", self)
+        act_guide.setToolTip("Open brand-specific setup instructions for cameras")
+        act_guide.triggered.connect(self._action_brand_guide)
+        tb.addAction(act_guide)
 
         act_open = QAction("📺  Open PiP", self)
         act_open.setShortcut("P")
@@ -417,16 +424,6 @@ class MainWindow(QMainWindow):
             cams.sort(key=status_key)
         self._apply_list_filter(cams)
 
-    def _on_search_changed(self, text: str) -> None:
-        cams = cfg.load_cameras()
-        group = self._group_filter.currentText()
-        if group != "All groups":
-            cams = [c for c in cams if c.group == group]
-        if text.strip():
-            lower = text.strip().lower()
-            cams = [c for c in cams if lower in c.name.lower() or lower in c.url.lower()]
-        self._apply_list_filter(cams)
-
     def _apply_list_filter(self, cams: List[Camera]) -> None:
         self._list.clear()
         for cam in cams:
@@ -480,14 +477,36 @@ class MainWindow(QMainWindow):
         for idx, cam in enumerate(cams[:max_cams]):
             prev = PreviewWidget(self._grid_wrap)
             prev.clicked.connect(lambda i=idx: self._select_index(i))
+            prev.double_clicked.connect(lambda i=idx: self._on_preview_double_clicked(i))
+            prev.context_menu_requested.connect(lambda pos, i=idx: self._on_preview_context_menu(pos, i))
             if hasattr(prev, '_cached_vendor'):
                 prev._cached_vendor = cam.notes
             # Restore online status if known.
             if cam.name in self._camera_status:
                 prev.set_online_status(self._camera_status[cam.name])
+            if self._recording.is_recording(cam):
+                prev.set_recording(True)
             self._grid.addWidget(prev, idx // cols, idx % cols)
             self._previews.append(prev)
             prev.start(cam.url, cam.user, cam.password, caption=cam.name)
+
+    def _on_preview_double_clicked(self, idx: int) -> None:
+        self._select_index(idx)
+        self._action_open_pip()
+
+    def _on_preview_context_menu(self, pos, idx: int) -> None:
+        self._select_index(idx)
+        menu = QMenu(self)
+        menu.addAction("📺 Open in PiP", self._action_open_pip)
+        menu.addAction("⛶ Fullscreen", self._action_fullscreen)
+        menu.addAction("⏺ Record", self._action_toggle_record)
+        menu.addAction("📷 Snapshot", self._action_snapshot)
+        menu.addSeparator()
+        menu.addAction("✏️ Edit", self._action_edit)
+        menu.addAction("👁 Toggle enable/disable", self._action_toggle_enable)
+        menu.addSeparator()
+        menu.addAction("🗑 Remove", self._action_remove)
+        menu.exec(pos)
 
     # --- selection ---------------------------------------------------------
     def _on_select(self) -> None:
@@ -575,7 +594,7 @@ class MainWindow(QMainWindow):
             dlg._user.setText(self._default_user)
         if self._default_pass:
             dlg._pass.setText(self._default_pass)
-        if dlg.exec() == dlg.Accepted:
+        if dlg.exec() == QDialog.Accepted:
             cam = dlg.get_camera()
             cams = cfg.load_cameras()
             if any(c.url == cam.url for c in cams):
@@ -593,7 +612,7 @@ class MainWindow(QMainWindow):
             return
         idx, cam = sel
         dlg = CameraEditDialog(self, camera=cam)
-        if dlg.exec() == dlg.Accepted:
+        if dlg.exec() == QDialog.Accepted:
             cfg.update_camera(idx, dlg.get_camera())
             self.reload()
 
@@ -618,9 +637,21 @@ class MainWindow(QMainWindow):
             dlg._user.setText(self._default_user)
         if self._default_pass:
             dlg._pass.setText(self._default_pass)
-        if dlg.exec() == dlg.Accepted:
+        if dlg.exec() == QDialog.Accepted:
             self._last_scan_results = dlg._results
             self.reload()
+
+    def _action_brand_guide(self) -> None:
+        sel = self._selected_camera()
+        brand_hint = ""
+        host = ""
+        if sel:
+            _, cam = sel
+            brand_hint = cam.name + " " + cam.notes
+            from urllib.parse import urlparse
+            if "://" in cam.url:
+                host = urlparse(cam.url).hostname or ""
+        show_brand_help(self, brand_hint=brand_hint, host=host)
 
     def _action_readd_last_scan(self) -> None:
         if not self._last_scan_results:
@@ -723,6 +754,10 @@ class MainWindow(QMainWindow):
             return
         _, cam = sel
         rec = self._recording.toggle(cam)
+        is_rec = rec is not None
+        for prev in self._previews:
+            if getattr(prev, "_caption_base_text", "") == cam.name or prev._caption.text().startswith(cam.name):
+                prev.set_recording(is_rec)
         if rec:
             notify("Recording started", f"Recording {cam.name} to disk.")
             self._set_status_ready(f"⏺ Recording {cam.name} ({rec.file_path.name})")
@@ -798,7 +833,7 @@ class MainWindow(QMainWindow):
 
     def _action_open_settings(self) -> None:
         dlg = SettingsDialog(self, settings=self._settings)
-        if dlg.exec() == dlg.Accepted and dlg.changed():
+        if dlg.exec() == QDialog.Accepted and dlg.changed():
             self._settings = load_settings()
             self._default_user = self._settings.get("default_user", "")
             self._default_pass = self._settings.get("default_password", "")
@@ -849,8 +884,12 @@ class MainWindow(QMainWindow):
     # --- periodic reap -----------------------------------------------------
     def _on_reap(self) -> None:
         self._pip.reap()
-        # Update recording indicator in status bar.
         active = self._recording.active_recordings()
+        active_names = {r.camera.name for r in active}
+        for prev in self._previews:
+            base_name = getattr(prev, "_caption_base_text", "")
+            if base_name:
+                prev.set_recording(base_name in active_names)
         if active:
             names = ", ".join(r.camera.name for r in active)
             dur = active[0].display_duration

@@ -22,7 +22,18 @@ mkdir -p "$SKEL/.config" "$SKEL/.config/autostart"
 # Bigscreen is ALREADY a 10-foot UI sized around the 10pt default, so 13
 # there scales it twice and the interface does not fit the screen — set
 # TVPC_FONT_SIZE=10 (tvpc-bigscreen --ui-scale 10 does it for you).
-FONT_SIZE="${TVPC_FONT_SIZE:-13}"
+#
+# Auto-detect: if the active session is Bigscreen, use 10 regardless of
+# TVPC_FONT_SIZE, because 13 breaks Bigscreen's layout.
+ACTIVE_SESSION=""
+[[ -r /etc/sddm.conf.d/10-tvpc.conf ]] && ACTIVE_SESSION="$(awk -F= '/^Session=/{print $2; exit}' /etc/sddm.conf.d/10-tvpc.conf 2>/dev/null)"
+IS_BIGSCREEN=0
+[[ $ACTIVE_SESSION == plasma-bigscreen* ]] && IS_BIGSCREEN=1
+if [[ $IS_BIGSCREEN -eq 1 ]]; then
+    FONT_SIZE="${TVPC_FONT_SIZE:-10}"
+else
+    FONT_SIZE="${TVPC_FONT_SIZE:-13}"
+fi
 cat >"$SKEL/.config/kdeglobals" <<EOF
 [General]
 ColorScheme=BreezeDark
@@ -75,6 +86,43 @@ EOF
 cat >"$SKEL/.config/krunnerrc" <<'EOF'
 [General]
 FreeFloating=false
+EOF
+
+# --- KWin: Alt+Tab switcher & window decorations with Close 'X' button -------
+cat >"$SKEL/.config/kwinrc" <<'EOF'
+[Windows]
+BorderlessMaximizedWindows=false
+
+[org.kde.kdecoration2]
+BorderSize=Normal
+ButtonsOnLeft=
+ButtonsOnRight=X
+CloseOnDoubleClickOnMenu=false
+library=org.kde.breeze
+theme=Breeze
+
+[TabBox]
+ActivitiesMode=1
+ApplicationsMode=0
+DesktopMode=0
+HighlightWindows=true
+LayoutName=thumbnail_grid
+MultiScreenMode=0
+OrderMinimizedMode=0
+ShowDelay=false
+ShowDesktop=true
+SwitchingMode=0
+EOF
+
+# --- Shortcuts: Alt+Tab app switcher and Alt+F4 / window close --------------
+cat >"$SKEL/.config/kglobalshortcutsrc" <<'EOF'
+[kwin]
+Walk Through Windows=Alt+Tab,Alt+Tab,Walk Through Windows
+Walk Through Windows (Reverse)=Alt+Shift+Tab,Alt+Shift+Backtab,Walk Through Windows (Reverse)
+Walk Through Windows Alternative=none,,Walk Through Windows Alternative
+Walk Through Windows Alternative (Reverse)=none,,Walk Through Windows Alternative (Reverse)
+Window Close=Alt+F4,Alt+F4,Close Window
+Show Desktop=Meta+D,Meta+D,Show Desktop
 EOF
 
 # --- KWin rules -------------------------------------------------------------

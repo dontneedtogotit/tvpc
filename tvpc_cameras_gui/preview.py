@@ -69,42 +69,28 @@ _RECONNECT_ATTEMPTS = 3
 _RECONNECT_DELAY = 2.0
 
 
-def _render_text(pix: QPixmap, text: str, color: QColor, sub: str = "") -> None:
-    if pix.isNull():
-        return
-    painter = QPainter(pix)
-    painter.setRenderHint(QPainter.Antialiasing)
-    painter.setPen(color)
-    font: QFont = painter.font()
-    font.setPointSize(12)
-    painter.setFont(font)
-    rect = pix.rect()
-    painter.drawText(rect, Qt.AlignCenter, text)
-    if sub:
-        font.setPointSize(9)
-        painter.setFont(font)
-        sub_rect = rect.adjusted(0, rect.height() // 2, 0, 0)
-        painter.drawText(sub_rect, Qt.AlignHCenter | Qt.AlignTop, sub)
-    painter.end()
-
-
 class PreviewWidget(QWidget):
     """A bordered label showing the latest frame from a stream.
 
-    Emits `clicked` on mouse press so the main window can wire selection.
+    Emits `clicked` on mouse click, `double_clicked` on double click,
+    and `context_menu_requested` on right click.
     """
     clicked = Signal()
+    double_clicked = Signal()
+    context_menu_requested = Signal(object)
 
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
         self._pixmap: Optional[QPixmap] = None
         self._online: Optional[bool] = None
+        self._recording: bool = False
+        self._caption_base_text: str = ""
         self._label = QLabel("no signal", self)
         self._label.setAlignment(Qt.AlignCenter)
         self._label.setStyleSheet(
             f"background-color: {PLACEHOLDER_BG.name()};"
             f"color: {PLACEHOLDER_FG.name()};"
-            "border: 1px solid #444;"
+            "border: 1px solid #444; border-radius: 4px;"
         )
         self._label.setMinimumSize(QSize(320, 180))
         self._label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
@@ -113,7 +99,7 @@ class PreviewWidget(QWidget):
         self._caption.setStyleSheet("color: #ddd;")
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(2)
+        layout.setSpacing(4)
         layout.addWidget(self._label, 1)
         layout.addWidget(self._caption)
         self.setMinimumWidth(320)
@@ -132,10 +118,20 @@ class PreviewWidget(QWidget):
         poll_ms = max(200, int(_SETTINGS.get("preview_poll_ms", 1500)))
         self._timer.setInterval(poll_ms)
         self._timer.timeout.connect(self._poll_frame)
-        self._label.mousePressEvent = self._on_press  # type: ignore[assignment]
 
-    def _on_press(self, _event) -> None:
-        self.clicked.emit()
+        self._label.mousePressEvent = self._on_label_press  # type: ignore[assignment]
+        self._label.mouseDoubleClickEvent = self._on_label_double_click  # type: ignore[assignment]
+
+    def _on_label_press(self, event) -> None:
+        if event.button() == Qt.LeftButton:
+            self.clicked.emit()
+        elif event.button() == Qt.RightButton:
+            pos = event.globalPosition().toPoint() if hasattr(event, "globalPosition") else event.globalPos()
+            self.context_menu_requested.emit(pos)
+
+    def _on_label_double_click(self, event) -> None:
+        if event.button() == Qt.LeftButton:
+            self.double_clicked.emit()
 
     # --- public API ---------------------------------------------------------
     def start(self, url: str, user: str, password: str, caption: str = "") -> None:
@@ -143,7 +139,8 @@ class PreviewWidget(QWidget):
         self._current_url = url
         self._current_user = user
         self._current_password = password
-        self._caption.setText(caption or url)
+        self._caption_base_text = caption or url
+        self._caption.setText(self._caption_base_text)
         self._online = None
         self._reconnect_count = 0
         if not _have_ffmpeg():
@@ -218,6 +215,11 @@ class PreviewWidget(QWidget):
             self._timer.start()
             self._poll_frame()
 
+    def set_recording(self, recording: bool) -> None:
+        """Update whether this camera is actively recording."""
+        self._recording = recording
+        self._update_caption_style()
+
     def set_online_status(self, online: bool) -> None:
         """Update the online/offline indicator dot."""
         self._online = online
@@ -276,9 +278,13 @@ class PreviewWidget(QWidget):
         painter.end()
 
     def _update_caption_style(self) -> None:
-        if self._online is True:
+        rec_tag = "  🔴 REC" if self._recording else ""
+        self._caption.setText(f"{self._caption_base_text}{rec_tag}")
+        if self._recording:
+            self._caption.setStyleSheet("color: #ff5252; font-weight: bold;")
+        elif self._online is True:
             color = _ONLINE_FG.name()
-            self._caption.setStyleSheet(f"color: {color};")
+            self._caption.setStyleSheet(f"color: {color}; font-weight: 500;")
         elif self._online is False:
             color = _OFFLINE_FG.name()
             self._caption.setStyleSheet(f"color: {color};")

@@ -20,6 +20,8 @@ if [[ $EUID -ne 0 ]]; then
 fi
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+install -d /etc/tvpc
+printf '%s\n' "$REPO_ROOT" >/etc/tvpc/repo.path
 
 # ---------------------------------------------------------------------------
 # 1. Configuration
@@ -206,10 +208,12 @@ install -m 0755 "$REPO_ROOT/scripts/tvpc-update.sh"        /usr/local/bin/tvpc-u
 # Bigscreen is archive-native; Hyprland pulls from a PPA.
 install -m 0755 "$REPO_ROOT/scripts/tvpc-bigscreen.sh"     /usr/local/bin/tvpc-bigscreen
 install -m 0755 "$REPO_ROOT/scripts/tvpc-bigscreen-topbar.sh" /usr/local/bin/tvpc-bigscreen-topbar
+install -m 0755 "$REPO_ROOT/scripts/tvpc-bigscreen-theme.sh"  /usr/local/bin/tvpc-bigscreen-theme
 install -m 0755 "$REPO_ROOT/scripts/tvpc-hyprland.sh"      /usr/local/bin/tvpc-hyprland
 install -m 0755 "$REPO_ROOT/scripts/tvpc-tweaks.sh"        /usr/local/bin/tvpc-tweaks
 install -m 0755 "$REPO_ROOT/scripts/tvpc-controller.sh"    /usr/local/bin/tvpc-controller
-install -m 0755 "$REPO_ROOT/scripts/tvpc-status.sh"       /usr/local/bin/tvpc-status
+install -m 0755 "$REPO_ROOT/scripts/enhance-cec.sh"        /usr/local/bin/tvpc-cec-setup
+install -m 0755 "$REPO_ROOT/scripts/tvpc-status.sh"        /usr/local/bin/tvpc-status
 install -m 0755 "$REPO_ROOT/scripts/tvpc-cameras.sh"      /usr/local/bin/tvpc-cameras
 install -m 0755 "$REPO_ROOT/scripts/tvpc-cameras-gui.sh"  /usr/local/bin/tvpc-cameras-gui
 # The Python GUI package: install the source where `python3 -m
@@ -222,19 +226,8 @@ if [[ -d "$REPO_ROOT/tvpc_cameras_gui" ]]; then
 fi
 install -m 0755 "$REPO_ROOT/scripts/tvpc-power.sh"          /usr/local/bin/tvpc-power
 install -m 0755 "$REPO_ROOT/scripts/tvpc-allapps.sh"         /usr/local/bin/tvpc-allapps
-# The All Apps launcher: every installed app in one browseable list (used when the
-# home screen is curated down to a single tile).
-cat >/usr/share/applications/tvpc-allapps.desktop <<'EOF'
-[Desktop Entry]
-Type=Application
-Name=All Apps
-Comment=Browse every installed application
-Exec=/usr/local/bin/tvpc-allapps
-Terminal=false
-Icon=view-grid
-Categories=Settings;
-Keywords=tvpc;apps;
-EOF
+install -m 0755 "$REPO_ROOT/scripts/tvpc-setup-gui.sh"       /usr/local/bin/tvpc-setup-gui
+install -m 0755 "$REPO_ROOT/scripts/tvpc-update-gui.sh"      /usr/local/bin/tvpc-update-gui
 # The Power tile for the home screen: restart / shut down / log out.
 cat >/usr/share/applications/tvpc-power.desktop <<'EOF'
 [Desktop Entry]
@@ -247,33 +240,42 @@ Icon=system-shutdown
 Categories=Settings;
 Keywords=tvpc;power;
 EOF
-# The Tweaks app launcher (UI scaling, home-screen apps, etc.) — appears on the
-# home screen / launcher so it can be opened with the remote.
-mkdir -p /usr/share/applications
-cat >/usr/share/applications/tvpc-tweaks.desktop <<'EOF'
+# The Setup tile: gamepad / CEC / Anynet+ / TV power-on configuration.
+cat >/usr/share/applications/tvpc-setup.desktop <<'EOF'
 [Desktop Entry]
 Type=Application
-Name=TV Tweaks
-GenericName=tvpc adjustments
-Comment=UI scaling, home-screen apps, and other tvpc tweaks
-Exec=/usr/local/bin/tvpc-tweaks
-Terminal=true
-Icon=preferences-system
-Categories=Settings;
-Keywords=tvpc;tweaks;scaling;home screen;
-EOF
-# The Cameras GUI: discover, configure, and PiP IP security cameras.
-cat >/usr/share/applications/tvpc-cameras-gui.desktop <<'EOF'
-[Desktop Entry]
-Type=Application
-Name=Cameras
-GenericName=tvpc IP cameras
-Comment=Discover, configure, and view IP security cameras as picture-in-picture
-Exec=/usr/local/bin/tvpc-cameras-gui
+Name=Setup
+Comment=Gamepad, HDMI-CEC, Anynet+, and TV power-on
+Exec=/usr/local/bin/tvpc-setup-gui
 Terminal=false
-Icon=security-camera
-Categories=Settings;AudioVideo;
-Keywords=tvpc;camera;rtsp;onvif;pip;security;
+Icon=preferences-system-network
+Categories=Settings;
+Keywords=tvpc;setup;gamepad;cec;anynet;bluetooth;
+EOF
+# The Update tile: apply repo / apt / flatpak updates with confirmation.
+cat >/usr/share/applications/tvpc-update.desktop <<'EOF'
+[Desktop Entry]
+Type=Application
+Name=Update
+Comment=Apply tvpc updates (repo, packages, flatpaks)
+Exec=/usr/local/bin/tvpc-update-gui
+Terminal=false
+Icon=software-update-available
+Categories=Settings;
+Keywords=tvpc;update;upgrade;apt;flatpak;
+EOF
+# The All Apps launcher: every installed app in one browseable list (used when the
+# home screen is curated down to a single tile).
+cat >/usr/share/applications/tvpc-allapps.desktop <<'EOF'
+[Desktop Entry]
+Type=Application
+Name=All Apps
+Comment=Browse every installed application
+Exec=/usr/local/bin/tvpc-allapps
+Terminal=false
+Icon=view-grid
+Categories=Settings;
+Keywords=tvpc;apps;
 EOF
 
 # ---------------------------------------------------------------------------

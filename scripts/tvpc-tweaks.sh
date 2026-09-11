@@ -9,8 +9,10 @@ set -o pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DEFAULTS=/etc/default/tvpc
 TVPC_USER="${TVPC_USER:-${HTPC_USER:-htpc}}"
-CEC_MAP=/etc/tvpc/cec-map.conf
+CEC_MAP="${TVPC_CEC_MAP:-/etc/tvpc/cec-map.conf}"
 CEC_MACROS=/etc/tvpc/cec-macros.conf
+CEC_CODES=(00 01 02 03 04 09 0d 41 42 43 44 45 46 47 48)
+CEC_NAMES=(OK Up Down Left Right "Home/Root" Exit Vol+ Vol- Mute Play Pause Stop Next)
 EQ_CONF=/etc/pipewire/pipewire.conf.d/99-tvpc-eq.conf
 EQ_PRESETS=(flat warm balanced bright punchy)
 EQ_BANDS_DEFAULT=(0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0)
@@ -190,12 +192,10 @@ apply_mode_live() {
 
 do_scale() {
     local factor="$1"
-    case "$factor" in
-        ''|.*.*\.*) 
-            echo "scale must be a number like 1.5 (got '$factor')" >&2
-            return 1
-            ;;
-    esac
+    if [[ -z $factor || ! $factor =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
+        echo "scale must be a number like 1.5 (got '$factor')" >&2
+        return 1
+    fi
     apply_scale_live "$factor"
     if set_default TVPC_SCALE "$factor"; then
         echo "UI scale -> $factor (live now; persisted in $DEFAULTS)"
@@ -239,8 +239,20 @@ do_theme() {
             kde_set "General" "widgetStyle" "Breeze"
             echo "Theme -> light (log out and back in to apply)"
             ;;
+        midnight|oled|cyberpunk|sunset|emerald)
+            local script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+            local tt=""
+            for cand in "$script_dir/tvpc-bigscreen-theme.sh" /usr/local/bin/tvpc-bigscreen-theme; do
+                [[ -x $cand ]] && { tt="$cand"; break; }
+            done
+            if [[ -n $tt ]]; then
+                "$tt" set "$t"
+            else
+                echo "Theme -> $t (tvpc-bigscreen-theme not found)"
+            fi
+            ;;
         *)
-            echo "usage: tvpc-tweaks theme dark|light" >&2
+            echo "usage: tvpc-tweaks theme dark|light|midnight|oled|cyberpunk|sunset|emerald" >&2
             return 1
             ;;
     esac
@@ -316,22 +328,36 @@ ensure_wallpaper() {
     mkdir -p "$(dirname "$dest")"
     python3 - "$dest" <<'PY'
 import sys, struct, zlib
-def png(path, rgb):
-    w = h = 64
+
+def png(path, top_rgb, bot_rgb, w=1920, h=1080):
+    """Write a solid-color PNG. A 64px image stretched across an 80" TV
+    is a single visible pixel; this is big enough to look right at any
+    resolution the compositor picks."""
     raw = bytearray()
-    for _ in range(h):
-        raw.append(0)
+    for y in range(h):
+        raw.append(0)  # filter byte
+        # Subtle vertical gradient: slightly lighter at the centre.
+        t = y / (h - 1)
+        # Ease the gradient so the bottom stays near-black.
+        eased = t * t
+        r = int(top_rgb[0] + (bot_rgb[0] - top_rgb[0]) * eased)
+        g = int(top_rgb[1] + (bot_rgb[1] - top_rgb[1]) * eased)
+        b = int(top_rgb[2] + (bot_rgb[2] - top_rgb[2]) * eased)
         for _ in range(w):
-            raw += bytes(rgb)
+            raw += bytes((r, g, b))
+
     def chunk(typ, data):
         c = typ + data
         return struct.pack(">I", len(data)) + c + struct.pack(">I", zlib.crc32(c) & 0xffffffff)
+
     sig = b"\x89PNG\r\n\x1a\n"
     ihdr = struct.pack(">IIBBBBB", w, h, 8, 2, 0, 0, 0)
     idat = zlib.compress(bytes(raw))
     with open(path, "wb") as f:
         f.write(sig + chunk(b"IHDR", ihdr) + chunk(b"IDAT", idat) + chunk(b"IEND", b""))
-png(sys.argv[1], (16, 19, 26))
+
+# Dark slate with a barely-visible vertical gradient.
+png(sys.argv[1], (22, 26, 33), (10, 12, 16))
 PY
     return 0
 }
@@ -494,8 +520,7 @@ Commands:
   cec              Edit CEC key mappings (needs root)
   install-launcher Install home-screen launcher
   vacuum-only      Home: only VacuumTube + All Apps
-  home-preset      Full curated home (dark theme + hero + Power + curated tiles)
-  home-tv         Home: VacuumTube + Settings + an Add Apps button
+  home-preset      Full home (dark theme + VacuumTube hero + Power + Setup + Update + All Apps)
   addapps          Pick apps to add back to the home screen
   --help, -h       Show this help
 
@@ -505,73 +530,34 @@ EOF
 
 vacuum_only() {
     echo "Setting vacuum-only home (only VacuumTube + All Apps visible)..."
-    hide_app "vacuumtube" 2>/dev/null || true
-    local hidden; hidden="$(read_blacklist)"
-    local to_show
-    to_show=$(echo "$hidden" | tr ',' '\n' | grep -v '^vacuumtube$' | grep -v '^$' | paste -sd, -)
-    if [[ -n $to_show ]]; then
-        for id in $(echo "$to_show" | tr ',' ' '); do
-            [[ $id != "vacuumtube" ]] && show_app "$id" 2>/dev/null || true
-        done
-    fi
-    echo "Home screen now shows only VacuumTube and All Apps launcher."
+    # Make sure VacuumTube and All Apps are shown, everything else hidden.
+    show_app "vacuumtube" 2>/dev/null || true
+    show_app "tvpc-allapps" 2>/dev/null || true
+    while IFS=$'\t' read -r id name; do
+        [[ $id == "vacuumtube" || $id == "tvpc-allapps" ]] && continue
+        hide_app "$id" 2>/dev/null || true
+    done < <(list_apps)
+    install_home_tiles
+    install_addapps_tile
+    echo "Home vacuum-only: VacuumTube + All Apps."
 }
 
 home_preset() {
-    echo "Applying full home-screen preset (dark theme + curated apps + Power tile)..."
+    echo "Applying full home-screen preset (dark theme + VacuumTube hero + Power + Setup + Update + All Apps)..."
     do_theme "dark"
-    local curated="vacuumtube,systemsettings,firefox,org.kde.plasma-browser-integration"
-    hide_app "systemsettings" 2>/dev/null || true
-    local black
-    black="$(echo "$curated" | tr ',' '\n' | sort -u)"
-    for id in $black; do
+    # Curate: hide everything, then explicitly show the home tiles.
+    local id
+    while IFS=$'\t' read -r id name; do
         hide_app "$id" 2>/dev/null || true
-    done
-    if is_root; then
-        local launcher_d="/usr/share/applications"
-        local app_dir="$(autostart_dir)"
-        if [[ -d "$app_dir" ]]; then
-            local allapps_src="$REPO_ROOT/scripts/tvpc-allapps.sh"
-            if [[ -f $allapps_src ]]; then
-                cat >"$launcher_d/tvpc-allapps.desktop" <<'EOF'
-[Desktop Entry]
-Type=Application
-Name=All Apps
-Comment=Browse every installed application
-Exec=/usr/local/bin/tvpc-allapps
-Terminal=false
-Icon=view-grid
-Categories=Settings;
-Keywords=tvpc;apps;
-EOF
-            fi
-        fi
-        local power_d="/usr/share/applications"
-        cat >"$power_d/tvpc-power.desktop" <<'EOF'
-[Desktop Entry]
-Type=Application
-Name=Power
-Comment=Restart, shut down, or log out
-Exec=/usr/local/bin/tvpc-power
-Terminal=false
-Icon=system-shutdown
-Categories=Settings;
-Keywords=tvpc;power;
-EOF
-        cat >"$power_d/tvpc-tweaks.desktop" <<'EOF'
-[Desktop Entry]
-Type=Application
-Name=TV Tweaks
-GenericName=tvpc adjustments
-Comment=UI scaling, home-screen apps, and other tvpc tweaks
-Exec=/usr/local/bin/tvpc-tweaks
-Terminal=true
-Icon=preferences-system
-Categories=Settings;
-Keywords=tvpc;tweaks;scaling;home screen;
-EOF
-        echo "Launcher installed."
-    fi
+    done < <(list_apps)
+    # Home screen tiles: VacuumTube (hero), Power, Setup, Update, All Apps.
+    show_app "vacuumtube" 2>/dev/null || true
+    show_app "tvpc-power" 2>/dev/null || true
+    show_app "tvpc-setup" 2>/dev/null || true
+    show_app "tvpc-update" 2>/dev/null || true
+    show_app "tvpc-allapps" 2>/dev/null || true
+    install_home_tiles
+    install_addapps_tile
     apply_wallpaper
     echo "Home preset applied. Log out and back in to see changes."
 }
@@ -603,6 +589,60 @@ EOF
     fi
 }
 
+# Install the home-screen tile launchers (Power + Setup + Update + All Apps).
+# Called by home_preset, curate_home, and vacuum_only so the tiles
+# exist regardless of which curation mode the user picks.
+install_home_tiles() {
+    if ! is_root; then return 0; fi
+    local d="/usr/share/applications"
+    mkdir -p "$d"
+    cat >"$d/tvpc-power.desktop" <<'EOF'
+[Desktop Entry]
+Type=Application
+Name=Power
+Comment=Restart, shut down, or log out
+Exec=/usr/local/bin/tvpc-power
+Terminal=false
+Icon=system-shutdown
+Categories=Settings;
+Keywords=tvpc;power;
+EOF
+    cat >"$d/tvpc-setup.desktop" <<'EOF'
+[Desktop Entry]
+Type=Application
+Name=Setup
+Comment=Gamepad, HDMI-CEC, Anynet+, and TV power-on
+Exec=/usr/local/bin/tvpc-setup-gui
+Terminal=false
+Icon=preferences-system-network
+Categories=Settings;
+Keywords=tvpc;setup;gamepad;cec;anynet;bluetooth;
+EOF
+    cat >"$d/tvpc-update.desktop" <<'EOF'
+[Desktop Entry]
+Type=Application
+Name=Update
+Comment=Apply tvpc updates (repo, packages, flatpaks)
+Exec=/usr/local/bin/tvpc-update-gui
+Terminal=false
+Icon=software-update-available
+Categories=Settings;
+Keywords=tvpc;update;upgrade;apt;flatpak;
+EOF
+    cat >"$d/tvpc-allapps.desktop" <<'EOF'
+[Desktop Entry]
+Type=Application
+Name=All Apps
+Comment=Browse every installed application
+Exec=/usr/local/bin/tvpc-allapps
+Terminal=false
+Icon=view-grid
+Categories=Settings;
+Keywords=tvpc;apps;
+EOF
+    echo "Home tiles installed (Power + Setup + Update + All Apps)."
+}
+
 # Install the "Add Apps" tile that opens a picker to un-hide apps on the home.
 install_addapps_tile() {
     if ! is_root; then return 0; fi
@@ -621,9 +661,9 @@ EOF
     chown "$TVPC_USER:$TVPC_USER" /usr/share/applications/tvpc-addapps.desktop 2>/dev/null || true
 }
 
-# Home: only VacuumTube + Settings (+ an Add Apps button to bring back others).
+# Home: VacuumTube + Power + Setup + Update + All Apps. Everything else hidden.
 curate_home() {
-    local keep="vacuumtube systemsettings"
+    local keep="vacuumtube tvpc-power tvpc-setup tvpc-update tvpc-allapps"
     local id
     while IFS=$'\t' read -r id name; do
         local keepit=0
@@ -636,8 +676,9 @@ curate_home() {
     for k in $keep; do
         show_app "$k" 2>/dev/null || true
     done
+    install_home_tiles
     install_addapps_tile
-    echo "Home curated: VacuumTube + Settings + Add Apps."
+    echo "Home curated: VacuumTube + Power + Setup + Update + All Apps."
     echo "Run 'tvpc-tweaks addapps' (or the Add Apps tile) to put others back."
     reload_shell
 }
@@ -726,7 +767,7 @@ cmd_density() {
     case "$level" in
         comfortable|normal|compact) ;;
         *)
-            echo "usage: tvpc-tweaks density comfortable|normal/compact"
+            echo "usage: tvpc-tweaks density comfortable|normal|compact"
             return 1
             ;;
     esac
@@ -957,11 +998,79 @@ CECEOF
     fi
 }
 
+cec_apps() {
+    local id name
+    while IFS=$'\t' read -r id name; do
+        [[ -n $id ]] && printf '%s\t%s\n' "$id" "$name"
+    done < <(list_apps)
+}
+
+cec_action_for() {
+    local code="$1" line
+    [[ -f $CEC_MAP ]] || { echo "none"; return 0; }
+    line="$(grep -E "^${code} " "$CEC_MAP" 2>/dev/null | head -1 || true)"
+    if [[ -n $line ]]; then
+        printf '%s\n' "${line#* }"
+    else
+        echo "none"
+    fi
+}
+
+cec_list() {
+    local i
+    for ((i=0; i<${#CEC_CODES[@]}; i++)); do
+        printf '%s\t%s\t%s\n' "${CEC_CODES[$i]}" "${CEC_NAMES[$i]}" "$(cec_action_for "${CEC_CODES[$i]}")"
+    done
+}
+
+cec_get() {
+    local code="${1:-}"
+    case "$code" in
+        [0-9a-fA-F][0-9a-fA-F]) ;;
+        *) echo "usage: tvpc-tweaks cec-get CODE" >&2; return 1 ;;
+    esac
+    cec_action_for "$code"
+}
+
+cec_set() {
+    local code="${1:-}" action="${2:-}" value
+    need_root "cec-set" || return 1
+    case "$code" in
+        [0-9a-fA-F][0-9a-fA-F]) ;;
+        *) echo "CEC key code must be two hexadecimal digits" >&2; return 1 ;;
+    esac
+    case "$action" in
+        none) ;;
+        key:*)
+            value="${action#key:}"
+            [[ $value =~ ^[0-9]+$ ]] || { echo "key actions need a numeric Linux keycode" >&2; return 1; }
+            ;;
+        mpris:play-pause|mpris:stop|mpris:next|mpris:previous) ;;
+        pactl:+2%|pactl:-2%|pactl:toggle) ;;
+        app:*)
+            value="${action#app:}"
+            [[ -n $value && $value != *[[:space:]]* && $value != *$'\n'* && $value != *$'\r'* ]] || {
+                echo "app actions need one desktop application id" >&2
+                return 1
+            }
+            ;;
+        cmd:*)
+            value="${action#cmd:}"
+            [[ -n $value && $value != *$'\n'* && $value != *$'\r'* ]] || {
+                echo "command actions need a non-empty single-line command" >&2
+                return 1
+            }
+            ;;
+        *) echo "unsupported CEC action: $action" >&2; return 1 ;;
+    esac
+    write_cec_map "$code" "$action"
+    systemctl restart tvpc-cec-remote 2>/dev/null || true
+    echo "CEC key 0x$code -> $action"
+}
+
 tui_cec() {
     need_root "cec" || return 1
     install_cec
-    local codes=(00 01 02 03 04 09 0d 41 42 43 44 45 46 47 48)
-    local names=(OK Up Down Left Right "Home/Root" Exit Vol+ Vol- Mute Play Pause Stop Next)
     mkdir -p "$(dirname "$CEC_MAP")"
     if [[ ! -f $CEC_MAP ]]; then
         cat >"$CEC_MAP" <<'EOF'
@@ -983,12 +1092,10 @@ EOF
     fi
     while true; do
         menu_reset
-        local i
-        for ((i=0; i<${#codes[@]}; i++)); do
-            local act
-            act=$(grep "^${codes[$i]} " "$CEC_MAP" 2>/dev/null | awk '{print $2}' | head -1)
-            [[ -z "$act" ]] && act="none"
-            menu_add "${codes[$i]}" "${names[$i]} -> $act"
+        local i act
+        for ((i=0; i<${#CEC_CODES[@]}; i++)); do
+            act="$(cec_action_for "${CEC_CODES[$i]}")"
+            menu_add "${CEC_CODES[$i]}" "${CEC_NAMES[$i]} -> $act"
         done
         menu_add back "Back"
         select_list "CEC remote keys"
@@ -1092,7 +1199,7 @@ write_cec_map() {
 }
 
 add_network_tiles() {
-    local tile_dir="$HOME/.local/share/applications"
+    local tile_dir; tile_dir="$(target_home)/.local/share/applications"
     mkdir -p "$tile_dir"
     cat >"$tile_dir/tvpc-wifi.desktop" <<'EOF'
 [Desktop Entry]
@@ -1320,10 +1427,15 @@ tui_theme() {
     menu_reset
     menu_add dark "Dark (Breeze Dark)"
     menu_add light "Light (Breeze)"
+    menu_add midnight "Bigscreen: Midnight Glass (Default)"
+    menu_add oled "Bigscreen: OLED Stealth"
+    menu_add cyberpunk "Bigscreen: Cyberpunk Neon"
+    menu_add sunset "Bigscreen: Sunset Amber"
+    menu_add emerald "Bigscreen: Emerald Pine"
     menu_add back "Back"
     select_list "Theme"
     case "$result" in
-        dark|light)
+        dark|light|midnight|oled|cyberpunk|sunset|emerald)
             do_theme "$result"
             ;;
     esac
@@ -1614,6 +1726,20 @@ case "${1:-}" in
         need_root "cec" || exit 1
         tui_cec
         ;;
+    cec-list)
+        cec_list
+        ;;
+    cec-apps)
+        cec_apps
+        ;;
+    cec-get)
+        shift
+        cec_get "${1:-}"
+        ;;
+    cec-set)
+        shift
+        cec_set "$@"
+        ;;
     install-launcher)
         install_launcher
         ;;
@@ -1622,9 +1748,6 @@ case "${1:-}" in
         ;;
     home)
         home_preset
-        ;;
-    home-tv)
-        curate_home
         ;;
     addapps)
         cmd_addapps
@@ -1637,10 +1760,6 @@ case "${1:-}" in
         ;;
     audio)
         cmd_audio "$@"
-        ;;
-    splash)
-        shift
-        cmd_splash "${1:-}"
         ;;
     --help|-h|help)
         usage

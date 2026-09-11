@@ -13,9 +13,26 @@
 #   tvpc-update  is the machine where the repo says?    (converges, needs repo)
 set -uo pipefail
 
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." 2>/dev/null && pwd)"
-HAVE_REPO=0
-[[ -f "$REPO_ROOT/install.sh" && -d "$REPO_ROOT/overlays" ]] && HAVE_REPO=1
+resolve_repo_root() {
+  local candidate source_path
+  if [[ -n ${TVPC_REPO_ROOT:-} ]]; then
+    candidate="$TVPC_REPO_ROOT"
+  elif [[ -r /etc/tvpc/repo.path ]]; then
+    IFS= read -r candidate < /etc/tvpc/repo.path
+  else
+    source_path="$(readlink -f "${BASH_SOURCE[0]}" 2>/dev/null || printf '%s' "${BASH_SOURCE[0]}")"
+    candidate="$(cd "$(dirname "$source_path")/.." 2>/dev/null && pwd || true)"
+  fi
+
+  REPO_ROOT=""
+  HAVE_REPO=0
+  if [[ -n $candidate && -f "$candidate/install.sh" && -d "$candidate/overlays" ]]; then
+    REPO_ROOT="$candidate"
+    HAVE_REPO=1
+  fi
+}
+
+resolve_repo_root
 
 MODE=converge
 DO_PACKAGES=1
@@ -138,11 +155,18 @@ HELPERS=(
   "scripts/tvpc-cameras.sh:/usr/local/bin/tvpc-cameras"
   "scripts/tvpc-cameras-gui.sh:/usr/local/bin/tvpc-cameras-gui"
   "scripts/tvpc-bigscreen-topbar.sh:/usr/local/bin/tvpc-bigscreen-topbar"
+  "scripts/tvpc-bigscreen-theme.sh:/usr/local/bin/tvpc-bigscreen-theme"
   "scripts/tvpc-hdmi-audio.sh:/usr/local/bin/tvpc-hdmi-audio"
   "scripts/tvpc-doctor.sh:/usr/local/bin/tvpc-doctor"
   "scripts/tvpc-repair.sh:/usr/local/bin/tvpc-repair"
   "scripts/tvpc-session.sh:/usr/local/bin/tvpc-session"
   "scripts/tvpc-update.sh:/usr/local/bin/tvpc-update"
+  "scripts/enhance-cec.sh:/usr/local/bin/tvpc-cec-setup"
+  "scripts/tvpc-tweaks.sh:/usr/local/bin/tvpc-tweaks"
+  "scripts/tvpc-power.sh:/usr/local/bin/tvpc-power"
+  "scripts/tvpc-allapps.sh:/usr/local/bin/tvpc-allapps"
+  "scripts/tvpc-setup-gui.sh:/usr/local/bin/tvpc-setup-gui"
+  "scripts/tvpc-update-gui.sh:/usr/local/bin/tvpc-update-gui"
   "scripts/tvpc-hyprland.sh:/usr/local/bin/tvpc-hyprland"
   "scripts/tvpc-bigscreen.sh:/usr/local/bin/tvpc-bigscreen"
 )

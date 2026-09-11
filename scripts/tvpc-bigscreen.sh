@@ -19,6 +19,7 @@
 #
 # Tuning the shell once it is running:
 #   sudo ./scripts/tvpc-bigscreen.sh --ui-scale 10       shrink/grow the whole UI
+#   sudo ./scripts/tvpc-bigscreen.sh --theme midnight    set modern homescreen theme (midnight, oled, cyberpunk, sunset, emerald)
 #   sudo ./scripts/tvpc-bigscreen.sh --list-apps         apps the home screen shows
 #   sudo ./scripts/tvpc-bigscreen.sh --hide firefox,vlc  drop apps from the home screen
 #   sudo ./scripts/tvpc-bigscreen.sh --show firefox      put one back
@@ -37,6 +38,7 @@ case "${1:-}" in
   --remove)    MODE=remove ;;
   --list-apps) MODE=listapps ;;
   --ui-scale)  MODE=uiscale ;;
+  --theme)     MODE=theme ;;
   --hide)      MODE=hide ;;
   --show)      MODE=show ;;
   "")          ;;
@@ -210,6 +212,23 @@ if [[ $MODE == uiscale ]]; then
   exit 0
 fi
 
+if [[ $MODE == theme ]]; then
+  SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  THEME_TOOL=""
+  for cand in "$SCRIPT_DIR/tvpc-bigscreen-theme.sh" /usr/local/bin/tvpc-bigscreen-theme; do
+    [[ -x $cand ]] && { THEME_TOOL="$cand"; break; }
+  done
+  if [[ -z $THEME_TOOL ]]; then
+    echo "tvpc-bigscreen-theme tool not found" >&2; exit 1
+  fi
+  if [[ -n $ARG ]]; then
+    "$THEME_TOOL" set "$ARG"
+  else
+    "$THEME_TOOL" list
+  fi
+  exit 0
+fi
+
 # ---------------------------------------------------------------------------
 # --check
 # ---------------------------------------------------------------------------
@@ -335,6 +354,17 @@ if [[ $MISSING -eq 1 ]]; then
   echo "!! plasma-bigscreen installed but its session files are not where" >&2
   echo "   expected. Not switching anything." >&2
   exit 1
+fi
+
+echo "== Applying modern Bigscreen homescreen and theme =="
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+THEME_TOOL=""
+for cand in "$SCRIPT_DIR/tvpc-bigscreen-theme.sh" /usr/local/bin/tvpc-bigscreen-theme; do
+  [[ -x $cand ]] && { THEME_TOOL="$cand"; break; }
+done
+if [[ -n $THEME_TOOL ]]; then
+  "$THEME_TOOL" install || echo "!! could not install modern homescreen overlay"
+  "$THEME_TOOL" set "${TVPC_BIGSCREEN_THEME:-midnight}" || true
 fi
 
 # Bigscreen needs the same "never blank the TV" treatment as Plasma. That
