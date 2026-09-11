@@ -103,6 +103,14 @@ class ScanWorker(QObject):
                 results.append(cam)
                 self.found.emit(cam)
 
+            # Check local video devices (USB webcams / capture cards)
+            self.progress.emit("Checking local video devices (USB webcams / capture cards)...")
+            try:
+                for local_cam in disc.discover_local_devices():
+                    _emit(local_cam)
+            except Exception:
+                pass
+
             if self.quick:
                 self._quick_scan(nets, _emit)
             else:

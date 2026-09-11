@@ -27,6 +27,11 @@ from .notifications import send as notify, send_camera_online, send_camera_offli
 from .health import start_health_monitor
 from .settings import SettingsDialog, load_settings, save_settings
 from .brand_help import show_brand_help
+from .hotplug import HotplugMonitor
+from .motion import MotionDetector
+from .storage import StorageManager
+from .ptz import PtzDialog
+from .v4l2 import is_v4l2, normalize_v4l2_device
 
 
 class EmptyStateWidget(QWidget):
@@ -100,6 +105,7 @@ class MainWindow(QMainWindow):
         self._default_pass = default_pass
         self._pip = PipManager()
         self._recording = RecordingManager()
+        self._storage = StorageManager()
         self._previews: List[PreviewWidget] = []
         self._selected_index: int = -1
         self._current_layout = cfg.load_layout()
@@ -109,12 +115,36 @@ class MainWindow(QMainWindow):
         self._last_scan_results: List[DiscoveredCamera] = []
         self._settings = load_settings()
 
+        # Motion detector
+        self._motion = MotionDetector(
+            sensitivity=float(self._settings.get("motion_sensitivity", 0.12)),
+            auto_snapshot=bool(self._settings.get("motion_auto_snapshot", True)),
+        )
+        self._motion.motion_detected.connect(self._on_motion_detected)
+
+        # Hotplug & background discovery monitor
+        self._pending_discovered: Optional[DiscoveredCamera] = None
+        self._hotplug = HotplugMonitor(
+            self,
+            enable_network_watch=bool(self._settings.get("background_discovery", True)),
+        )
+        self._hotplug.v4l2_plugged.connect(self._on_v4l2_plugged)
+        self._hotplug.v4l2_unplugged.connect(self._on_v4l2_unplugged)
+        self._hotplug.camera_discovered.connect(self._on_network_camera_discovered)
+        self._hotplug.start()
+
+        # Patrol carousel timer for TV / HTPC monitoring
+        self._patrol_active = False
+        self._patrol_timer = QTimer(self)
+        self._patrol_timer.timeout.connect(self._on_patrol_tick)
+
         self._build_toolbar()
         self._build_central()
         self.setStatusBar(QStatusBar(self))
         self._set_status_ready()
 
-        # Periodically reap dead mpv processes so the count stays accurate.
+        # Periodically reap dead mpv processes and manage storage quotas
+        self._reap_counter = 0
         self._reap_timer = QTimer(self)
         self._reap_timer.setInterval(500)
         self._reap_timer.timeout.connect(self._on_reap)
@@ -162,6 +192,18 @@ class MainWindow(QMainWindow):
         act_fullscreen.setShortcut("F")
         act_fullscreen.triggered.connect(self._action_fullscreen)
         tb.addAction(act_fullscreen)
+
+        act_ptz = QAction("🎮  PTZ", self)
+        act_ptz.setShortcut("T")
+        act_ptz.setToolTip("Pan-Tilt-Zoom directional controls")
+        act_ptz.triggered.connect(self._action_ptz)
+        tb.addAction(act_ptz)
+
+        act_patrol = QAction("🔄  Patrol", self)
+        act_patrol.setShortcut("Shift+P")
+        act_patrol.setToolTip("Toggle automatic surveillance carousel (cycles cameras for TV view)")
+        act_patrol.triggered.connect(self._action_toggle_patrol)
+        tb.addAction(act_patrol)
 
         act_grid = QAction("▦  Grid", self)
         act_grid.setShortcut("G")
@@ -220,12 +262,43 @@ class MainWindow(QMainWindow):
 
     def _build_central(self) -> None:
         central = QWidget(self)
-        outer = QHBoxLayout(central)
-        outer.setContentsMargins(8, 8, 8, 8)
+        main_vbox = QVBoxLayout(central)
+        main_vbox.setContentsMargins(8, 8, 8, 8)
+        main_vbox.setSpacing(6)
+
+        # Hotplug banner for newly detected cameras
+        self._banner = QFrame(central)
+        self._banner.setStyleSheet(
+            "background: #1b3a57; border: 1px solid #2a6ebb; border-radius: 6px; padding: 4px 10px;"
+        )
+        banner_layout = QHBoxLayout(self._banner)
+        banner_layout.setContentsMargins(4, 4, 4, 4)
+        self._banner_icon = QLabel("✨", self._banner)
+        self._banner_text = QLabel("", self._banner)
+        self._banner_text.setStyleSheet("color: white; font-weight: bold;")
+        self._banner_add_btn = QPushButton("➕ Add Camera", self._banner)
+        self._banner_add_btn.setStyleSheet(
+            "background: #2a6ebb; color: white; padding: 4px 12px; font-weight: bold; border-radius: 4px;"
+        )
+        self._banner_add_btn.clicked.connect(self._on_banner_add_clicked)
+        self._banner_dismiss_btn = QPushButton("✕", self._banner)
+        self._banner_dismiss_btn.setFixedWidth(28)
+        self._banner_dismiss_btn.clicked.connect(lambda: self._banner.setVisible(False))
+        banner_layout.addWidget(self._banner_icon)
+        banner_layout.addWidget(self._banner_text, 1)
+        banner_layout.addWidget(self._banner_add_btn)
+        banner_layout.addWidget(self._banner_dismiss_btn)
+        self._banner.setVisible(False)
+        main_vbox.addWidget(self._banner)
+
+        content_row = QWidget(central)
+        outer = QHBoxLayout(content_row)
+        outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(8)
+        main_vbox.addWidget(content_row, 1)
 
         # Left: list of cameras with group filter and search.
-        left = QWidget(central)
+        left = QWidget(content_row)
         left_layout = QVBoxLayout(left)
         left_layout.setContentsMargins(0, 0, 0, 0)
 
@@ -302,7 +375,7 @@ class MainWindow(QMainWindow):
         outer.addWidget(left, 1)
 
         # Right: preview grid (or empty state).
-        right = QWidget(central)
+        right = QWidget(content_row)
         right_layout = QVBoxLayout(right)
         right_layout.setContentsMargins(0, 0, 0, 0)
 
@@ -479,6 +552,7 @@ class MainWindow(QMainWindow):
             prev.clicked.connect(lambda i=idx: self._select_index(i))
             prev.double_clicked.connect(lambda i=idx: self._on_preview_double_clicked(i))
             prev.context_menu_requested.connect(lambda pos, i=idx: self._on_preview_context_menu(pos, i))
+            prev.frame_ready.connect(self._on_preview_frame_ready)
             if hasattr(prev, '_cached_vendor'):
                 prev._cached_vendor = cam.notes
             # Restore online status if known.
@@ -499,6 +573,7 @@ class MainWindow(QMainWindow):
         menu = QMenu(self)
         menu.addAction("📺 Open in PiP", self._action_open_pip)
         menu.addAction("⛶ Fullscreen", self._action_fullscreen)
+        menu.addAction("🎮 PTZ Controls", self._action_ptz)
         menu.addAction("⏺ Record", self._action_toggle_record)
         menu.addAction("📷 Snapshot", self._action_snapshot)
         menu.addSeparator()
@@ -809,6 +884,12 @@ class MainWindow(QMainWindow):
             ("E", "Toggle enable/disable selected"),
             ("Esc", "Close all PiP windows"),
             ("F5 / Ctrl+R", "Reload"),
+            ("T", "Pan-Tilt-Zoom (PTZ) directional controls"),
+            ("Shift+P", "Toggle patrol carousel (surveillance TV mode)"),
+            ("1 - 9", "Select camera 1 to 9 directly (TV remote)"),
+            ("Enter", "Fullscreen selected camera"),
+            ("M", "Toggle mute / audio on selected camera"),
+            ("Arrows", "Navigate preview grid (D-pad)"),
         ]
         for key, desc in shortcuts:
             layout.addRow(QLabel(f"<b>{key}</b>"), QLabel(desc))
@@ -881,6 +962,163 @@ class MainWindow(QMainWindow):
             self._set_status_ready(f"{cam.name} {state}")
             self.reload()
 
+    # --- PTZ & Patrol ------------------------------------------------------
+    def _action_ptz(self) -> None:
+        sel = self._selected_camera()
+        if not sel:
+            QMessageBox.information(self, "No selection", "Select a camera first.")
+            return
+        _, cam = sel
+        dlg = PtzDialog(self, camera=cam)
+        dlg.exec()
+
+    def _action_toggle_patrol(self) -> None:
+        self._patrol_active = not self._patrol_active
+        if self._patrol_active:
+            interval = int(self._settings.get("patrol_interval_s", 10))
+            self._patrol_timer.start(interval * 1000)
+            self._set_status_ready(f"🔄 Patrol carousel ACTIVE ({interval}s interval)")
+        else:
+            self._patrol_timer.stop()
+            self._set_status_ready("Patrol carousel stopped.")
+
+    def _on_patrol_tick(self) -> None:
+        cams = [c for c in cfg.load_cameras() if c.enabled]
+        if not cams:
+            return
+        next_idx = (self._selected_index + 1) % len(cams)
+        self._select_index(next_idx)
+        self._set_status_ready(f"🔄 Patrol: {cams[next_idx].name} ({next_idx + 1}/{len(cams)})")
+
+    def _action_toggle_mute(self) -> None:
+        sel = self._selected_camera()
+        if not sel:
+            return
+        idx, cam = sel
+        cams = cfg.load_cameras()
+        if 0 <= idx < len(cams):
+            cams[idx].audio = not cams[idx].audio
+            cfg.save_cameras(cams)
+            state = "Audio ON" if cams[idx].audio else "Muted"
+            self._set_status_ready(f"{cam.name}: {state}")
+            self.reload()
+
+    # --- Motion Detection --------------------------------------------------
+    def _on_preview_frame_ready(self, cam_name: str, img) -> None:
+        if self._settings.get("motion_detection_enabled", True):
+            self._motion.process_frame(cam_name, img)
+
+    def _on_motion_detected(self, cam_name: str, delta: float) -> None:
+        for prev in self._previews:
+            base_name = getattr(prev, "_caption_base_text", "")
+            if base_name == cam_name:
+                prev.set_motion(True)
+        self._set_status_ready(f"🚨 Motion detected on {cam_name} (activity score {delta:.2f})")
+        if self._settings.get("notifications", True):
+            notify("Motion Detected", f"Activity detected on camera '{cam_name}'")
+
+    # --- Hotplug & Background Discovery -----------------------------------
+    def _on_v4l2_plugged(self, dev: dict) -> None:
+        dev_path = dev.get("device", "/dev/video0")
+        name = dev.get("name", "USB Webcam")
+        cam = Camera(
+            name=name,
+            url=dev_path,
+            notes="plug-and-play USB camera",
+        )
+        if self._settings.get("auto_add_discovered", False):
+            cams = cfg.load_cameras()
+            if not any(c.url == dev_path for c in cams):
+                cams.append(cam)
+                cfg.save_cameras(cams)
+                self.reload()
+                self._set_status_ready(f"✨ Auto-added USB camera: {name}")
+                return
+        self._pending_discovered_camera = cam
+        self._banner_text.setText(f"USB Camera Connected: <b>{name}</b> ({dev_path})")
+        self._banner.setVisible(True)
+
+    def _on_v4l2_unplugged(self, dev_path: str) -> None:
+        self._set_status_ready(f"USB Camera disconnected ({dev_path})")
+
+    def _on_network_camera_discovered(self, cam: DiscoveredCamera) -> None:
+        cams = cfg.load_cameras()
+        if any(c.url == cam.url for c in cams):
+            return
+        tag = cam.vendor or cam.model or "Camera"
+        camera_obj = Camera(
+            name=f"{tag}-{cam.host}",
+            url=cam.url,
+            user=self._default_user,
+            password=self._default_pass,
+            notes=f"auto-discovered {cam.method}",
+        )
+        if self._settings.get("auto_add_discovered", False):
+            cams.append(camera_obj)
+            cfg.save_cameras(cams)
+            self.reload()
+            self._set_status_ready(f"✨ Auto-added network camera: {camera_obj.name}")
+            return
+        self._pending_discovered_camera = camera_obj
+        self._banner_text.setText(f"New Camera Discovered: <b>{camera_obj.name}</b> ({cam.url})")
+        self._banner.setVisible(True)
+
+    def _on_banner_add_clicked(self) -> None:
+        self._banner.setVisible(False)
+        cam = getattr(self, "_pending_discovered_camera", None)
+        if not cam:
+            return
+        cams = cfg.load_cameras()
+        if not any(c.url == cam.url for c in cams):
+            cams.append(cam)
+            cfg.save_cameras(cams)
+            self.reload()
+            self._set_status_ready(f"Added camera: {cam.name}")
+
+    # --- Keyboard / Remote Navigation --------------------------------------
+    def keyPressEvent(self, event) -> None:
+        key = event.key()
+        # Number keys 1-9 directly select camera
+        if Qt.Key_1 <= key <= Qt.Key_9:
+            idx = key - Qt.Key_1
+            cams = cfg.load_cameras()
+            if idx < len(cams):
+                self._select_index(idx)
+                self._set_status_ready(f"Selected camera {idx + 1}: {cams[idx].name}")
+            return
+        elif key in (Qt.Key_Return, Qt.Key_Enter):
+            self._action_fullscreen()
+            return
+        elif key == Qt.Key_M:
+            self._action_toggle_mute()
+            return
+        elif key == Qt.Key_T:
+            self._action_ptz()
+            return
+        elif key in (Qt.Key_Left, Qt.Key_Right, Qt.Key_Up, Qt.Key_Down):
+            self._navigate_grid(key)
+            return
+        super().keyPressEvent(event)
+
+    def _navigate_grid(self, key: int) -> None:
+        cams = cfg.load_cameras()
+        if not cams:
+            return
+        cur = self._selected_index if self._selected_index >= 0 else 0
+        layout_cols = {"1x1": 1, "2x2": 2, "3x3": 3, "4x4": 4, "1+3": 2}
+        cols = layout_cols.get(self._current_layout, 2)
+        if key == Qt.Key_Left:
+            next_idx = max(0, cur - 1)
+        elif key == Qt.Key_Right:
+            next_idx = min(len(cams) - 1, cur + 1)
+        elif key == Qt.Key_Up:
+            next_idx = max(0, cur - cols)
+        elif key == Qt.Key_Down:
+            next_idx = min(len(cams) - 1, cur + cols)
+        else:
+            return
+        self._select_index(next_idx)
+
     # --- periodic reap -----------------------------------------------------
     def _on_reap(self) -> None:
         self._pip.reap()
@@ -890,6 +1128,18 @@ class MainWindow(QMainWindow):
             base_name = getattr(prev, "_caption_base_text", "")
             if base_name:
                 prev.set_recording(base_name in active_names)
+
+        # Periodic storage maintenance if enabled (every ~30s)
+        self._reap_counter = getattr(self, "_reap_counter", 0) + 1
+        if self._reap_counter % 60 == 0:
+            if self._settings.get("auto_cleanup", True):
+                try:
+                    max_gb = float(self._settings.get("storage_quota_gb", 20.0))
+                    ret_days = int(self._settings.get("retention_days", 14))
+                    self._storage.enforce_retention(max_storage_gb=max_gb, max_retention_days=ret_days)
+                except Exception:
+                    pass
+
         if active:
             names = ", ".join(r.camera.name for r in active)
             dur = active[0].display_duration
@@ -904,6 +1154,10 @@ class MainWindow(QMainWindow):
 
     # --- shutdown ----------------------------------------------------------
     def closeEvent(self, event) -> None:  # noqa: N802
+        if hasattr(self, "_patrol_timer"):
+            self._patrol_timer.stop()
+        if hasattr(self, "_hotplug"):
+            self._hotplug.stop()
         for prev in self._previews:
             prev.stop()
         self._pip.close_all()

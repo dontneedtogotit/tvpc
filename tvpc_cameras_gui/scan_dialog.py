@@ -28,6 +28,7 @@ _METHOD_ICONS = {
     "cloud": "☁️",
     "dvr": "📼",
     "ssdp": "📡",
+    "usb": "🔌",
 }
 
 
@@ -357,6 +358,9 @@ class ScanDialog(QDialog):
             if res.is_dvr and res.channel:
                 base = (res.vendor.lower().replace(" ", "_") if res.vendor else "dvr") + "_dvr"
                 tag = f"{res.host}-ch{res.channel}" if res.host else f"ch{res.channel}"
+            elif res.method == "usb":
+                base = res.vendor.lower().replace(" ", "_") if res.vendor else "usb"
+                tag = res.url.replace("/dev/", "")
             else:
                 base = res.vendor.lower().replace(" ", "_") if res.vendor else res.method
                 tag = res.host or (res.url.split("//", 1)[-1].split("/", 1)[0]
@@ -375,11 +379,13 @@ class ScanDialog(QDialog):
             if res.vendor: note_bits.append(f"vendor: {res.vendor}")
             if res.model: note_bits.append(f"model: {res.model}")
             if res.firmware: note_bits.append(f"firmware: {res.firmware}")
+            cam_user = "" if res.method == "usb" else self._user.text().strip()
+            cam_pass = "" if res.method == "usb" else self._pass.text()
             cams.append(Camera(
                 name=name,
                 url=res.url,
-                user=self._user.text().strip(),
-                password=self._pass.text(),
+                user=cam_user,
+                password=cam_pass,
                 notes="; ".join(note_bits),
             ))
             existing.add(name)

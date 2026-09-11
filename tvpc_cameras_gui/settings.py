@@ -33,6 +33,15 @@ def _defaults() -> dict[str, Any]:
         "auto_scan_on_startup": False,
         "show_method_icons": True,
         "show_status_emoji": True,
+        "storage_quota_gb": 20.0,
+        "retention_days": 14,
+        "auto_cleanup": True,
+        "background_discovery": True,
+        "auto_add_discovered": False,
+        "patrol_interval_s": 10,
+        "motion_detection_enabled": True,
+        "motion_sensitivity": 0.12,
+        "motion_auto_snapshot": True,
     }
 
 
@@ -65,19 +74,22 @@ class SettingsDialog(QDialog):
         self._settings = settings if settings is not None else load_settings()
         self._changed = False
 
-        tabs = QTabWidget()
-        self._build_scan_tab(tabs)
-        self._build_preview_tab(tabs)
-        self._build_health_tab(tabs)
-        self._build_credentials_tab(tabs)
-        self._build_ui_tab(tabs)
+        self._tabs = QTabWidget()
+        self._build_scan_tab(self._tabs)
+        self._build_preview_tab(self._tabs)
+        self._build_storage_tab(self._tabs)
+        self._build_motion_tab(self._tabs)
+        self._build_hotplug_tab(self._tabs)
+        self._build_health_tab(self._tabs)
+        self._build_credentials_tab(self._tabs)
+        self._build_ui_tab(self._tabs)
 
         btns = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel, parent=self)
         btns.accepted.connect(self._on_accept)
         btns.rejected.connect(self.reject)
 
         layout = QVBoxLayout(self)
-        layout.addWidget(tabs)
+        layout.addWidget(self._tabs)
         layout.addWidget(btns)
 
     def _build_scan_tab(self, tabs: QTabWidget) -> None:
@@ -186,6 +198,112 @@ class SettingsDialog(QDialog):
 
         tabs.addTab(w, "Credentials")
 
+    def _build_storage_tab(self, tabs: QTabWidget) -> None:
+        w = QWidget()
+        form = QFormLayout(w)
+
+        from .storage import StorageManager
+        sm = StorageManager()
+        info = sm.get_storage_info()
+
+        status_lbl = QLabel(
+            f"Recordings: {info['recording_count']} files ({info['recordings_display']})\n"
+            f"Free disk space: {info['disk_free_display']} ({info['disk_free_percent']:.1f}% free)"
+        )
+        status_lbl.setStyleSheet("color: #4fc3f7; font-weight: 500;")
+        form.addRow("Storage status:", status_lbl)
+
+        self._storage_quota = QDoubleSpinBox()
+        self._storage_quota.setRange(1.0, 1000.0)
+        self._storage_quota.setSingleStep(5.0)
+        self._storage_quota.setSuffix(" GB")
+        self._storage_quota.setValue(float(self._settings.get("storage_quota_gb", 20.0)))
+        form.addRow("Max recording storage:", self._storage_quota)
+
+        self._retention_days = QSpinBox()
+        self._retention_days.setRange(0, 365)
+        self._retention_days.setSuffix(" days (0 = unlimited)")
+        self._retention_days.setValue(int(self._settings.get("retention_days", 14)))
+        form.addRow("Retention period:", self._retention_days)
+
+        self._auto_cleanup = QCheckBox("Auto-cleanup oldest recordings when quota exceeded")
+        self._auto_cleanup.setChecked(bool(self._settings.get("auto_cleanup", True)))
+        form.addRow("", self._auto_cleanup)
+
+        purge_btn = QPushButton("🧹 Prune Old Recordings Now")
+        purge_btn.clicked.connect(self._prune_now)
+        form.addRow("", purge_btn)
+
+        tabs.addTab(w, "Storage")
+
+    def _prune_now(self) -> None:
+        from .storage import StorageManager
+        sm = StorageManager()
+        deleted, freed = sm.enforce_retention(
+            max_storage_gb=self._storage_quota.value(),
+            max_retention_days=self._retention_days.value(),
+        )
+        from .storage import format_bytes
+        from PySide6.QtWidgets import QMessageBox
+        QMessageBox.information(
+            self, "Storage Pruned",
+            f"Purged {len(deleted)} old recording file(s), freeing {format_bytes(freed)}."
+        )
+
+    def _build_motion_tab(self, tabs: QTabWidget) -> None:
+        w = QWidget()
+        form = QFormLayout(w)
+
+        self._motion_enabled = QCheckBox("Enable live motion detection")
+        self._motion_enabled.setChecked(bool(self._settings.get("motion_detection_enabled", True)))
+        form.addRow("", self._motion_enabled)
+
+        self._motion_sens = QDoubleSpinBox()
+        self._motion_sens.setRange(0.02, 0.40)
+        self._motion_sens.setSingleStep(0.02)
+        self._motion_sens.setValue(float(self._settings.get("motion_sensitivity", 0.12)))
+        form.addRow("Motion sensitivity threshold:", self._motion_sens)
+
+        self._motion_snapshot = QCheckBox("Auto-save snapshot when motion detected")
+        self._motion_snapshot.setChecked(bool(self._settings.get("motion_auto_snapshot", True)))
+        form.addRow("", self._motion_snapshot)
+
+        note = QLabel(
+            "Lower threshold = higher sensitivity.\n"
+            "Motion alerts show a badge and optionally save a snapshot."
+        )
+        note.setStyleSheet("color: #888;")
+        form.addRow("", note)
+
+        tabs.addTab(w, "Motion")
+
+    def _build_hotplug_tab(self, tabs: QTabWidget) -> None:
+        w = QWidget()
+        form = QFormLayout(w)
+
+        self._bg_discovery = QCheckBox("Auto-discover cameras in background (Plug-and-Play)")
+        self._bg_discovery.setChecked(bool(self._settings.get("background_discovery", True)))
+        form.addRow("", self._bg_discovery)
+
+        self._auto_add = QCheckBox("Auto-add newly discovered cameras without prompting")
+        self._auto_add.setChecked(bool(self._settings.get("auto_add_discovered", False)))
+        form.addRow("", self._auto_add)
+
+        self._patrol_interval = QSpinBox()
+        self._patrol_interval.setRange(3, 120)
+        self._patrol_interval.setSuffix(" s")
+        self._patrol_interval.setValue(int(self._settings.get("patrol_interval_s", 10)))
+        form.addRow("Patrol carousel interval:", self._patrol_interval)
+
+        note = QLabel(
+            "Detects newly plugged USB webcams and network cameras joining the LAN.\n"
+            "Patrol carousel automatically cycles through cameras for TV monitoring."
+        )
+        note.setStyleSheet("color: #888;")
+        form.addRow("", note)
+
+        tabs.addTab(w, "Automation")
+
     def _build_ui_tab(self, tabs: QTabWidget) -> None:
         w = QWidget()
         form = QFormLayout(w)
@@ -224,6 +342,15 @@ class SettingsDialog(QDialog):
         self._settings["default_layout"] = self._default_layout.text().strip()
         self._settings["show_method_icons"] = self._show_method_icons.isChecked()
         self._settings["show_status_emoji"] = self._show_status_emoji.isChecked()
+        self._settings["storage_quota_gb"] = self._storage_quota.value()
+        self._settings["retention_days"] = self._retention_days.value()
+        self._settings["auto_cleanup"] = self._auto_cleanup.isChecked()
+        self._settings["motion_detection_enabled"] = self._motion_enabled.isChecked()
+        self._settings["motion_sensitivity"] = self._motion_sens.value()
+        self._settings["motion_auto_snapshot"] = self._motion_snapshot.isChecked()
+        self._settings["background_discovery"] = self._bg_discovery.isChecked()
+        self._settings["auto_add_discovered"] = self._auto_add.isChecked()
+        self._settings["patrol_interval_s"] = self._patrol_interval.value()
         save_settings(self._settings)
         self._changed = True
         self.accept()

@@ -14,11 +14,14 @@ from PySide6.QtWidgets import (
 from .config import Camera
 from .settings import load_settings
 from .brand_help import show_brand_help
+from .v4l2 import is_v4l2, normalize_v4l2_device, query_v4l2_device
 
 _SETTINGS = load_settings()
 
 CAMERA_PRESETS = [
     ("Preset URL templates (select brand)…", ""),
+    ("Local USB Webcam / Capture Card (/dev/video0)", "/dev/video0"),
+    ("Local USB Webcam (/dev/video1)", "/dev/video1"),
     ("Hikvision / Annke (Main Stream)", "rtsp://{IP}:554/Streaming/Channels/101"),
     ("Hikvision / Annke (Sub Stream)", "rtsp://{IP}:554/Streaming/Channels/102"),
     ("Dahua / Amcrest (Main Stream)", "rtsp://{IP}:554/cam/realmonitor?channel=1&subtype=0"),
@@ -48,9 +51,28 @@ class _ProbeWorker(QObject):
         self.timeout = timeout
 
     def run(self) -> None:
+        if is_v4l2(self.url):
+            info = query_v4l2_device(normalize_v4l2_device(self.url))
+            self.finished.emit(bool(info and info.get("is_capture")))
+            return
         from .health import _probe_url
         ok = _probe_url(self.url, user=self.user, password=self.password, timeout=self.timeout)
         self.finished.emit(ok)
+
+
+class _AutoDetectWorker(QObject):
+    finished = Signal(object)
+
+    def __init__(self, target: str, user: str, password: str):
+        super().__init__()
+        self.target = target
+        self.user = user
+        self.password = password
+
+    def run(self) -> None:
+        from .discover import probe_ip_stream_url
+        res = probe_ip_stream_url(self.target, user=self.user, password=self.password)
+        self.finished.emit(res)
 
 
 class CameraEditDialog(QDialog):
@@ -80,7 +102,15 @@ class CameraEditDialog(QDialog):
         preset_row.addWidget(self._guide_btn)
 
         self._url = QLineEdit(self)
-        self._url.setPlaceholderText("rtsp://192.168.1.42/Streaming/Channels/101")
+        self._url.setPlaceholderText("rtsp://192.168.1.42/Streaming/Channels/101 or /dev/video0")
+        self._autodetect_btn = QPushButton("⚡ Auto-Detect")
+        self._autodetect_btn.setToolTip("Automatically probe IP address for active RTSP / HTTP video streams")
+        self._autodetect_btn.clicked.connect(self._on_autodetect)
+
+        url_row = QHBoxLayout()
+        url_row.addWidget(self._url, 1)
+        url_row.addWidget(self._autodetect_btn)
+
         self._user = QLineEdit(self)
         self._user.setPlaceholderText("(optional)")
         if camera is None:
@@ -114,6 +144,9 @@ class CameraEditDialog(QDialog):
         self._test_btn.setEnabled(False)
         self._url.textChanged.connect(lambda: self._test_btn.setEnabled(bool(self._url.text().strip())))
 
+        self._autodetect_thread: Optional[QThread] = None
+        self._autodetect_worker: Optional[_AutoDetectWorker] = None
+
         if camera is not None:
             self._name.setText(camera.name)
             self._url.setText(camera.url)
@@ -129,7 +162,7 @@ class CameraEditDialog(QDialog):
         form = QFormLayout()
         form.addRow("Name *", self._name)
         form.addRow("Preset", preset_row)
-        form.addRow("Stream URL *", self._url)
+        form.addRow("Stream URL *", url_row)
         form.addRow("Username", self._user)
         form.addRow("Password", self._pass)
         form.addRow("", self._show_pass)
@@ -143,7 +176,8 @@ class CameraEditDialog(QDialog):
             "URL examples:\n"
             "  rtsp://192.168.1.42/Streaming/Channels/101\n"
             "  rtsp://user:pass@192.168.1.42/live/main\n"
-            "  http://192.168.1.42/video.mjpg"
+            "  http://192.168.1.42/video.mjpg\n"
+            "  /dev/video0"
         )
         hint.setStyleSheet("color: #888;")
 
@@ -186,6 +220,39 @@ class CameraEditDialog(QDialog):
             hint = self._name.text().strip() or self._notes.toPlainText().strip()
         show_brand_help(self, brand_hint=hint, host=host)
 
+    def _on_autodetect(self) -> None:
+        target = self._url.text().strip()
+        if not target:
+            target = self._name.text().strip()
+        if not target:
+            self._test_result.setText("Enter an IP address or hostname in the URL box to auto-detect.")
+            self._test_result.setStyleSheet("color: #f44336;")
+            return
+
+        self._autodetect_btn.setEnabled(False)
+        self._autodetect_btn.setText("⚡ Scanning…")
+        self._test_result.setText(f"⏳ Auto-detecting stream URLs for '{target}'…")
+        self._test_result.setStyleSheet("color: #4fc3f7;")
+
+        self._autodetect_thread = QThread(self)
+        self._autodetect_worker = _AutoDetectWorker(target, self._user.text().strip(), self._pass.text())
+        self._autodetect_worker.moveToThread(self._autodetect_thread)
+        self._autodetect_thread.started.connect(self._autodetect_worker.run)
+        self._autodetect_worker.finished.connect(self._on_autodetect_finished)
+        self._autodetect_worker.finished.connect(self._autodetect_thread.quit)
+        self._autodetect_thread.start()
+
+    def _on_autodetect_finished(self, stream_url: Optional[str]) -> None:
+        self._autodetect_btn.setEnabled(True)
+        self._autodetect_btn.setText("⚡ Auto-Detect")
+        if stream_url:
+            self._url.setText(stream_url)
+            self._test_result.setText(f"✅ Stream auto-detected: {stream_url}")
+            self._test_result.setStyleSheet("color: #4caf50; font-weight: bold;")
+        else:
+            self._test_result.setText("❌ No active stream discovered. Check IP/credentials or choose a preset.")
+            self._test_result.setStyleSheet("color: #f44336;")
+
     def _test_connection(self) -> None:
         url = self._url.text().strip()
         user = self._user.text().strip()
@@ -220,9 +287,11 @@ class CameraEditDialog(QDialog):
             QMessageBox.warning(self, "Missing fields", "Name and URL are required.")
             return
         url = self._url.text().strip()
-        if not (url.startswith("rtsp://") or url.startswith("http://") or url.startswith("https://")):
-            QMessageBox.warning(self, "Invalid URL",
-                                "URL must start with rtsp://, http://, or https://")
+        if not (url.startswith("rtsp://") or url.startswith("http://") or url.startswith("https://") or is_v4l2(url)):
+            QMessageBox.warning(
+                self, "Invalid URL",
+                "URL must start with rtsp://, http://, https://, or be a local device (/dev/video0)."
+            )
             return
         self.accept()
 

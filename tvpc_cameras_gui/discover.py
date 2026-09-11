@@ -2101,3 +2101,65 @@ def ffprobe_works(url: str, user: str = "", password: str = "",
         return True
     except (subprocess.TimeoutExpired, OSError):
         return False
+
+
+def discover_local_devices() -> List[DiscoveredCamera]:
+    """Scan and return local video devices (USB webcams, capture cards) as DiscoveredCamera records."""
+    from .v4l2 import list_v4l2_devices
+    devices = list_v4l2_devices(capture_only=True)
+    results: List[DiscoveredCamera] = []
+    for d in devices:
+        dev_path = d["device"]
+        name = d.get("name") or "USB Video Device"
+        results.append(DiscoveredCamera(
+            method="usb",
+            host="localhost",
+            port=0,
+            url=dev_path,
+            vendor=name,
+            model=d.get("driver", "V4L2"),
+            note="Local USB webcam / capture card",
+        ))
+    return results
+
+
+def probe_ip_stream_url(
+    target: str,
+    user: str = "",
+    password: str = "",
+    timeout: float = 3.0,
+) -> Optional[Tuple[str, str, str]]:
+    """Given an IP, hostname, or URL, probe for a working stream URL.
+
+    Returns (stream_url, vendor, model) or None if no working stream found.
+    """
+    clean = target.strip()
+    if not clean:
+        return None
+
+    # Check local V4L2 device
+    from .v4l2 import is_v4l2, normalize_v4l2_device, query_v4l2_device
+    if is_v4l2(clean):
+        norm = normalize_v4l2_device(clean)
+        info = query_v4l2_device(norm)
+        v_name = info.get("name", "USB Video Device") if info else "USB Video Device"
+        return (norm, v_name, "V4L2")
+
+    # Clean hostname / IP from input
+    host = clean
+    if "://" in host:
+        from urllib.parse import urlparse
+        parsed = urlparse(host)
+        host = parsed.hostname or host
+
+    if ":" in host and not host.startswith("["):
+        host = host.split(":", 1)[0]
+
+    # Run quick probe across ports and paths
+    cams = quick_probe_all_ports(host, user=user, password=password)
+    for cam in cams:
+        if cam.url:
+            return (cam.url, cam.vendor or "Unknown", cam.model or "")
+
+    return None
+

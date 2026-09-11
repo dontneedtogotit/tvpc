@@ -61,16 +61,19 @@ def _grid_pos(index: int, total: int, w: int, h: int) -> tuple[int, int]:
 
 def _build_cmd(cam: Camera, x: int, y: int, w: int, h: int,
                fullscreen: bool = False, audio: bool = True) -> List[str]:
+    from .v4l2 import is_v4l2, mpv_v4l2_url
     cmd = [
         "mpv", "--no-terminal", "--quiet",
         f"--title=tvpc-cameras: {cam.name}",
         "--border=no", "--title-bar=no",
         "--no-osc", "--no-input-terminal", "--no-input-cursor",
         "--keep-open=always",
-        "--rtsp-transport=tcp",
         "--hwdec=auto-safe",
         "--force-window=immediate",
     ]
+    if not is_v4l2(cam.url):
+        cmd.append("--rtsp-transport=tcp")
+
     if fullscreen:
         cmd.append("--fullscreen")
     else:
@@ -79,8 +82,12 @@ def _build_cmd(cam: Camera, x: int, y: int, w: int, h: int,
         cmd.append("--on-top-level=system")
     if not audio or not cam.audio:
         cmd.append("--no-audio")
-    cmd += cam.credential_args()
-    cmd.append(cam.url)
+
+    if is_v4l2(cam.url):
+        cmd.append(mpv_v4l2_url(cam.url))
+    else:
+        cmd += cam.credential_args()
+        cmd.append(cam.url)
     return cmd
 
 

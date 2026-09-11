@@ -170,12 +170,19 @@ class TestDialogs(unittest.TestCase):
         self.assertIsNotNone(dlg._test_btn)
         self.assertIsNotNone(dlg._preset_combo)
 
-        # Choose a preset
-        dlg._preset_combo.setCurrentIndex(1)
+        presets_text = [dlg._preset_combo.itemText(i) for i in range(dlg._preset_combo.count())]
+
+        # Choose Hikvision preset
+        hik_idx = next(i for i, text in enumerate(presets_text) if "Hikvision" in text)
+        dlg._preset_combo.setCurrentIndex(hik_idx)
         self.assertIn("Streaming/Channels/101", dlg._url.text())
 
+        # Choose USB Webcam preset
+        usb_idx = next(i for i, text in enumerate(presets_text) if "USB Webcam" in text)
+        dlg._preset_combo.setCurrentIndex(usb_idx)
+        self.assertEqual(dlg._url.text(), "/dev/video0")
+
         # Verify Tuya presets exist
-        presets_text = [dlg._preset_combo.itemText(i) for i in range(dlg._preset_combo.count())]
         self.assertTrue(any("Tuya" in p for p in presets_text), f"Tuya preset not in {presets_text}")
 
     def test_scan_dialog_cloud_camera_item(self) -> None:
@@ -201,6 +208,42 @@ class TestDialogs(unittest.TestCase):
         self.assertIsNotNone(dlg._play_btn)
         self.assertIsNotNone(dlg._open_btn)
         self.assertIsNotNone(dlg._delete_btn)
+
+    def test_pip_v4l2_cmd(self) -> None:
+        from tvpc_cameras_gui.pip import _build_cmd
+        from tvpc_cameras_gui.config import Camera
+        cam = Camera(name="USB Cam", url="/dev/video0")
+        cmd = _build_cmd(cam, x=0, y=0, w=320, h=240, fullscreen=False, audio=True)
+        self.assertIn("av://v4l2:/dev/video0", cmd)
+        self.assertNotIn("--rtsp-transport=tcp", cmd)
+
+    def test_record_v4l2_cmd(self) -> None:
+        from tvpc_cameras_gui.recording import _build_record_cmd
+        from tvpc_cameras_gui.config import Camera
+        from pathlib import Path
+        cam = Camera(name="USB Cam", url="/dev/video0")
+        out = Path("/tmp/test.mkv")
+        cmd = _build_record_cmd(cam, out)
+        self.assertIn("-f", cmd)
+        self.assertIn("v4l2", cmd)
+        self.assertIn("/dev/video0", cmd)
+
+    def test_edit_dialog_accept_v4l2(self) -> None:
+        from tvpc_cameras_gui.edit_dialog import CameraEditDialog
+        dlg = CameraEditDialog()
+        dlg._name.setText("USB Webcam")
+        dlg._url.setText("/dev/video0")
+        dlg._on_accept()
+        self.assertEqual(dlg.result(), 1)  # QDialog.Accepted
+
+    def test_settings_dialog_tabs(self) -> None:
+        from tvpc_cameras_gui.settings import SettingsDialog
+        dlg = SettingsDialog()
+        # Ensure Storage, Motion, Automation tabs exist
+        tab_names = [dlg._tabs.tabText(i) for i in range(dlg._tabs.count())]
+        self.assertTrue(any("Storage" in t for t in tab_names))
+        self.assertTrue(any("Motion" in t for t in tab_names))
+        self.assertTrue(any("Automation" in t for t in tab_names))
 
 
 if __name__ == "__main__":

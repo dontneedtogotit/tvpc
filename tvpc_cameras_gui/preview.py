@@ -35,6 +35,22 @@ def _have_ffmpeg() -> bool:
 
 
 def build_ffmpeg_cmd(url: str, user: str, password: str, out_path: Path) -> list:
+    from .v4l2 import is_v4l2, normalize_v4l2_device
+    if is_v4l2(url):
+        dev = normalize_v4l2_device(url)
+        return [
+            "ffmpeg",
+            "-hide_banner",
+            "-loglevel", "error",
+            "-f", "v4l2",
+            "-i", dev,
+            "-an",
+            "-vf", "scale=320:-1",
+            "-r", "1",
+            "-q:v", "5",
+            "-y",
+            str(out_path),
+        ]
     cmd = [
         "ffmpeg",
         "-hide_banner",
@@ -73,17 +89,19 @@ class PreviewWidget(QWidget):
     """A bordered label showing the latest frame from a stream.
 
     Emits `clicked` on mouse click, `double_clicked` on double click,
-    and `context_menu_requested` on right click.
+    `context_menu_requested` on right click, and `frame_ready` on each new frame.
     """
     clicked = Signal()
     double_clicked = Signal()
     context_menu_requested = Signal(object)
+    frame_ready = Signal(str, object)  # (caption_base_text, QImage)
 
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
         self._pixmap: Optional[QPixmap] = None
         self._online: Optional[bool] = None
         self._recording: bool = False
+        self._motion_active: bool = False
         self._caption_base_text: str = ""
         self._label = QLabel("no signal", self)
         self._label.setAlignment(Qt.AlignCenter)
@@ -114,6 +132,9 @@ class PreviewWidget(QWidget):
         self._reconnect_timer = QTimer(self)
         self._reconnect_timer.setSingleShot(True)
         self._reconnect_timer.timeout.connect(self._on_reconnect)
+        self._motion_timer = QTimer(self)
+        self._motion_timer.setSingleShot(True)
+        self._motion_timer.timeout.connect(lambda: self.set_motion(False))
         self._timer = QTimer(self)
         poll_ms = max(200, int(_SETTINGS.get("preview_poll_ms", 1500)))
         self._timer.setInterval(poll_ms)
@@ -220,6 +241,51 @@ class PreviewWidget(QWidget):
         self._recording = recording
         self._update_caption_style()
 
+    def set_motion(self, active: bool = True) -> None:
+        """Update whether motion is actively detected on this camera."""
+        self._motion_active = active
+        if active:
+            self._motion_timer.start(4000)
+            self._label.setStyleSheet(
+                "border: 2px solid #ff9800; border-radius: 4px; background-color: #222;"
+            )
+        else:
+            self._label.setStyleSheet(
+                f"background-color: {PLACEHOLDER_BG.name()};"
+                f"color: {PLACEHOLDER_FG.name()};"
+                "border: 1px solid #444; border-radius: 4px;"
+            )
+        self._update_caption_style()
+        if self._pixmap and not self._pixmap.isNull():
+            if active:
+                self._draw_motion_overlay_and_set()
+            else:
+                self._label.setPixmap(self._pixmap)
+
+    def _draw_motion_overlay_and_set(self) -> None:
+        if self._pixmap is None or self._pixmap.isNull():
+            return
+        overlay_pix = QPixmap(self._pixmap)
+        painter = QPainter(overlay_pix)
+        painter.setRenderHint(QPainter.Antialiasing)
+
+        # Draw motion badge in top-right corner
+        badge_w, badge_h = 96, 24
+        x = overlay_pix.width() - badge_w - 8
+        y = 8
+        painter.setBrush(QColor(230, 81, 0, 220))
+        painter.setPen(Qt.NoPen)
+        painter.drawRoundedRect(x, y, badge_w, badge_h, 4, 4)
+
+        painter.setPen(QColor("white"))
+        font = painter.font()
+        font.setPointSize(9)
+        font.setBold(True)
+        painter.setFont(font)
+        painter.drawText(x, y, badge_w, badge_h, Qt.AlignCenter, "🚨 MOTION")
+        painter.end()
+        self._label.setPixmap(overlay_pix)
+
     def set_online_status(self, online: bool) -> None:
         """Update the online/offline indicator dot."""
         self._online = online
@@ -278,10 +344,15 @@ class PreviewWidget(QWidget):
         painter.end()
 
     def _update_caption_style(self) -> None:
-        rec_tag = "  🔴 REC" if self._recording else ""
-        self._caption.setText(f"{self._caption_base_text}{rec_tag}")
+        tags = []
+        if self._motion_active:
+            tags.append("🚨 MOTION")
         if self._recording:
-            self._caption.setStyleSheet("color: #ff5252; font-weight: bold;")
+            tags.append("🔴 REC")
+        tag_str = ("  " + " ".join(tags)) if tags else ""
+        self._caption.setText(f"{self._caption_base_text}{tag_str}")
+        if self._recording or self._motion_active:
+            self._caption.setStyleSheet("color: #ff9800; font-weight: bold;" if self._motion_active else "color: #ff5252; font-weight: bold;")
         elif self._online is True:
             color = _ONLINE_FG.name()
             self._caption.setStyleSheet(f"color: {color}; font-weight: 500;")
@@ -304,8 +375,12 @@ class PreviewWidget(QWidget):
         img = QImage(str(self._jpeg_path))
         if img.isNull():
             return
+        self.frame_ready.emit(self._caption_base_text, img)
         self._pixmap = QPixmap.fromImage(img)
-        self._label.setPixmap(self._pixmap)
+        if self._motion_active:
+            self._draw_motion_overlay_and_set()
+        else:
+            self._label.setPixmap(self._pixmap)
         # If the ffmpeg process died, surface that and attempt reconnect.
         if self._proc is not None and self._proc.poll() is not None:
             err = b""

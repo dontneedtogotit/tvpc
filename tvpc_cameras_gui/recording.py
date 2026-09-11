@@ -53,6 +53,18 @@ def _inject_credentials(url: str, user: str, password: str) -> str:
 
 
 def _build_record_cmd(cam: Camera, output: Path) -> List[str]:
+    from .v4l2 import is_v4l2, normalize_v4l2_device
+    if is_v4l2(cam.url):
+        dev = normalize_v4l2_device(cam.url)
+        return [
+            "ffmpeg", "-hide_banner", "-loglevel", "warning",
+            "-f", "v4l2",
+            "-i", dev,
+            "-c:v", "libx264", "-preset", "ultrafast",
+            "-f", "matroska",
+            "-y",
+            str(output),
+        ]
     url = _inject_credentials(cam.url, cam.user, cam.password)
     cmd = [
         "ffmpeg", "-hide_banner", "-loglevel", "warning",
@@ -70,7 +82,9 @@ class RecordingManager:
     """Manages active recordings and provides recording history."""
 
     def __init__(self) -> None:
+        from .storage import StorageManager
         self._active: Dict[str, Recording] = {}  # camera name -> Recording
+        self.storage = StorageManager()
 
     def is_available(self) -> bool:
         return _have_ffmpeg()
@@ -120,6 +134,15 @@ class RecordingManager:
             except subprocess.TimeoutExpired:
                 rec.proc.kill()
         except Exception:  # noqa: BLE001
+            pass
+        # Automatically enforce storage retention after recording finishes
+        try:
+            from .settings import load_settings
+            st = load_settings()
+            max_gb = float(st.get("storage_quota_gb", 20.0))
+            ret_days = int(st.get("retention_days", 14))
+            self.storage.enforce_retention(max_storage_gb=max_gb, max_retention_days=ret_days)
+        except Exception:
             pass
 
     def stop_all(self) -> None:
