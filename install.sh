@@ -1494,7 +1494,7 @@ apt_install cec-utils libcec6 playerctl ydotool ydotoold
 
 apt_install chromium-browser flatpak software-properties-common openssh-server network-manager   tlp powertop zram-tools i2c-tools unattended-upgrades   curl wget git rsync pavucontrol vim htop
 
-apt_install python3-pyside6 ffmpeg mpv
+apt_install python3-pyside6 python3-requests ffmpeg mpv
 
 if [[ "${TVPC_INSTALL_PLASMA_MOBILE:-0}" == "1" || "${TVPC_SESSION:-auto}" == "plasma-mobile" ]]; then
   echo "== Installing Plasma Mobile (opt-in) =="
@@ -1541,6 +1541,9 @@ done
 
 # Python GUI package
 if [[ -d "$REPO_ROOT/tvpc_cameras_gui" ]]; then
+  install -d /usr/lib/python3/dist-packages
+  cp -r "$REPO_ROOT/tvpc_cameras_gui" /usr/lib/python3/dist-packages/
+  find /usr/lib/python3/dist-packages/tvpc_cameras_gui -type f -name "*.py" -exec chmod 0644 {} +
   install -d /usr/local/lib/python3/dist-packages
   cp -r "$REPO_ROOT/tvpc_cameras_gui" /usr/local/lib/python3/dist-packages/
   find /usr/local/lib/python3/dist-packages/tvpc_cameras_gui -type f -name "*.py" -exec chmod 0644 {} +

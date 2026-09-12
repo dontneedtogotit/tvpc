@@ -1872,13 +1872,25 @@ cmd_gui() {
         echo "python3 not found. sudo apt-get install python3" >&2
         exit 1
     fi
-    local script_dir repo_root
+    local script_dir repo_root cand
     script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
     repo_root="$(cd "$script_dir/.." && pwd)"
     if ! python3 -c "import tvpc_cameras_gui" 2>/dev/null; then
-        if [[ -d "$repo_root/tvpc_cameras_gui" ]]; then
-            export PYTHONPATH="${repo_root}${PYTHONPATH:+:$PYTHONPATH}"
-        fi
+        for cand in \
+            "$repo_root" \
+            "${REPO_ROOT:-}" \
+            "/usr/lib/python3/dist-packages" \
+            "/usr/local/lib/python3/dist-packages" \
+            /usr/local/lib/python3*/dist-packages \
+            /usr/lib/python3*/dist-packages \
+            "$HOME/tvpc" \
+            "/home/${TVPC_USER:-$USER}/tvpc" \
+            /home/*/tvpc; do
+            if [[ -d "$cand/tvpc_cameras_gui" ]]; then
+                export PYTHONPATH="$cand${PYTHONPATH:+:$PYTHONPATH}"
+                break
+            fi
+        done
     fi
     exec python3 -m tvpc_cameras_gui "$@"
 }

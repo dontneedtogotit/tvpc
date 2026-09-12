@@ -18,45 +18,38 @@ def _parse_args(argv: List[str]) -> argparse.Namespace:
     return p.parse_args(argv)
 
 
-def _ensure_pyside6() -> bool:
-    """Make sure PySide6 is importable.
-
-    If it's missing, try to install it via pip. Returns True if PySide6
-    can be imported after this function returns.
-    """
+def _has_pyside6() -> bool:
     try:
         import PySide6  # noqa: F401
         return True
     except ImportError:
-        pass
-
-    import subprocess
-    print("PySide6 is not installed. Attempting to install via pip...", file=sys.stderr)
-    try:
-        subprocess.check_call([sys.executable, "-m", "pip", "install", "PySide6"])
-        import PySide6  # noqa: F401
-        return True
-    except Exception as exc:  # noqa: BLE0001
-        print(
-            f"Could not install PySide6 automatically: {exc}\n"
-            "Please install it manually:\n"
-            "  pip install PySide6\n"
-            "or on Ubuntu/Debian:\n"
-            "  sudo apt-get install python3-pyside6",
-            file=sys.stderr,
-        )
         return False
 
 
+def _ensure_pyside6() -> bool:
+    """Make sure PySide6 is importable."""
+    if _has_pyside6():
+        return True
+
+    print(
+        "PySide6 is not installed.\n"
+        "Please install it:\n"
+        "  sudo apt-get install python3-pyside6 python3-requests\n"
+        "or: pip install PySide6 requests",
+        file=sys.stderr,
+    )
+    return False
+
+
 def _ensure_venv() -> int:
-    """Ensure we're running in the auto-created virtual environment.
+    """Ensure we're running in the auto-created virtual environment if needed.
 
-    If not running in the venv, create it if needed, install dependencies,
-    then re-exec ourselves using the venv's Python interpreter.
-
-    Returns 0 if we should continue running in the current process,
-    or -1 if we've re-execed into the venv and should not return.
+    If PySide6 is already available in the current environment, returns 0 immediately.
+    Otherwise creates/uses a local venv with PySide6 and re-execs into it.
     """
+    if _has_pyside6():
+        return 0
+
     from .venv_mgr import is_running_in_venv, ensure_venv, get_venv_python, install_in_venv
 
     # Already running in the venv — continue normally.
@@ -66,10 +59,9 @@ def _ensure_venv() -> int:
     # Not in venv — set one up.
     venv_python = get_venv_python()
     if venv_python == Path(sys.executable):
-        # We're already in the right place somehow.
         return 0
 
-    print("tvpc-cameras-gui: setting up a virtual environment...", file=sys.stderr)
+    print("tvpc-cameras-gui: PySide6 missing from system; setting up virtual environment...", file=sys.stderr)
 
     # Create the venv if it doesn't exist.
     if not ensure_venv(progress=lambda msg: print(f"  {msg}", file=sys.stderr)):
@@ -82,11 +74,15 @@ def _ensure_venv() -> int:
         print("Failed to install dependencies in virtual environment.", file=sys.stderr)
         return 0  # Fall back to system Python.
 
-    # Re-exec ourselves in the venv.
+    # Re-exec ourselves in the venv, preserving PYTHONPATH so tvpc_cameras_gui is found.
+    pkg_parent = str(Path(__file__).resolve().parent.parent)
+    env = dict(os.environ)
+    curr_pp = env.get("PYTHONPATH", "")
+    env["PYTHONPATH"] = f"{pkg_parent}:{curr_pp}" if curr_pp else pkg_parent
     sys.stdout.flush()
     sys.stderr.flush()
-    os.execv(str(venv_python), [str(venv_python), "-m", "tvpc_cameras_gui"] + sys.argv[1:])
-    return -1  # Not reached — execv replaces the process.
+    os.execve(str(venv_python), [str(venv_python), "-m", "tvpc_cameras_gui"] + sys.argv[1:], env)
+    return -1
 
 
 def main(argv: Optional[List[str]] = None) -> int:
