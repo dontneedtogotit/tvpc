@@ -662,6 +662,9 @@ write_blacklist() {   # entries on stdin, one per line
   cat >"$rc" <<RC
 [Applications]
 blacklist=$list
+
+[General]
+blacklist=$list
 RC
   chown "$HTPC_USER:$HTPC_USER" "$rc"
   echo "$list"
@@ -4638,13 +4641,23 @@ EOF
 curate_home() {
     local keep="vacuumtube io.github.vacuumtube.VacuumTube YouTube tvpc-setup tvpc-cameras tvpc-cameras-gui tvpc-allapps chromium chromium-browser org.chromium.Chromium tvpc-update"
     local id
-    while IFS=$'\t' read -r id name; do
-        local keepit=0
-        for k in $keep; do
-            [[ $id == "$k" ]] && keepit=1
+    # Blacklist known terminal apps explicitly
+    for term_app in foot ghostty xterm konsole debian-xterm debian-uxterm alacritty kitty wezterm org.kde.konsole; do
+        hide_app "$term_app" 2>/dev/null || true
+    done
+    # Scan all desktop files and hide everything not in keep
+    for d in /usr/share/applications /usr/local/share/applications "$(target_home)/.local/share/applications" /var/lib/flatpak/exports/share/applications; do
+        [[ -d "$d" ]] || continue
+        for f in "$d"/*.desktop; do
+            [[ -f "$f" ]] || continue
+            id="$(basename "$f" .desktop)"
+            local keepit=0
+            for k in $keep; do
+                [[ $id == "$k" ]] && keepit=1
+            done
+            [[ $keepit -eq 0 ]] && hide_app "$id" 2>/dev/null || true
         done
-        [[ $keepit -eq 0 ]] && hide_app "$id" 2>/dev/null || true
-    done < <(list_apps)
+    done
     # Make sure the keepers are actually shown (not blacklisted).
     for k in $keep; do
         show_app "$k" 2>/dev/null || true
@@ -5718,6 +5731,9 @@ case "${1:-}" in
         ;;
     vacuum-only)
         vacuum_only
+        ;;
+    curate|curate-home)
+        curate_home
         ;;
     home)
         home_preset

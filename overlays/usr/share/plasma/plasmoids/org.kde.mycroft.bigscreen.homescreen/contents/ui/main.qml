@@ -37,19 +37,25 @@ Item {
     property Item wallpaper
 
     Connections {
-        target: (plasmoid && plasmoid.nativeInterface && plasmoid.nativeInterface.bigLauncherDbusAdapterInterface) ? plasmoid.nativeInterface.bigLauncherDbusAdapterInterface : null
+        target: (plasmoid && plasmoid.nativeInterface && plasmoid.nativeInterface.bigLauncherDbusAdapterInterface)
+            ? plasmoid.nativeInterface.bigLauncherDbusAdapterInterface
+            : null
         onEnableMycroftIntegrationChanged: {
-            mycroftIntegration = plasmoid.nativeInterface.bigLauncherDbusAdapterInterface.mycroftIntegrationActive()
+            mycroftIntegration = plasmoid.nativeInterface.bigLauncherDbusAdapterInterface.mycroftIntegrationActive();
             if (mycroftIntegration) {
                 mycroftIndicatorLoader.active = true;
                 mycroftWindowLoader.active = true;
             } else {
-                if (mycroftIndicatorLoader.item) mycroftIndicatorLoader.item.disconnectclose();
-                if (mycroftWindowLoader.item) mycroftWindowLoader.item.disconnectclose();
+                if (mycroftIndicatorLoader.item && typeof mycroftIndicatorLoader.item.disconnectclose === "function") {
+                    mycroftIndicatorLoader.item.disconnectclose();
+                }
+                if (mycroftWindowLoader.item && typeof mycroftWindowLoader.item.disconnectclose === "function") {
+                    mycroftWindowLoader.item.disconnectclose();
+                }
             }
         }
         onEnablePmInhibitionChanged: {
-            var powerInhibition = plasmoid.nativeInterface.bigLauncherDbusAdapterInterface.pmInhibitionActive()
+            var powerInhibition = plasmoid.nativeInterface.bigLauncherDbusAdapterInterface.pmInhibitionActive();
             pmInhibitItem.inhibit = !!powerInhibition;
         }
     }
@@ -66,7 +72,7 @@ Item {
     Component.onCompleted: {
         if (plasmoid && plasmoid.applets) {
             for (var i in plasmoid.applets) {
-                root.addApplet(plasmoid.applets[i], -1, -1)
+                root.addApplet(plasmoid.applets[i], -1, -1);
             }
         }
         if (plasmoid && plasmoid.nativeInterface && plasmoid.nativeInterface.bigLauncherDbusAdapterInterface) {
@@ -235,7 +241,7 @@ Item {
             }
         }
 
-        // Right section: Task Controls (Alt+Tab & Close) + Status Indicator Pills
+        // Right section: Status Indicator Pills (KDE Connect, Volume, Wifi, Shutdown)
         RowLayout {
             anchors {
                 right: parent.right
@@ -245,108 +251,6 @@ Item {
             }
             spacing: Kirigami.Units.largeSpacing
 
-            // Task Controls Pill: App Switcher (Alt+Tab) and Close Active Window (✕)
-            Rectangle {
-                Layout.preferredHeight: topBar.height - Kirigami.Units.smallSpacing * 2
-                Layout.preferredWidth: taskControlsRow.implicitWidth + Kirigami.Units.smallSpacing * 2
-                radius: root.theme.pillRadius
-                color: root.theme.pillBackground
-                border.color: root.theme.pillBorder
-                border.width: 1
-
-                RowLayout {
-                    id: taskControlsRow
-                    anchors.centerIn: parent
-                    spacing: Kirigami.Units.smallSpacing / 2
-
-                    // Switch Apps Button (Alt+Tab)
-                    Rectangle {
-                        id: switchAppsBtn
-                        Layout.fillHeight: true
-                        Layout.preferredWidth: switchRow.implicitWidth + Kirigami.Units.largeSpacing
-                        radius: root.theme.pillRadius
-                        color: switchAppsBtn.activeFocus ? root.theme.pillFocusedBackground : (switchMouse.containsMouse ? Qt.rgba(1.0, 1.0, 1.0, 0.12) : "transparent")
-                        border.color: switchAppsBtn.activeFocus ? root.theme.borderFocusColor : "transparent"
-                        border.width: switchAppsBtn.activeFocus ? 2 : 0
-
-                        RowLayout {
-                            id: switchRow
-                            anchors.centerIn: parent
-                            spacing: Kirigami.Units.smallSpacing / 2
-
-                            PlasmaCore.IconItem {
-                                Layout.preferredWidth: Kirigami.Units.iconSizes.small
-                                Layout.preferredHeight: width
-                                source: "window-duplicate"
-                            }
-
-                            Controls.Label {
-                                text: "Switch (Alt+Tab)"
-                                font.bold: true
-                                font.pixelSize: Kirigami.Units.gridUnit * 0.75
-                                color: switchAppsBtn.activeFocus ? root.theme.textColor : root.theme.textMutedColor
-                            }
-                        }
-
-                        MouseArea {
-                            id: switchMouse
-                            anchors.fill: parent
-                            hoverEnabled: true
-                            onClicked: root.triggerAltTab()
-                        }
-
-                        Keys.onReturnPressed: root.triggerAltTab()
-                        Keys.onSelectPressed: root.triggerAltTab()
-                        KeyNavigation.right: closeAppBtn
-                        KeyNavigation.down: launcher
-                    }
-
-                    // Close Active App Button (✕)
-                    Rectangle {
-                        id: closeAppBtn
-                        Layout.fillHeight: true
-                        Layout.preferredWidth: closeRow.implicitWidth + Kirigami.Units.largeSpacing
-                        radius: root.theme.pillRadius
-                        color: closeAppBtn.activeFocus ? Qt.rgba(0.94, 0.25, 0.25, 0.40) : (closeMouse.containsMouse ? Qt.rgba(0.94, 0.25, 0.25, 0.22) : "transparent")
-                        border.color: closeAppBtn.activeFocus ? "#ef4444" : "transparent"
-                        border.width: closeAppBtn.activeFocus ? 2 : 0
-
-                        RowLayout {
-                            id: closeRow
-                            anchors.centerIn: parent
-                            spacing: Kirigami.Units.smallSpacing / 2
-
-                            PlasmaCore.IconItem {
-                                Layout.preferredWidth: Kirigami.Units.iconSizes.small
-                                Layout.preferredHeight: width
-                                source: "window-close"
-                            }
-
-                            Controls.Label {
-                                text: "Close (✕)"
-                                font.bold: true
-                                font.pixelSize: Kirigami.Units.gridUnit * 0.75
-                                color: closeAppBtn.activeFocus ? "#ffffff" : "#fca5a5"
-                            }
-                        }
-
-                        MouseArea {
-                            id: closeMouse
-                            anchors.fill: parent
-                            hoverEnabled: true
-                            onClicked: root.triggerCloseApp()
-                        }
-
-                        Keys.onReturnPressed: root.triggerCloseApp()
-                        Keys.onSelectPressed: root.triggerCloseApp()
-                        KeyNavigation.left: switchAppsBtn
-                        KeyNavigation.right: kdeconnectIndicator
-                        KeyNavigation.down: launcher
-                    }
-                }
-            }
-
-            // Status Indicators Pill (KDE Connect, Volume, Wifi, Shutdown)
             Rectangle {
                 Layout.preferredHeight: topBar.height - Kirigami.Units.smallSpacing * 2
                 Layout.preferredWidth: indicatorsRow.implicitWidth + Kirigami.Units.smallSpacing * 2
@@ -426,20 +330,6 @@ Item {
         var now = new Date();
         clockTime.text = Qt.formatTime(now, "hh:mm AP");
         clockDate.text = Qt.formatDate(now, "dddd, MMM d");
-    }
-
-    function triggerAltTab() {
-        BigScreen.NavigationSoundEffects.playClickedSound();
-        if (plasmoid && plasmoid.nativeInterface && typeof plasmoid.nativeInterface.executeCommand === "function") {
-            plasmoid.nativeInterface.executeCommand("qdbus org.kde.kglobalaccel /component/kwin invokeShortcut 'Walk Through Windows'");
-        }
-    }
-
-    function triggerCloseApp() {
-        BigScreen.NavigationSoundEffects.playClickedSound();
-        if (plasmoid && plasmoid.nativeInterface && typeof plasmoid.nativeInterface.executeCommand === "function") {
-            plasmoid.nativeInterface.executeCommand("qdbus org.kde.kglobalaccel /component/kwin invokeShortcut 'Window Close'");
-        }
     }
 
     // Launcher Content

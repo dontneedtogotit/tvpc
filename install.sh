@@ -130,6 +130,7 @@ ITEMS=(
   "vacuumtube|0|VacuumTube is installed"
   "user_config|0|the TV user's Plasma config is seeded"
   "bigscreen|0|Plasma Bigscreen is installed with its session files"
+  "curate_home|0|Bigscreen homescreen is curated to the 6 core apps"
   "hypr|1|Hyprland session files match the repo"
 )
 
@@ -1160,6 +1161,24 @@ fix_bigscreen() {
   DEBIAN_FRONTEND=noninteractive apt-get install -y plasma-bigscreen
 }
 
+check_curate_home() {
+  local home rc
+  home="$(getent passwd "$HTPC_USER" | cut -d: -f6)"
+  [[ -n "$home" ]] || return 1
+  rc="$home/.config/applications-blacklistrc"
+  [[ -f "$rc" ]] || return 1
+  grep -q '^\[General\]' "$rc" || return 1
+  grep -q '^blacklist=' "$rc" || return 1
+  [[ -f /usr/share/applications/tvpc-setup.desktop ]] || return 1
+  [[ -f /usr/share/applications/tvpc-cameras-gui.desktop ]] || return 1
+  [[ -f /usr/share/applications/tvpc-update.desktop ]] || return 1
+  [[ -f /usr/share/applications/tvpc-allapps.desktop ]] || return 1
+}
+fix_curate_home() {
+  "$REPO_ROOT/scripts/tvpc.sh" tweaks curate
+}
+
+
 HYPR_CONFIGS=(
   "config/hypr/hyprland.lua:.config/hypr/hyprland.lua"
   "config/hypr/waybar/config.jsonc:.config/waybar/config.jsonc"
@@ -1527,7 +1546,7 @@ cat >/usr/share/applications/tvpc-power.desktop <<'EOF'
 Type=Application
 Name=Power
 Comment=Restart, shut down, or log out
-Exec=/usr/local/bin/tvpc-power
+Exec=/usr/local/bin/tvpc power
 Terminal=false
 Icon=system-shutdown
 Categories=Settings;
@@ -1537,38 +1556,54 @@ EOF
 cat >/usr/share/applications/tvpc-setup.desktop <<'EOF'
 [Desktop Entry]
 Type=Application
-Name=Setup
-Comment=Gamepad, HDMI-CEC, Anynet+, and TV power-on
-Exec=/usr/local/bin/tvpc-setup-gui
+Name=Settings
+Comment=Configure display, audio, remote, CEC, and TV settings
+Exec=/usr/local/bin/tvpc gui setup
 Terminal=false
-Icon=preferences-system-network
+Icon=preferences-system
 Categories=Settings;
-Keywords=tvpc;setup;gamepad;cec;anynet;bluetooth;
+Keywords=tvpc;setup;settings;cec;audio;
+EOF
+
+cat >/usr/share/applications/tvpc-cameras-gui.desktop <<'EOF'
+[Desktop Entry]
+Type=Application
+Name=Security Cameras
+Comment=View live CCTV security camera streams and recordings
+Exec=/usr/local/bin/tvpc cameras gui
+Terminal=false
+Icon=camera-web
+Categories=AudioVideo;Video;
+Keywords=tvpc;cameras;cctv;nvr;security;
 EOF
 
 cat >/usr/share/applications/tvpc-update.desktop <<'EOF'
 [Desktop Entry]
 Type=Application
-Name=Update
-Comment=Apply tvpc updates (repo, packages, flatpaks)
-Exec=/usr/local/bin/tvpc-update-gui
+Name=Update System
+Comment=Check for and apply updates from Git, apt, and Flatpak
+Exec=/usr/local/bin/tvpc gui update
 Terminal=false
-Icon=software-update-available
-Categories=Settings;
-Keywords=tvpc;update;upgrade;apt;flatpak;
+Icon=system-software-update
+Categories=System;
+Keywords=tvpc;update;git;upgrade;
 EOF
 
 cat >/usr/share/applications/tvpc-allapps.desktop <<'EOF'
 [Desktop Entry]
 Type=Application
-Name=All Apps
+Name=All Applications
 Comment=Browse every installed application
-Exec=/usr/local/bin/tvpc-allapps
+Exec=/usr/local/bin/tvpc gui allapps
 Terminal=false
 Icon=view-grid
-Categories=Settings;
+Categories=Utility;
 Keywords=tvpc;apps;
 EOF
+
+# Curate Bigscreen home screen to the 6 core tiles (VacuumTube, Settings, Cameras, All Apps, Chromium, Update)
+"$REPO_ROOT/scripts/tvpc.sh" tweaks curate 2>/dev/null || true
+
 
 # 8. Hardware, Power, and Audio Extras
 mkdir -p /etc/tlp.d
