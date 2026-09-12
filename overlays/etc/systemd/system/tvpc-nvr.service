@@ -1,0 +1,18 @@
+[Unit]
+Description=tvpc 24/7 NVR security camera and alarm daemon
+After=network-online.target graphical.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=htpc
+Environment=PYTHONUNBUFFERED=1
+Environment=DISPLAY=:0
+Environment=WAYLAND_DISPLAY=wayland-0
+Environment=XDG_RUNTIME_DIR=/run/user/1000
+ExecStart=/usr/bin/python3 -m tvpc_cameras_gui.nvr_daemon
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=graphical.target

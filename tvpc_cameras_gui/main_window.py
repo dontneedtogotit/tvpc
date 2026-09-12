@@ -32,6 +32,9 @@ from .motion import MotionDetector
 from .storage import StorageManager
 from .ptz import PtzDialog
 from .v4l2 import is_v4l2, normalize_v4l2_device
+from .ai_filter import ObjectFilter
+from .popup import SmartPopupManager
+from .bosch import BoschPanelClient, load_bosch_config
 
 
 class EmptyStateWidget(QWidget):
@@ -115,12 +118,32 @@ class MainWindow(QMainWindow):
         self._last_scan_results: List[DiscoveredCamera] = []
         self._settings = load_settings()
 
+        # Smart TV PiP Pop-up manager
+        self._popup_mgr = SmartPopupManager(
+            self,
+            duration_seconds=float(self._settings.get("popup_duration", 15.0)),
+            cooldown_seconds=float(self._settings.get("popup_cooldown", 20.0)),
+            sound_enabled=bool(self._settings.get("popup_sound", True)),
+        )
+
+        # AI Object Filter for Motion Detection
+        ai_enabled = bool(self._settings.get("ai_filter_enabled", False))
+        ai_target = str(self._settings.get("ai_target_mode", ObjectFilter.TARGET_PERSON_VEHICLE))
+        self._ai_filter = ObjectFilter(target_mode=ai_target) if ai_enabled else None
+
         # Motion detector
         self._motion = MotionDetector(
             sensitivity=float(self._settings.get("motion_sensitivity", 0.12)),
             auto_snapshot=bool(self._settings.get("motion_auto_snapshot", True)),
+            ai_filter=self._ai_filter,
         )
         self._motion.motion_detected.connect(self._on_motion_detected)
+
+        # Bosch Security Alarm Client
+        self._bosch = BoschPanelClient(load_bosch_config(), parent=self)
+        self._bosch.zone_triggered.connect(self._on_bosch_zone_triggered)
+        if self._bosch.config.enabled:
+            self._bosch.start()
 
         # Hotplug & background discovery monitor
         self._pending_discovered: Optional[DiscoveredCamera] = None
@@ -1016,6 +1039,23 @@ class MainWindow(QMainWindow):
         self._set_status_ready(f"🚨 Motion detected on {cam_name} (activity score {delta:.2f})")
         if self._settings.get("notifications", True):
             notify("Motion Detected", f"Activity detected on camera '{cam_name}'")
+
+        if self._settings.get("popup_on_motion", True):
+            cams = {c.name: c for c in cfg.load_cameras()}
+            cam = cams.get(cam_name)
+            if cam:
+                self._popup_mgr.trigger_popup(cam)
+
+    def _on_bosch_zone_triggered(self, zone_num: int, event_desc: str, linked_camera: str) -> None:
+        self._set_status_ready(f"🚨 Bosch Alarm: Zone {zone_num} ({event_desc}) tripped!")
+        if self._settings.get("notifications", True):
+            notify("Bosch Alarm Triggered", f"Zone {zone_num}: {event_desc} (Camera: {linked_camera})")
+
+        cams = {c.name: c for c in cfg.load_cameras()}
+        cam = cams.get(linked_camera)
+        if cam:
+            self._popup_mgr.trigger_popup(cam, force=True)
+            self._recording.start_recording(cam)
 
     # --- Hotplug & Background Discovery -----------------------------------
     def _on_v4l2_plugged(self, dev: dict) -> None:

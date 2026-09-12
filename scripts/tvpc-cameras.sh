@@ -4,6 +4,7 @@
 # windows.
 #
 # Subcommands:
+#   gui            Launch the modern PySide6 camera GUI
 #   scan           Discover cameras on the LAN (RTSP + ONVIF probe)
 #   list           Show the configured camera list
 #   add NAME URL [USER [PASS]]   Add a camera manually
@@ -421,17 +422,134 @@ cmd_help() {
     sed -n '2,20p' "$0" | sed 's/^# *//'
 }
 
+# --- Quick Toggle / Cycle (CEC Hotkeys) -----------------------------------
+cmd_toggle_pip() {
+    local id="${1:-0}"
+    if pgrep -f "title=tvpc-cameras:" >/dev/null 2>&1; then
+        pkill -f "title=tvpc-cameras:" || true
+        log "Closed active camera PiP"
+    else
+        cmd_view "$id"
+    fi
+}
+
+cmd_toggle_grid() {
+    if pgrep -f "title=tvpc-cameras:" >/dev/null 2>&1; then
+        pkill -f "title=tvpc-cameras:" || true
+        log "Closed camera grid"
+    else
+        cmd_grid
+    fi
+}
+
+cmd_cycle() {
+    local total
+    total=$(read_cameras | wc -l)
+    [[ $total -eq 0 ]] && return 0
+
+    local current_id=0
+    local state_file="${XDG_RUNTIME_DIR:-/tmp}/tvpc_cameras_cycle_state"
+    if [[ -f "$state_file" ]]; then
+        current_id=$(cat "$state_file" 2>/dev/null || echo 0)
+    fi
+    local next_id=$(( (current_id + 1) % total ))
+    echo "$next_id" >"$state_file"
+
+    pkill -f "title=tvpc-cameras:" || true
+    cmd_view "$next_id"
+}
+
+cmd_tile() {
+    local cache_dir="${XDG_CACHE_HOME:-$HOME/.cache}/tvpc"
+    local tile_image="$cache_dir/cameras_tile.jpg"
+    local desktop_entry="${XDG_DATA_HOME:-$HOME/.local/share}/applications/tvpc-cameras-live.desktop"
+
+    mkdir -p "$cache_dir" "$(dirname "$desktop_entry")"
+
+    if [[ -f "$CONF_FILE" ]]; then
+        local first_url="" first_user="" first_pass=""
+        while IFS='|' read -r name url user pass notes rest; do
+            [[ $name == \#* || -z $url ]] && continue
+            first_url="$url"
+            first_user="$user"
+            first_pass="$pass"
+            break
+        done <"$CONF_FILE"
+
+        if [[ -n "$first_url" ]]; then
+            local ffmpeg_args=(-y -hide_banner -loglevel error)
+            if [[ "$first_url" == /dev/video* ]]; then
+                ffmpeg_args+=(-f v4l2 -i "$first_url" -frames:v 1 -q:v 3 "$tile_image")
+            elif [[ "$first_url" == rtsp://* ]]; then
+                local target_url="$first_url"
+                if [[ -n "$first_user" && "$first_url" != *"@"* ]]; then
+                    target_url="rtsp://${first_user}:${first_pass}@${first_url#rtsp://}"
+                fi
+                ffmpeg_args+=(-rtsp_transport tcp -i "$target_url" -frames:v 1 -q:v 3 "$tile_image")
+            else
+                ffmpeg_args+=(-i "$first_url" -frames:v 1 -q:v 3 "$tile_image")
+            fi
+            timeout 5 ffmpeg "${ffmpeg_args[@]}" >/dev/null 2>&1 || true
+        fi
+    fi
+
+    local icon_path="$tile_image"
+    [[ -f "$tile_image" ]] || icon_path="camera-web"
+
+    cat >"$desktop_entry" <<EOF
+[Desktop Entry]
+Type=Application
+Name=Security Cameras
+GenericName=Live Camera Feed
+Comment=View live CCTV security camera streams and recordings
+Exec=/usr/local/bin/tvpc-cameras-gui
+Icon=$icon_path
+Terminal=false
+Categories=AudioVideo;Video;
+Keywords=camera;cctv;security;rtsp;nvr;surveillance;
+EOF
+    echo "Updated live camera tile: $desktop_entry"
+}
+
+cmd_gui() {
+    if ! command -v python3 >/dev/null 2>&1; then
+        echo "python3 not found. sudo apt-get install python3" >&2
+        exit 1
+    fi
+    local script_dir repo_root
+    script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    repo_root="$(cd "$script_dir/.." && pwd)"
+    if ! python3 -c "import tvpc_cameras_gui" 2>/dev/null; then
+        if [[ -d "$repo_root/tvpc_cameras_gui" ]]; then
+            export PYTHONPATH="${repo_root}${PYTHONPATH:+:$PYTHONPATH}"
+        fi
+    fi
+    exec python3 -m tvpc_cameras_gui "$@"
+}
+
 # --- Dispatch -------------------------------------------------------------
 log() { printf '\033[1;36m==>\033[0m %s\n' "$*"; }
-case "${1:-menu}" in
+case "${1:-}" in
     scan)     cmd_scan ;;
     list)     cmd_list ;;
     add)      shift; cmd_add "$@" ;;
     remove|rm) shift; cmd_remove "$@" ;;
     view|play) shift; cmd_view "$@" ;;
     grid)     cmd_grid ;;
-    menu|gui|"") cmd_menu ;;
+    toggle-pip|toggle) shift; cmd_toggle_pip "$@" ;;
+    toggle-grid) shift; cmd_toggle_grid "$@" ;;
+    cycle)    shift; cmd_cycle "$@" ;;
+    tile)     shift; cmd_tile "$@" ;;
+    menu)     cmd_menu ;;
+    gui)      shift; cmd_gui "$@" ;;
     config)   echo "$CONF_FILE" ;;
     help|--help|-h) cmd_help ;;
+    "")
+        if [[ -n "${WAYLAND_DISPLAY:-}" || -n "${DISPLAY:-}" ]]; then
+            cmd_gui "$@"
+        else
+            cmd_menu
+        fi
+        ;;
     *) echo "Unknown command: $1 (try: tvpc-cameras help)"; exit 1 ;;
 esac

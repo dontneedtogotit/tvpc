@@ -14,14 +14,17 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+if [[ -x "$SCRIPT_DIR/tvpc-cameras.sh" ]]; then
+    exec "$SCRIPT_DIR/tvpc-cameras.sh" gui "$@"
+elif command -v tvpc-cameras >/dev/null 2>&1; then
+    exec tvpc-cameras gui "$@"
+fi
+
 if ! command -v python3 >/dev/null 2>&1; then
     echo "python3 not found. sudo apt-get install python3" >&2
     exit 1
 fi
 
-# Make sure the package is importable. If it's installed system-wide
-# this is a no-op; if we're running from a repo checkout, add the
-# repo root to PYTHONPATH.
 if ! python3 -c "import tvpc_cameras_gui" 2>/dev/null; then
     REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
     if [[ -d "$REPO_ROOT/tvpc_cameras_gui" ]]; then

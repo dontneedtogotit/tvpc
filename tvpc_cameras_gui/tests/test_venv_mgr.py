@@ -7,6 +7,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -89,7 +90,12 @@ class TestVenvMgrInstallation(unittest.TestCase):
         venv_mgr.VENV_BASE_DIR = self._orig_base
         self.tmp_dir.cleanup()
 
-    def test_install_package(self) -> None:
+    @patch("subprocess.run")
+    def test_install_package(self, mock_run) -> None:
+        mock_proc = MagicMock()
+        mock_proc.returncode = 0
+        mock_proc.stdout = "Successfully installed requests\n"
+        mock_run.return_value = mock_proc
         messages = []
 
         def capture(msg: str) -> None:
@@ -99,7 +105,12 @@ class TestVenvMgrInstallation(unittest.TestCase):
         self.assertTrue(success)
         self.assertTrue(any("Installing packages" in m for m in messages))
 
-    def test_install_multiple_packages(self) -> None:
+    @patch("subprocess.run")
+    def test_install_multiple_packages(self, mock_run) -> None:
+        mock_proc = MagicMock()
+        mock_proc.returncode = 0
+        mock_proc.stdout = "Successfully installed requests urllib3\n"
+        mock_run.return_value = mock_proc
         messages = []
 
         def capture(msg: str) -> None:

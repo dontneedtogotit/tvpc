@@ -9,7 +9,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QDialog, QDialogButtonBox, QVBoxLayout, QFormLayout, QSpinBox,
     QDoubleSpinBox, QCheckBox, QGroupBox, QHBoxLayout, QLabel, QPushButton,
-    QTabWidget, QWidget, QLineEdit,
+    QTabWidget, QWidget, QLineEdit, QComboBox,
 )
 
 from . import config as cfg
@@ -80,6 +80,7 @@ class SettingsDialog(QDialog):
         self._build_storage_tab(self._tabs)
         self._build_motion_tab(self._tabs)
         self._build_hotplug_tab(self._tabs)
+        self._build_bosch_tab(self._tabs)
         self._build_health_tab(self._tabs)
         self._build_credentials_tab(self._tabs)
         self._build_ui_tab(self._tabs)
@@ -268,9 +269,18 @@ class SettingsDialog(QDialog):
         self._motion_snapshot.setChecked(bool(self._settings.get("motion_auto_snapshot", True)))
         form.addRow("", self._motion_snapshot)
 
+        self._ai_filter_enabled = QCheckBox("Enable AI person & vehicle filtering")
+        self._ai_filter_enabled.setChecked(bool(self._settings.get("ai_filter_enabled", False)))
+        form.addRow("", self._ai_filter_enabled)
+
+        self._ai_target_mode = QComboBox()
+        self._ai_target_mode.addItems(["person_vehicle", "person", "vehicle", "all"])
+        self._ai_target_mode.setCurrentText(str(self._settings.get("ai_target_mode", "person_vehicle")))
+        form.addRow("AI detection target:", self._ai_target_mode)
+
         note = QLabel(
             "Lower threshold = higher sensitivity.\n"
-            "Motion alerts show a badge and optionally save a snapshot."
+            "AI filter suppresses false alerts from rain, tree shadows, and insects."
         )
         note.setStyleSheet("color: #888;")
         form.addRow("", note)
@@ -295,14 +305,78 @@ class SettingsDialog(QDialog):
         self._patrol_interval.setValue(int(self._settings.get("patrol_interval_s", 10)))
         form.addRow("Patrol carousel interval:", self._patrol_interval)
 
+        self._popup_on_motion = QCheckBox("Auto-display TV PiP pop-up on motion or alarm")
+        self._popup_on_motion.setChecked(bool(self._settings.get("popup_on_motion", True)))
+        form.addRow("", self._popup_on_motion)
+
+        self._popup_duration = QSpinBox()
+        self._popup_duration.setRange(5, 60)
+        self._popup_duration.setSuffix(" s")
+        self._popup_duration.setValue(int(self._settings.get("popup_duration", 15)))
+        form.addRow("TV pop-up display time:", self._popup_duration)
+
+        self._popup_sound = QCheckBox("Play gentle audio chime on TV alert")
+        self._popup_sound.setChecked(bool(self._settings.get("popup_sound", True)))
+        form.addRow("", self._popup_sound)
+
         note = QLabel(
             "Detects newly plugged USB webcams and network cameras joining the LAN.\n"
-            "Patrol carousel automatically cycles through cameras for TV monitoring."
+            "TV pop-up displays a transient corner preview during doorbell or motion events."
         )
         note.setStyleSheet("color: #888;")
         form.addRow("", note)
 
         tabs.addTab(w, "Automation")
+
+    def _build_bosch_tab(self, tabs: QTabWidget) -> None:
+        w = QWidget()
+        form = QFormLayout(w)
+
+        from .bosch import load_bosch_config
+        bcfg = load_bosch_config()
+
+        self._bosch_enabled = QCheckBox("Enable Bosch Alarm System integration")
+        self._bosch_enabled.setChecked(bcfg.enabled)
+        form.addRow("", self._bosch_enabled)
+
+        self._bosch_protocol = QComboBox()
+        self._bosch_protocol.addItem("Direct Mode 2 TCP (Solution / B-Series)", "mode2")
+        self._bosch_protocol.addItem("SIA DC-09 IP Receiver", "sia")
+        idx = 1 if bcfg.protocol == "sia" else 0
+        self._bosch_protocol.setCurrentIndex(idx)
+        form.addRow("Integration Protocol:", self._bosch_protocol)
+
+        self._bosch_host = QLineEdit(bcfg.host)
+        self._bosch_host.setPlaceholderText("e.g. 192.168.1.50")
+        form.addRow("Panel IP / Hostname:", self._bosch_host)
+
+        self._bosch_port = QSpinBox()
+        self._bosch_port.setRange(1, 65535)
+        self._bosch_port.setValue(bcfg.port)
+        form.addRow("Panel Port:", self._bosch_port)
+
+        self._bosch_passcode = QLineEdit(bcfg.passcode)
+        self._bosch_passcode.setEchoMode(QLineEdit.Password)
+        form.addRow("Panel Passcode:", self._bosch_passcode)
+
+        self._bosch_listen_port = QSpinBox()
+        self._bosch_listen_port.setRange(1, 65535)
+        self._bosch_listen_port.setValue(bcfg.listen_port)
+        form.addRow("SIA Receiver Port:", self._bosch_listen_port)
+
+        zone_str = ", ".join(f"{k}={v}" for k, v in bcfg.zone_mapping.items())
+        self._bosch_zones = QLineEdit(zone_str)
+        self._bosch_zones.setPlaceholderText("e.g. 1=Front Door, 2=Driveway, 3=Backyard")
+        form.addRow("Zone -> Camera Mapping:", self._bosch_zones)
+
+        note = QLabel(
+            "Tripped alarm zones instantly trigger a TV pop-up and start an event recording\n"
+            "for the linked camera feed."
+        )
+        note.setStyleSheet("color: #888;")
+        form.addRow("", note)
+
+        tabs.addTab(w, "Bosch Alarm")
 
     def _build_ui_tab(self, tabs: QTabWidget) -> None:
         w = QWidget()
@@ -348,10 +422,36 @@ class SettingsDialog(QDialog):
         self._settings["motion_detection_enabled"] = self._motion_enabled.isChecked()
         self._settings["motion_sensitivity"] = self._motion_sens.value()
         self._settings["motion_auto_snapshot"] = self._motion_snapshot.isChecked()
+        self._settings["ai_filter_enabled"] = self._ai_filter_enabled.isChecked()
+        self._settings["ai_target_mode"] = self._ai_target_mode.currentText()
         self._settings["background_discovery"] = self._bg_discovery.isChecked()
         self._settings["auto_add_discovered"] = self._auto_add.isChecked()
         self._settings["patrol_interval_s"] = self._patrol_interval.value()
+        self._settings["popup_on_motion"] = self._popup_on_motion.isChecked()
+        self._settings["popup_duration"] = self._popup_duration.value()
+        self._settings["popup_sound"] = self._popup_sound.isChecked()
         save_settings(self._settings)
+
+        # Save Bosch config
+        from .bosch import BoschConfig, save_bosch_config
+        zone_map = {}
+        for part in self._bosch_zones.text().split(","):
+            if "=" in part:
+                z, c = part.split("=", 1)
+                if z.strip():
+                    zone_map[z.strip()] = c.strip()
+
+        bcfg = BoschConfig(
+            enabled=self._bosch_enabled.isChecked(),
+            protocol=self._bosch_protocol.currentData() or "mode2",
+            host=self._bosch_host.text().strip(),
+            port=self._bosch_port.value(),
+            passcode=self._bosch_passcode.text(),
+            listen_port=self._bosch_listen_port.value(),
+            zone_mapping=zone_map,
+        )
+        save_bosch_config(bcfg)
+
         self._changed = True
         self.accept()
 

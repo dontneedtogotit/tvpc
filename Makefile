@@ -43,10 +43,10 @@ install:
 	sudo ./install.sh
 
 update:
-	sudo ./scripts/tvpc-update.sh
+	sudo ./install.sh --update
 
 update-check:
-	sudo ./scripts/tvpc-update.sh --check
+	./install.sh --check
 
 repair:
 	sudo ./scripts/tvpc-repair.sh
@@ -88,7 +88,7 @@ cameras-menu:
 	./scripts/tvpc-cameras.sh menu
 
 cameras-gui:
-	./scripts/tvpc-cameras-gui.sh
+	./scripts/tvpc-cameras.sh gui
 
 status:
 	./scripts/tvpc-status.sh
@@ -105,17 +105,14 @@ setup-gui:
 update-gui:
 	./scripts/tvpc-update-gui.sh
 
-postboot:
-	sudo ./scripts/tvpc-postboot.sh
-
 doctor:
 	bash ./scripts/tvpc-doctor.sh
 
 cec-remote:
-	sudo ./scripts/enhance-cec.sh
+	sudo ./scripts/tvpc-cec.sh setup
 
 cec-poweron:
-	sudo ./scripts/cec-tv-poweron.sh
+	sudo ./scripts/tvpc-cec.sh poweron
 
 check-updates:
 	flatpak update
@@ -132,7 +129,8 @@ check:
 	@bash tests/test-tvpc-gui.sh
 	@bash tests/test-tvpc-bigscreen-theme.sh
 	@command -v shellcheck >/dev/null && shellcheck -x -S warning install.sh scripts/*.sh tests/*.sh || echo "shellcheck not installed (skipping)"
-	@./scripts/check-hyprland-config.sh
+	@./tests/test-hyprland-config.sh
 
 clean:
 	rm -f /var/log/tvpc-install.log
+

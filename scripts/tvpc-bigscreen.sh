@@ -19,6 +19,7 @@
 #
 # Tuning the shell once it is running:
 #   sudo ./scripts/tvpc-bigscreen.sh --ui-scale 10       shrink/grow the whole UI
+#   sudo ./scripts/tvpc-bigscreen.sh --topbar [large|huge|revert] enlarge top bar indicators
 #   sudo ./scripts/tvpc-bigscreen.sh --theme midnight    set modern homescreen theme (midnight, oled, cyberpunk, sunset, emerald)
 #   sudo ./scripts/tvpc-bigscreen.sh --list-apps         apps the home screen shows
 #   sudo ./scripts/tvpc-bigscreen.sh --hide firefox,vlc  drop apps from the home screen
@@ -38,6 +39,7 @@ case "${1:-}" in
   --remove)    MODE=remove ;;
   --list-apps) MODE=listapps ;;
   --ui-scale)  MODE=uiscale ;;
+  --topbar)    MODE=topbar ;;
   --theme)     MODE=theme ;;
   --hide)      MODE=hide ;;
   --show)      MODE=show ;;
@@ -226,6 +228,45 @@ if [[ $MODE == theme ]]; then
   else
     "$THEME_TOOL" list
   fi
+  exit 0
+fi
+
+if [[ $MODE == topbar ]]; then
+  MAIN_QML="/usr/share/plasma/plasmoids/org.kde.mycroft.bigscreen.homescreen/contents/ui/main.qml"
+  [[ $EUID -eq 0 ]] || { echo "Run as root (sudo $0 --topbar ...) — the file is owned by root." >&2; exit 1; }
+  [[ -f $MAIN_QML ]] || { echo "Not found: $MAIN_QML" >&2; echo "Is plasma-bigscreen installed?" >&2; exit 1; }
+  BAK="${MAIN_QML}.tvpc-bak"
+
+  case "${ARG:-large}" in
+    --revert|revert)
+      if [[ -f $BAK ]]; then
+        cp -a "$BAK" "$MAIN_QML"
+        echo "Reverted top bar to original."
+      else
+        echo "No backup at $BAK — nothing to revert." >&2
+        exit 1
+      fi
+      exit 0 ;;
+    xl|huge)   TARGET="huge"  ;;
+    ""|normal|large) TARGET="large" ;;
+    *) echo "Usage: $0 --topbar [large|huge|revert]" >&2; exit 1 ;;
+  esac
+
+  if [[ ! -f $BAK ]]; then
+    cp -a "$MAIN_QML" "$BAK"
+    echo "Backup -> $BAK"
+  fi
+
+  if grep -q 'iconSizes\.medium + Kirigami\.Units\.smallSpacing \* 2' "$MAIN_QML"; then
+    sed -i "s/iconSizes\.medium + Kirigami\.Units\.smallSpacing \* 2/iconSizes.${TARGET} + Kirigami.Units.smallSpacing * 2/" "$MAIN_QML"
+    echo "Patched topBar.height: medium -> ${TARGET}"
+  elif grep -q "iconSizes\.${TARGET} + Kirigami\.Units\.smallSpacing" "$MAIN_QML"; then
+    echo "Already patched to '${TARGET}'. (run with revert to undo first)"
+  else
+    echo "Could not find the expected top-bar height line." >&2
+    exit 1
+  fi
+  echo "Log out and back in (or restart the Bigscreen session) to see the change."
   exit 0
 fi
 

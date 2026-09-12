@@ -397,13 +397,17 @@ class TestOrionRtspPathDiscovery(unittest.TestCase):
         try:
             from tvpc_cameras_gui import discover
             from tvpc_cameras_gui.scan import ScanWorker
+            from unittest.mock import patch
             old_ports = discover.RTSP_PORTS
             discover.RTSP_PORTS = (bound_port, *old_ports)
             try:
-                worker = ScanWorker(cidr="127.0.0.1/32", workers=16, do_onvif_enrich=False)
-                found: list = []
-                worker.found.connect(lambda c: found.append(c))
-                worker.run()
+                with patch.object(discover, "ssdp_discover", return_value=[]), \
+                     patch.object(discover, "mdns_discover", return_value=[]), \
+                     patch.object(discover, "discover_local_devices", return_value=[]):
+                    worker = ScanWorker(cidr="127.0.0.1/32", workers=16, do_onvif_enrich=False)
+                    found: list = []
+                    worker.found.connect(lambda c: found.append(c))
+                    worker.run()
             finally:
                 discover.RTSP_PORTS = old_ports
             self.assertGreater(len(found), 0, "ScanWorker did not find the Grid Connect mock")
@@ -520,13 +524,15 @@ class TestScanWorkerEndToEnd(unittest.TestCase):
             try:
                 # Run synchronously: no QThread, no app.exec(). The worker
                 # is a QObject but its signals can be emitted directly when
-                # the slot is on the same thread as the caller.
-                QApplication.instance() or QApplication.instance()
-                worker = ScanWorker(cidr="127.0.0.1/32", workers=16, do_onvif_enrich=False)
-                found: list = []
-                worker.found.connect(lambda c: found.append(c))
-                worker.finished.connect(lambda: None)  # nothing — we just collect
-                worker.run()
+                from unittest.mock import patch
+                with patch.object(discover, "ssdp_discover", return_value=[]), \
+                     patch.object(discover, "mdns_discover", return_value=[]), \
+                     patch.object(discover, "discover_local_devices", return_value=[]):
+                    worker = ScanWorker(cidr="127.0.0.1/32", workers=16, do_onvif_enrich=False)
+                    found: list = []
+                    worker.found.connect(lambda c: found.append(c))
+                    worker.finished.connect(lambda: None)  # nothing — we just collect
+                    worker.run()
             finally:
                 discover.RTSP_PORTS = old_ports
             self.assertGreater(len(found), 0, "ScanWorker did not find the mock RTSP server")

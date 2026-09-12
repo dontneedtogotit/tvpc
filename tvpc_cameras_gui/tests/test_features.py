@@ -244,6 +244,7 @@ class TestDialogs(unittest.TestCase):
         self.assertTrue(any("Storage" in t for t in tab_names))
         self.assertTrue(any("Motion" in t for t in tab_names))
         self.assertTrue(any("Automation" in t for t in tab_names))
+        self.assertTrue(any("Bosch" in t for t in tab_names))
 
 
 if __name__ == "__main__":

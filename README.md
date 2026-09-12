@@ -318,26 +318,28 @@ sudo ./scripts/prepare-ventoy-data.sh /dev/sdXN
 ### After the first boot
 
 ```bash
-sudo ./scripts/tvpc-postboot.sh   # SSH, Wi-Fi, password
+sudo ./install.sh --update   # converge configuration & update packages
 ```
 
 ---
 
 ## Keeping the machine where it is meant to be
 
-`tvpc-update` compares the running system against the state this repo intends,
-reports what is already done and what is not, and fixes the gaps. From the
+`install.sh` handles both initial installation and ongoing maintenance. Running
+`./install.sh --update` compares the running system against the state this repo intends,
+reports what is already done and what is not, and converges the configuration. From the
 Plasma desktop, `tvpc-update-gui` provides the same maintenance flow with
 confirmation dialogs for repository, apt, and Flatpak updates.
 
 ```bash
-sudo ./scripts/tvpc-update.sh --list          # what it checks
-sudo ./scripts/tvpc-update.sh --check         # report only, changes nothing
-sudo ./scripts/tvpc-update.sh                 # converge, then apt + flatpak update
-sudo ./scripts/tvpc-update.sh --no-packages   # converge only
-tvpc-update-gui                               # interactive couch-friendly updater
-tvpc-update-gui --check                       # interactive report only
+./install.sh --list               # what it checks
+./install.sh --check              # report only, changes nothing
+sudo ./install.sh --update        # converge, then apt + flatpak update
+sudo ./install.sh --no-packages   # converge only (no package upgrades)
+tvpc-update-gui                   # interactive couch-friendly updater
+tvpc-update-gui --check           # interactive report only
 ```
+`sudo tvpc-update` and `./scripts/tvpc-update.sh` remain available as aliases that forward to `install.sh --update`.
 
 It checks 18 items: the config file, the TV user and its groups, the absence of
 the display-breaking files, whether the helper programs in `/usr/local/bin`
@@ -705,24 +707,34 @@ Xorg config), GPU/VA-API, HDMI audio, CEC, Wi-Fi, SSH, swap and Flatpak updates.
 
 ```
 tvpc/
-├── install.sh                      # One-shot installer (online), verifies before it exits
+├── install.sh                      # Master installer and updater (modes: --install, --update, --check, --list)
 ├── scripts/
+│   ├── tvpc-cec.sh                 # Unified HDMI-CEC management (poweron, setup, check, listen)
 │   ├── tvpc-repair.sh              # Fix a box that boots to a black screen
-│   ├── tvpc-update.sh              # Converge the system to the intended state
+│   ├── tvpc-update.sh              # Updater alias (forwards to install.sh --update)
 │   ├── tvpc-session.sh             # Choose + wire up the graphical session
 │   ├── tvpc-doctor.sh              # Health check
-│   ├── tvpc-postboot.sh            # Run once after first boot
 │   ├── tvpc-hdmi-audio.sh          # Detect and select the HDMI output
 │   ├── customize.sh                # Idempotent UI/theme tweaks
-│   ├── enhance-cec.sh              # Samsung remote button mapping
-│   ├── cec-tv-poweron.sh           # CEC power-on at boot
-│   ├── install-extras.sh           # HW checks + NUC tuning
 │   ├── tvpc-tweaks.sh              # All-in-one UI/display/audio/CEC tweaks
+│   ├── tvpc-cameras.sh             # Security camera manager (CLI + GUI via `tvpc-cameras gui`)
+│   ├── tvpc-cameras-gui.sh         # Security camera PySide6 GUI launcher
+│   ├── tvpc-bigscreen.sh           # Plasma Bigscreen shell manager & topbar tuner
+│   ├── tvpc-bigscreen-theme.sh     # Modern Bigscreen homescreen themes & installer
+│   ├── tvpc-hyprland.sh            # Hyprland TV shell installer
+│   ├── tvpc-controller.sh          # Gamepad / Bluetooth controller setup
+│   ├── tvpc-status.sh              # System status dashboard
+│   ├── tvpc-power.sh               # Couch power / session menu
+│   ├── tvpc-allapps.sh             # All applications grid launcher
+│   ├── tvpc-setup-gui.sh           # Setup GUI (gamepad, CEC, TV power)
+│   ├── tvpc-update-gui.sh          # Couch-friendly updater GUI
+│   ├── tvpc-vacuumtube-scroll.sh   # Remote scroll daemon for VacuumTube
 │   ├── make-offline-usb.sh         # Offline USB creator
-│   ├── prepare-ventoy-data.sh      # Ventoy data partition prep
-│   └── install-ubuntu-server.sh    # Simple USB builder
+│   └── prepare-ventoy-data.sh      # Ventoy data partition prep
 ├── autoinstall/                    # Subiquity autoinstall config
 ├── overlays/etc/                   # Files rsynced onto /
+├── tests/                          # Integration and shell contract tests
+├── tvpc_cameras_gui/               # PySide6 IP security camera desktop package
 ├── Makefile
 └── README.md
 ```

@@ -15,7 +15,8 @@ from .config import RECORD_DIR
 class MotionDetector(QObject):
     """Detects frame differences between consecutive camera preview frames."""
 
-    motion_detected = Signal(str, float)  # (camera_name, delta_score)
+    motion_detected = Signal(str, float)        # (camera_name, delta_score)
+    object_detected = Signal(str, str, float)  # (camera_name, object_label, confidence)
 
     def __init__(
         self,
@@ -23,12 +24,14 @@ class MotionDetector(QObject):
         cooldown_seconds: float = 5.0,
         auto_snapshot: bool = True,
         record_dir: Optional[Path] = None,
+        ai_filter: Optional[Any] = None,
     ) -> None:
         super().__init__()
         self.sensitivity = sensitivity
         self.cooldown_seconds = cooldown_seconds
         self.auto_snapshot = auto_snapshot
         self.record_dir = record_dir or RECORD_DIR
+        self.ai_filter = ai_filter
 
         # camera_name -> (last_sample_grid, last_trigger_time)
         self._camera_states: Dict[str, Tuple[list[int], float]] = {}
@@ -84,13 +87,22 @@ class MotionDetector(QObject):
 
         # Check threshold and cooldown
         if delta >= self.sensitivity and (now - last_trigger) >= self.cooldown_seconds:
-            self._camera_states[camera_name] = (grid, now)
+            matched = True
+            obj_label = "motion"
+            obj_conf = delta
 
-            if self.auto_snapshot:
-                self._save_motion_snapshot(camera_name, image)
+            if self.ai_filter is not None:
+                matched, obj_label, obj_conf = self.ai_filter.matches_target(image)
 
-            self.motion_detected.emit(camera_name, delta)
-            return True
+            if matched:
+                self._camera_states[camera_name] = (grid, now)
+
+                if self.auto_snapshot:
+                    self._save_motion_snapshot(camera_name, image)
+
+                self.motion_detected.emit(camera_name, delta)
+                self.object_detected.emit(camera_name, obj_label, obj_conf)
+                return True
 
         return False
 
