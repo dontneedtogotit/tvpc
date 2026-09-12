@@ -707,34 +707,13 @@ Xorg config), GPU/VA-API, HDMI audio, CEC, Wi-Fi, SSH, swap and Flatpak updates.
 
 ```
 tvpc/
-├── install.sh                      # Master installer and updater (modes: --install, --update, --check, --list)
+├── install.sh                      # Master installer, updater, convergence, and media creator
 ├── scripts/
-│   ├── tvpc-cec.sh                 # Unified HDMI-CEC management (poweron, setup, check, listen)
-│   ├── tvpc-repair.sh              # Fix a box that boots to a black screen
-│   ├── tvpc-update.sh              # Updater alias (forwards to install.sh --update)
-│   ├── tvpc-session.sh             # Choose + wire up the graphical session
-│   ├── tvpc-doctor.sh              # Health check
-│   ├── tvpc-hdmi-audio.sh          # Detect and select the HDMI output
-│   ├── customize.sh                # Idempotent UI/theme tweaks
-│   ├── tvpc-tweaks.sh              # All-in-one UI/display/audio/CEC tweaks
-│   ├── tvpc-cameras.sh             # Security camera manager (CLI + GUI via `tvpc-cameras gui`)
-│   ├── tvpc-cameras-gui.sh         # Security camera PySide6 GUI launcher
-│   ├── tvpc-bigscreen.sh           # Plasma Bigscreen shell manager & topbar tuner
-│   ├── tvpc-bigscreen-theme.sh     # Modern Bigscreen homescreen themes & installer
-│   ├── tvpc-hyprland.sh            # Hyprland TV shell installer
-│   ├── tvpc-controller.sh          # Gamepad / Bluetooth controller setup
-│   ├── tvpc-status.sh              # System status dashboard
-│   ├── tvpc-power.sh               # Couch power / session menu
-│   ├── tvpc-allapps.sh             # All applications grid launcher
-│   ├── tvpc-setup-gui.sh           # Setup GUI (gamepad, CEC, TV power)
-│   ├── tvpc-update-gui.sh          # Couch-friendly updater GUI
-│   ├── tvpc-vacuumtube-scroll.sh   # Remote scroll daemon for VacuumTube
-│   ├── make-offline-usb.sh         # Offline USB creator
-│   └── prepare-ventoy-data.sh      # Ventoy data partition prep
-├── autoinstall/                    # Subiquity autoinstall config
-├── overlays/etc/                   # Files rsynced onto /
-├── tests/                          # Integration and shell contract tests
-├── tvpc_cameras_gui/               # PySide6 IP security camera desktop package
+│   └── tvpc.sh                     # Unified appliance runtime manager (CLI, GUI, multi-call symlinks)
+├── overlays/etc/                   # System configuration and Bigscreen overlays rsynced onto /
+├── tests/
+│   └── test-tvpc.sh                # Unified test suite (syntax, GUI contracts, themes, Hyprland)
+├── tvpc_cameras_gui/               # PySide6 IP security camera & NVR desktop package
 ├── Makefile
 └── README.md
 ```

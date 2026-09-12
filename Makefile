@@ -49,87 +49,85 @@ update-check:
 	./install.sh --check
 
 repair:
-	sudo ./scripts/tvpc-repair.sh
+	sudo ./scripts/tvpc.sh repair
 
 check-boot:
-	sudo ./scripts/tvpc-repair.sh --check
+	sudo ./scripts/tvpc.sh repair --check
 
 logs:
-	sudo ./scripts/tvpc-repair.sh --logs
+	sudo ./scripts/tvpc.sh repair --logs
 
 session:
-	sudo ./scripts/tvpc-session.sh $(or $(S),auto)
+	sudo ./scripts/tvpc.sh session $(or $(S),auto)
 
 customize:
-	sudo ./scripts/customize.sh
+	sudo ./install.sh --customize
 
 theme:
-	./scripts/tvpc-bigscreen-theme.sh list
+	./scripts/tvpc.sh theme list
 
 theme-set:
-	./scripts/tvpc-bigscreen-theme.sh set $(or $(T),midnight)
+	./scripts/tvpc.sh theme set $(or $(T),midnight)
 
 theme-install:
-	sudo ./scripts/tvpc-bigscreen-theme.sh install
+	sudo ./scripts/tvpc.sh theme install
 
 tweaks:
-	sudo ./scripts/tvpc-tweaks.sh install-launcher
+	sudo ./scripts/tvpc.sh tweaks install-launcher
 
 home:
-	sudo ./scripts/tvpc-tweaks.sh home-preset
+	sudo ./scripts/tvpc.sh tweaks home
 
 home-vacuum:
-	sudo ./scripts/tvpc-tweaks.sh vacuum-only
+	sudo ./scripts/tvpc.sh tweaks vacuum-only
 
 tweaks-menu:
-	./scripts/tvpc-tweaks.sh
+	./scripts/tvpc.sh tweaks
 
 cameras-menu:
-	./scripts/tvpc-cameras.sh menu
+	./scripts/tvpc.sh cameras menu
 
 cameras-gui:
-	./scripts/tvpc-cameras.sh gui
+	./scripts/tvpc.sh cameras gui
 
 status:
-	./scripts/tvpc-status.sh
+	./scripts/tvpc.sh status
 
 controller-status:
-	sudo ./scripts/tvpc-controller.sh status
+	sudo ./scripts/tvpc.sh controller status
 
 controller-pair:
-	sudo ./scripts/tvpc-controller.sh pair-gamepad
+	sudo ./scripts/tvpc.sh controller pair-gamepad
 
 setup-gui:
-	./scripts/tvpc-setup-gui.sh
+	./scripts/tvpc.sh gui setup
 
 update-gui:
-	./scripts/tvpc-update-gui.sh
+	./scripts/tvpc.sh gui update
 
 doctor:
-	bash ./scripts/tvpc-doctor.sh
+	bash ./scripts/tvpc.sh doctor
 
 cec-remote:
-	sudo ./scripts/tvpc-cec.sh setup
+	sudo ./scripts/tvpc.sh cec setup
 
 cec-poweron:
-	sudo ./scripts/tvpc-cec.sh poweron
+	sudo ./scripts/tvpc.sh cec poweron
 
 check-updates:
 	flatpak update
 	sudo apt update && sudo apt list --upgradable
 
 offline-usb:
-	sudo ./scripts/make-offline-usb.sh $(USB)
+	sudo ./install.sh --make-usb $(USB)
 
 test: check
 	pytest tvpc_cameras_gui/tests
 
 check:
-	@bash -n install.sh scripts/*.sh tests/*.sh && echo "bash syntax OK"
-	@bash tests/test-tvpc-gui.sh
-	@bash tests/test-tvpc-bigscreen-theme.sh
-	@command -v shellcheck >/dev/null && shellcheck -x -S warning install.sh scripts/*.sh tests/*.sh || echo "shellcheck not installed (skipping)"
-	@./tests/test-hyprland-config.sh
+	@bash -n install.sh scripts/tvpc.sh tests/test-tvpc.sh && echo "bash syntax OK"
+	@bash tests/test-tvpc.sh
+	@command -v shellcheck >/dev/null && shellcheck -x -S warning install.sh scripts/tvpc.sh tests/test-tvpc.sh || echo "shellcheck not installed (skipping)"
 
 clean:
 	rm -f /var/log/tvpc-install.log

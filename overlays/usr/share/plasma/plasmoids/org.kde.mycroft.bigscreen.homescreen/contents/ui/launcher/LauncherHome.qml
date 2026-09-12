@@ -226,9 +226,9 @@ FocusScope {
                 shownItems: Kicker.RecentUsageModel.OnlyApps
             }
 
-            visible: count > 0
+            visible: plasmoid.configuration.expandingTiles && count > 0
             currentIndex: 0
-            focus: true
+            focus: visible
             onActiveFocusChanged: if (activeFocus) launcherHomeColumn.currentSection = recentView
             delegate: Delegates.AppDelegate {
                 property var modelData: typeof model !== "undefined" ? model : null
@@ -275,7 +275,15 @@ FocusScope {
                 filterRole: "ApplicationCategoriesRole"
                 filterRowCallback: function(source_row, source_parent) {
                     var cats = sourceModel.data(sourceModel.index(source_row, 0, source_parent), ApplicationListModel.ApplicationCategoriesRole);
-                    return cats.indexOf("Game") === -1 && cats.indexOf("VoiceApp") === -1;
+                    if (cats.indexOf("Game") !== -1 || cats.indexOf("VoiceApp") !== -1) return false;
+                    var storageId = sourceModel.data(sourceModel.index(source_row, 0, source_parent), ApplicationListModel.ApplicationStorageIdRole);
+                    if (storageId) {
+                        var sid = storageId.toString().toLowerCase();
+                        if (sid.indexOf("foot") !== -1 || sid.indexOf("term") !== -1 || sid.indexOf("ghostty") !== -1 || sid.indexOf("konsole") !== -1) {
+                            return false;
+                        }
+                    }
+                    return true;
                 }
             }
 
