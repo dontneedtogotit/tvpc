@@ -20,13 +20,10 @@ import "delegates" as Delegates
 import org.kde.mycroft.bigscreen 1.0 as BigScreen
 import org.kde.private.biglauncher 1.0
 import org.kde.plasma.private.kicker 0.1 as Kicker
-import "../.." as RootUI
-
 FocusScope {
     id: launcherHomeRoot
 
-    property var theme: (typeof root !== "undefined" && root.theme) ? root.theme : fallbackTheme
-    RootUI.Theme { id: fallbackTheme }
+    property var theme: (typeof root !== "undefined" && root.theme) ? root.theme : null
 
     property bool mycroftIntegration: (plasmoid && plasmoid.nativeInterface && plasmoid.nativeInterface.bigLauncherDbusAdapterInterface)
         ? (plasmoid.nativeInterface.bigLauncherDbusAdapterInterface.mycroftIntegrationActive() ? 1 : 0)
