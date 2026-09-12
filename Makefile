@@ -124,6 +124,9 @@ check-updates:
 offline-usb:
 	sudo ./scripts/make-offline-usb.sh $(USB)
 
+test: check
+	pytest tvpc_cameras_gui/tests
+
 check:
 	@bash -n install.sh scripts/*.sh tests/*.sh && echo "bash syntax OK"
 	@bash tests/test-tvpc-gui.sh

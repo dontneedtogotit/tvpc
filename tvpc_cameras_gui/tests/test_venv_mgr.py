@@ -4,6 +4,7 @@ from __future__ import annotations
 import os
 import shutil
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -43,13 +44,14 @@ class TestVenvMgrCreation(unittest.TestCase):
     """Test venv creation functions."""
 
     def setUp(self) -> None:
+        self.tmp_dir = tempfile.TemporaryDirectory()
+        self._orig_base = venv_mgr.VENV_BASE_DIR
+        venv_mgr.VENV_BASE_DIR = Path(self.tmp_dir.name)
         self.test_venv_path = venv_mgr.get_venv_path()
-        if self.test_venv_path.exists():
-            shutil.rmtree(self.test_venv_path)
 
     def tearDown(self) -> None:
-        if self.test_venv_path.exists():
-            shutil.rmtree(self.test_venv_path)
+        venv_mgr.VENV_BASE_DIR = self._orig_base
+        self.tmp_dir.cleanup()
 
     def test_venv_exists_false_when_not_created(self) -> None:
         self.assertFalse(venv_mgr.venv_exists())
@@ -77,14 +79,15 @@ class TestVenvMgrInstallation(unittest.TestCase):
     """Test package installation in venv."""
 
     def setUp(self) -> None:
+        self.tmp_dir = tempfile.TemporaryDirectory()
+        self._orig_base = venv_mgr.VENV_BASE_DIR
+        venv_mgr.VENV_BASE_DIR = Path(self.tmp_dir.name)
         self.test_venv_path = venv_mgr.get_venv_path()
-        if self.test_venv_path.exists():
-            shutil.rmtree(self.test_venv_path)
         venv_mgr.create_venv()
 
     def tearDown(self) -> None:
-        if self.test_venv_path.exists():
-            shutil.rmtree(self.test_venv_path)
+        venv_mgr.VENV_BASE_DIR = self._orig_base
+        self.tmp_dir.cleanup()
 
     def test_install_package(self) -> None:
         messages = []

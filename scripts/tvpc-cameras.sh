@@ -209,6 +209,19 @@ cmd_scan() {
     fi
     log "Scanning $subnet.0/24"
 
+    # Local USB / V4L2 probe
+    log "  (0) Local USB / V4L2 webcams"
+    local found_usb=0
+    for v4l in /dev/video*; do
+        if [[ -e "$v4l" ]]; then
+            local card_name
+            card_name=$(cat "/sys/class/video4linux/${v4l#/dev/}/name" 2>/dev/null || echo "USB Device")
+            printf '  USB     %-14s %s\n' "$v4l" "$card_name"
+            found_usb=1
+        fi
+    done
+    [[ $found_usb -eq 0 ]] && echo "  (no local video devices)"
+
     # RTSP sweep (background, capped by per-host timeout)
     local found=()
     log "  (1) RTSP probe (TCP 554) — this takes ~30 s"
@@ -282,6 +295,15 @@ play() {
         echo "mpv is not installed. sudo apt-get install mpv" >&2
         return 1
     fi
+    local extra_args=(--rtsp-transport=tcp)
+    if [[ "$url" == /dev/video* || "$url" == av://v4l2:* || "$url" == v4l2://* ]]; then
+        extra_args=()
+        if [[ "$url" == /dev/video* ]]; then
+            url="av://v4l2:$url"
+        elif [[ "$url" == v4l2://* ]]; then
+            url="av://v4l2:${url#v4l2://}"
+        fi
+    fi
     mpv --no-terminal --quiet \
         --title="tvpc-cameras: $name" \
         --geometry="${w}x${h}+${x}+${y}" \
@@ -289,7 +311,7 @@ play() {
         --no-osc --no-input-terminal --no-input-cursor \
         --keep-open=always \
         --ontop --on-top-level=system \
-        --rtsp-transport=tcp \
+        "${extra_args[@]}" \
         --hwdec=auto-safe \
         --force-window=immediate \
         "$url" &
@@ -321,7 +343,17 @@ cmd_view() {
     [[ -z $line ]] && { echo "No camera with ID $id" >&2; return 1; }
     IFS='|' read -r name url user pass notes <<<"$line"
     local cred_args=()
-    if [[ -n $user ]]; then cred_args=(--user "$user" --password "$pass"); fi
+    local extra_args=(--rtsp-transport=tcp)
+    if [[ "$url" == /dev/video* || "$url" == av://v4l2:* || "$url" == v4l2://* ]]; then
+        extra_args=()
+        if [[ "$url" == /dev/video* ]]; then
+            url="av://v4l2:$url"
+        elif [[ "$url" == v4l2://* ]]; then
+            url="av://v4l2:${url#v4l2://}"
+        fi
+    else
+        if [[ -n $user ]]; then cred_args=(--user "$user" --password "$pass"); fi
+    fi
     mpv --no-terminal --quiet \
         --title="tvpc-cameras: $name" \
         --geometry="${PIP_W}x${PIP_H}+0+0" \
@@ -329,7 +361,7 @@ cmd_view() {
         --no-osc --no-input-terminal --no-input-cursor \
         --keep-open=always \
         --ontop --on-top-level=system \
-        --rtsp-transport=tcp --hwdec=auto-safe \
+        "${extra_args[@]}" --hwdec=auto-safe \
         --force-window=immediate \
         "${cred_args[@]}" "$url" &
     log "Opened $name in a PiP window (PID $!)"
