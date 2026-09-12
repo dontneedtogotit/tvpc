@@ -1217,6 +1217,27 @@ EOF
             fi
         fi
     fi
+
+    local kwinrulesrc="$target_dir/kwinrulesrc"
+    cat >"$kwinrulesrc" <<'EOF'
+[General]
+count=1
+rules=tvpc-vacuumtube
+
+[tvpc-vacuumtube]
+Description=VacuumTube starts borderless maximized below top bar
+wmclass=vacuumtube
+wmclassmatch=2
+wmclasscomplete=false
+noborder=true
+noborderrule=3
+maximizehoriz=true
+maximizehorizrule=3
+maximizevert=true
+maximizevertrule=3
+fullscreen=false
+fullscreenrule=3
+EOF
 }
 
 cmd_install() {
@@ -4639,7 +4660,7 @@ EOF
 
 # Home: VacuumTube + Settings + Cameras + All Apps + Chromium + Update. Everything else hidden.
 curate_home() {
-    local keep="vacuumtube io.github.vacuumtube.VacuumTube YouTube tvpc-setup tvpc-cameras tvpc-cameras-gui tvpc-allapps chromium chromium-browser org.chromium.Chromium tvpc-update"
+    local keep="vacuumtube io.github.vacuumtube.VacuumTube YouTube tvpc-setup tvpc-cameras tvpc-cameras-gui tvpc-allapps chromium chromium-browser org.chromium.Chromium tvpc-update tvpc-addapps"
     local id
     # Blacklist known terminal apps explicitly
     for term_app in foot ghostty xterm konsole debian-xterm debian-uxterm alacritty kitty wezterm org.kde.konsole; do
@@ -4664,7 +4685,7 @@ curate_home() {
     done
     install_home_tiles
     install_addapps_tile
-    echo "Home curated: VacuumTube, Settings, Security Cameras, All Apps, Chromium, Update."
+    echo "Home curated: VacuumTube, Settings, Security Cameras, All Apps, Chromium, Update, Add Apps."
     echo "Run 'tvpc tweaks addapps' (or the Add Apps tile) to put others back."
     reload_shell
 }
@@ -4676,7 +4697,10 @@ reload_shell() {
         nohup plasmashell >/dev/null 2>&1 &
         echo "(refreshed plasmashell)"
     elif pgrep -x plasma-bigscreen >/dev/null 2>&1; then
-        echo "(log out and back in to refresh the Bigscreen home)"
+        pkill -x plasma-bigscreen 2>/dev/null || true
+        sleep 0.5
+        nohup plasma-bigscreen >/dev/null 2>&1 &
+        echo "(refreshed plasma-bigscreen)"
     else
         echo "(log out and back in to see the new home screen)"
     fi

@@ -277,11 +277,17 @@ count=1
 rules=tvpc-vacuumtube
 
 [tvpc-vacuumtube]
-Description=VacuumTube starts fullscreen on the TV
+Description=VacuumTube starts borderless maximized below top bar
 wmclass=vacuumtube
 wmclassmatch=2
 wmclasscomplete=false
-fullscreen=true
+noborder=true
+noborderrule=3
+maximizehoriz=true
+maximizehorizrule=3
+maximizevert=true
+maximizevertrule=3
+fullscreen=false
 fullscreenrule=3
 EOF
 
@@ -1601,7 +1607,19 @@ Categories=Utility;
 Keywords=tvpc;apps;
 EOF
 
-# Curate Bigscreen home screen to the 6 core tiles (VacuumTube, Settings, Cameras, All Apps, Chromium, Update)
+cat >/usr/share/applications/tvpc-addapps.desktop <<'EOF'
+[Desktop Entry]
+Type=Application
+Name=Add Apps
+Comment=Choose apps to show on the home screen
+Exec=/usr/local/bin/tvpc tweaks addapps
+Terminal=false
+Icon=list-add
+Categories=Settings;
+Keywords=tvpc;apps;home;add;
+EOF
+
+# Curate Bigscreen home screen to the core tiles (VacuumTube, Settings, Cameras, All Apps, Chromium, Update, Add Apps)
 "$REPO_ROOT/scripts/tvpc.sh" tweaks curate 2>/dev/null || true
 
 

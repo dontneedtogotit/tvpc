@@ -30,6 +30,8 @@ Item {
         id: theme
     }
 
+    readonly property int topBarHeight: Math.round((Kirigami.Units.iconSizes.large + Kirigami.Units.smallSpacing * 2) * 1.75)
+
     property bool mycroftIntegration: (plasmoid && plasmoid.nativeInterface && plasmoid.nativeInterface.bigLauncherDbusAdapterInterface)
         ? (plasmoid.nativeInterface.bigLauncherDbusAdapterInterface.mycroftIntegrationActive() ? 1 : 0)
         : 0
@@ -128,190 +130,186 @@ Item {
         }
     }
 
-    // Top Status & Clock Bar
-    PlasmaCore.ColorScope {
+    // Persistent Top Status & Clock Bar (Dock)
+    PlasmaCore.Dialog {
         id: topBar
-        anchors {
-            left: parent.left
-            right: parent.right
-            top: parent.top
-        }
-        z: launcher.z + 10
-        colorGroup: PlasmaCore.Theme.NormalColorGroup
-        Kirigami.Theme.colorSet: Kirigami.Theme.Window
-        height: Kirigami.Units.iconSizes.large + Kirigami.Units.smallSpacing * 2
-        opacity: root.Window.active ? 1.0 : 0.8
+        type: PlasmaCore.Dialog.Dock
+        location: PlasmaCore.Types.TopEdge
+        backgroundHints: PlasmaCore.Dialog.NoBackground
+        visible: true
+        flags: Qt.WindowStaysOnTopHint | Qt.FramelessWindowHint
 
-        Behavior on opacity {
-            OpacityAnimator {
-                duration: theme.animDurationNormal
-                easing.type: Easing.InOutQuad
-            }
-        }
+        mainItem: PlasmaCore.ColorScope {
+            id: topBarContent
+            width: Screen.desktopAvailableWidth
+            height: root.topBarHeight
+            colorGroup: PlasmaCore.Theme.NormalColorGroup
+            Kirigami.Theme.colorSet: Kirigami.Theme.Window
 
-        // Top bar frosted glass container
-        Rectangle {
-            anchors.fill: parent
-            color: root.theme.topBarBackground
-            border.color: root.theme.topBarBorder
-            border.width: 1
-
-            // Bottom glow line
+            // Top bar frosted glass container
             Rectangle {
-                anchors {
-                    left: parent.left
-                    right: parent.right
-                    bottom: parent.bottom
-                }
-                height: 1
-                color: root.theme.borderColor
-            }
-        }
-
-        // Left section: Brand Badge + Digital Clock & Date
-        RowLayout {
-            anchors {
-                left: parent.left
-                top: parent.top
-                bottom: parent.bottom
-                leftMargin: Kirigami.Units.largeSpacing * 2
-            }
-            spacing: Kirigami.Units.largeSpacing * 1.5
-
-            // tvpc Brand Badge Pill
-            Rectangle {
-                Layout.preferredHeight: topBar.height - Kirigami.Units.smallSpacing * 2
-                Layout.preferredWidth: brandRow.implicitWidth + Kirigami.Units.largeSpacing * 2
-                radius: root.theme.pillRadius
-                color: root.theme.pillBackground
-                border.color: root.theme.pillBorder
+                anchors.fill: parent
+                color: root.theme.topBarBackground
+                border.color: root.theme.topBarBorder
                 border.width: 1
 
-                RowLayout {
-                    id: brandRow
-                    anchors.centerIn: parent
-                    spacing: Kirigami.Units.smallSpacing
+                // Bottom glow line
+                Rectangle {
+                    anchors {
+                        left: parent.left
+                        right: parent.right
+                        bottom: parent.bottom
+                    }
+                    height: 1
+                    color: root.theme.borderColor
+                }
+            }
 
-                    Rectangle {
-                        width: 8
-                        height: 8
-                        radius: 4
+            // Left section: Brand Badge + Digital Clock & Date
+            RowLayout {
+                anchors {
+                    left: parent.left
+                    top: parent.top
+                    bottom: parent.bottom
+                    leftMargin: Kirigami.Units.largeSpacing * 2
+                }
+                spacing: Kirigami.Units.largeSpacing * 2
+
+                // tvpc Brand Badge Pill
+                Rectangle {
+                    Layout.preferredHeight: topBarContent.height - Kirigami.Units.smallSpacing * 3
+                    Layout.preferredWidth: brandRow.implicitWidth + Kirigami.Units.largeSpacing * 2.5
+                    radius: root.theme.pillRadius * 1.5
+                    color: root.theme.pillBackground
+                    border.color: root.theme.pillBorder
+                    border.width: 1
+
+                    RowLayout {
+                        id: brandRow
+                        anchors.centerIn: parent
+                        spacing: Kirigami.Units.smallSpacing * 1.5
+
+                        Rectangle {
+                            width: 14
+                            height: 14
+                            radius: 7
+                            color: root.theme.accentColor
+                        }
+
+                        Controls.Label {
+                            text: "tvpc"
+                            font.bold: true
+                            font.capitalization: Font.AllLowercase
+                            font.pixelSize: Math.round(Kirigami.Units.gridUnit * 1.66)
+                            color: root.theme.textColor
+                        }
+                    }
+                }
+
+                // Digital Clock & Date
+                RowLayout {
+                    spacing: Kirigami.Units.smallSpacing * 2
+
+                    Controls.Label {
+                        id: clockTime
+                        text: "--:--"
+                        font.bold: true
+                        font.pixelSize: Math.round(Kirigami.Units.gridUnit * 2.0)
+                        color: root.theme.textColor
+                    }
+
+                    Controls.Label {
+                        text: "•"
+                        font.pixelSize: Math.round(Kirigami.Units.gridUnit * 1.55)
                         color: root.theme.accentColor
                     }
 
                     Controls.Label {
-                        text: "tvpc"
-                        font.bold: true
-                        font.capitalization: Font.AllLowercase
-                        font.pixelSize: Kirigami.Units.gridUnit * 0.95
-                        color: root.theme.textColor
+                        id: clockDate
+                        text: ""
+                        font.pixelSize: Math.round(Kirigami.Units.gridUnit * 1.55)
+                        color: root.theme.textMutedColor
                     }
                 }
-            }
-
-            // Digital Clock & Date
-            RowLayout {
-                spacing: Kirigami.Units.smallSpacing * 1.5
-
-                Controls.Label {
-                    id: clockTime
-                    text: "--:--"
-                    font.bold: true
-                    font.pixelSize: Kirigami.Units.gridUnit * 1.15
-                    color: root.theme.textColor
-                }
-
-                Controls.Label {
-                    text: "•"
-                    font.pixelSize: Kirigami.Units.gridUnit * 0.9
-                    color: root.theme.accentColor
-                }
-
-                Controls.Label {
-                    id: clockDate
-                    text: ""
-                    font.pixelSize: Kirigami.Units.gridUnit * 0.9
-                    color: root.theme.textMutedColor
-                }
-            }
-
-            RowLayout {
-                id: appletsLayout
-                Layout.fillHeight: true
-            }
-        }
-
-        // Right section: Status Indicator Pills (KDE Connect, Volume, Wifi, Shutdown)
-        RowLayout {
-            anchors {
-                right: parent.right
-                top: parent.top
-                bottom: parent.bottom
-                rightMargin: Kirigami.Units.largeSpacing * 2
-            }
-            spacing: Kirigami.Units.largeSpacing
-
-            Rectangle {
-                Layout.preferredHeight: topBar.height - Kirigami.Units.smallSpacing * 2
-                Layout.preferredWidth: indicatorsRow.implicitWidth + Kirigami.Units.smallSpacing * 2
-                radius: root.theme.pillRadius
-                color: root.theme.pillBackground
-                border.color: root.theme.pillBorder
-                border.width: 1
 
                 RowLayout {
-                    id: indicatorsRow
-                    anchors.centerIn: parent
-                    spacing: Kirigami.Units.smallSpacing
+                    id: appletsLayout
+                    Layout.fillHeight: true
+                }
+            }
 
-                    Loader {
-                        id: mycroftIndicatorLoader
-                        Layout.fillHeight: true
-                        source: mycroftIntegration && Qt.resolvedUrl("MycroftIndicator.qml") ? Qt.resolvedUrl("MycroftIndicator.qml") : null
-                    }
+            // Right section: Status Indicator Pills (KDE Connect, Volume, Wifi, Shutdown)
+            RowLayout {
+                anchors {
+                    right: parent.right
+                    top: parent.top
+                    bottom: parent.bottom
+                    rightMargin: Kirigami.Units.largeSpacing * 2
+                }
+                spacing: Kirigami.Units.largeSpacing * 1.5
 
-                    Indicators.KdeConnect {
-                        id: kdeconnectIndicator
-                        Layout.fillHeight: true
-                        implicitWidth: height
-                        KeyNavigation.down: launcher
-                        KeyNavigation.right: volumeIndicator
-                        KeyNavigation.tab: volumeIndicator
-                        KeyNavigation.backtab: launcher
-                        KeyNavigation.left: kdeconnectIndicator
-                    }
+                Rectangle {
+                    Layout.preferredHeight: topBarContent.height - Kirigami.Units.smallSpacing * 3
+                    Layout.preferredWidth: indicatorsRow.implicitWidth + Kirigami.Units.smallSpacing * 3
+                    radius: root.theme.pillRadius * 1.5
+                    color: root.theme.pillBackground
+                    border.color: root.theme.pillBorder
+                    border.width: 1
 
-                    Indicators.Volume {
-                        id: volumeIndicator
-                        Layout.fillHeight: true
-                        implicitWidth: height
-                        KeyNavigation.down: launcher
-                        KeyNavigation.right: wifiIndicator
-                        KeyNavigation.tab: wifiIndicator
-                        KeyNavigation.backtab: launcher
-                        KeyNavigation.left: kdeconnectIndicator
-                    }
+                    RowLayout {
+                        id: indicatorsRow
+                        anchors.centerIn: parent
+                        spacing: Kirigami.Units.smallSpacing * 1.5
 
-                    Indicators.Wifi {
-                        id: wifiIndicator
-                        Layout.fillHeight: true
-                        implicitWidth: height
-                        KeyNavigation.down: launcher
-                        KeyNavigation.right: shutdownIndicator
-                        KeyNavigation.tab: shutdownIndicator
-                        KeyNavigation.backtab: volumeIndicator
-                        KeyNavigation.left: volumeIndicator
-                    }
+                        Loader {
+                            id: mycroftIndicatorLoader
+                            Layout.fillHeight: true
+                            source: mycroftIntegration && Qt.resolvedUrl("MycroftIndicator.qml") ? Qt.resolvedUrl("MycroftIndicator.qml") : null
+                        }
 
-                    Indicators.Shutdown {
-                        id: shutdownIndicator
-                        Layout.fillHeight: true
-                        implicitWidth: height
-                        KeyNavigation.down: launcher
-                        KeyNavigation.right: launcher
-                        KeyNavigation.tab: launcher
-                        KeyNavigation.backtab: wifiIndicator
-                        KeyNavigation.left: wifiIndicator
+                        Indicators.KdeConnect {
+                            id: kdeconnectIndicator
+                            Layout.fillHeight: true
+                            implicitWidth: height
+                            KeyNavigation.down: launcher
+                            KeyNavigation.right: volumeIndicator
+                            KeyNavigation.tab: volumeIndicator
+                            KeyNavigation.backtab: launcher
+                            KeyNavigation.left: kdeconnectIndicator
+                        }
+
+                        Indicators.Volume {
+                            id: volumeIndicator
+                            Layout.fillHeight: true
+                            implicitWidth: height
+                            KeyNavigation.down: launcher
+                            KeyNavigation.right: wifiIndicator
+                            KeyNavigation.tab: wifiIndicator
+                            KeyNavigation.backtab: launcher
+                            KeyNavigation.left: kdeconnectIndicator
+                        }
+
+                        Indicators.Wifi {
+                            id: wifiIndicator
+                            Layout.fillHeight: true
+                            implicitWidth: height
+                            KeyNavigation.down: launcher
+                            KeyNavigation.right: shutdownIndicator
+                            KeyNavigation.tab: shutdownIndicator
+                            KeyNavigation.backtab: volumeIndicator
+                            KeyNavigation.left: volumeIndicator
+                        }
+
+                        Indicators.Shutdown {
+                            id: shutdownIndicator
+                            Layout.fillHeight: true
+                            implicitWidth: height
+                            KeyNavigation.down: launcher
+                            KeyNavigation.right: launcher
+                            KeyNavigation.tab: launcher
+                            KeyNavigation.backtab: wifiIndicator
+                            KeyNavigation.left: wifiIndicator
+                        }
                     }
                 }
             }
@@ -338,7 +336,8 @@ Item {
         anchors {
             left: parent.left
             right: parent.right
-            top: topBar.bottom
+            top: parent.top
+            topMargin: root.topBarHeight
             bottom: parent.bottom
         }
         focus: true

@@ -196,7 +196,15 @@ HOME="$TMP" "$ROOT/scripts/tvpc.sh" tweaks theme emerald
 assert_contains "$(cat "$user_conf")" '"theme": "emerald"'
 echo "Theme tests passed."
 
-echo "== 4. Hyprland Config Validation =="
+echo "== 4. Layout, Dock, and Add Apps Tests =="
+grep -q "singleRowContainer" "$OVERLAY/contents/ui/launcher/LauncherHome.qml" || fail "LauncherHome.qml missing singleRowContainer"
+grep -q "topBarHeight" "$OVERLAY/contents/ui/main.qml" || fail "main.qml missing topBarHeight"
+grep -q "tvpc-addapps" "$ROOT/scripts/tvpc.sh" || fail "tvpc.sh missing tvpc-addapps"
+grep -q "tvpc-addapps.desktop" "$ROOT/install.sh" || fail "install.sh missing tvpc-addapps.desktop"
+grep -q "noborder=true" "$ROOT/install.sh" || fail "install.sh missing noborder=true for vacuumtube"
+echo "Layout and dock tests passed."
+
+echo "== 5. Hyprland Config Validation =="
 CONFIG="$ROOT/config/hypr/hyprland.lua"
 if [[ -f $CONFIG ]]; then
   LUA=""

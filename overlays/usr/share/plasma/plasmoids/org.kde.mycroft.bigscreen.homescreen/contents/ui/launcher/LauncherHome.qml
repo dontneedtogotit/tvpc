@@ -47,80 +47,26 @@ FocusScope {
     anchors {
         fill: parent
         leftMargin: Kirigami.Units.largeSpacing * 4
-        topMargin: Kirigami.Units.largeSpacing * 3
+        rightMargin: Kirigami.Units.largeSpacing * 4
     }
 
-    ColumnLayout {
-        id: launcherHomeColumn
+    Item {
+        id: singleRowContainer
         anchors {
             left: parent.left
             right: parent.right
+            verticalCenter: parent.verticalCenter
         }
-        property Item currentSection
-        y: currentSection ? -currentSection.y + parent.height/2 - currentSection.height/2 : parent.height/2
-
-        Behavior on y {
-            YAnimator {
-                duration: Kirigami.Units.longDuration * 2
-                easing.type: Easing.InOutQuad
-            }
-        }
-        spacing: Kirigami.Units.largeSpacing * 3
-
-        BigScreen.TileRepeater {
-            id: recentView
-            title: i18n("Recent")
-            compactMode: plasmoid.configuration ? plasmoid.configuration.expandingTiles : false
-            model: Kicker.RecentUsageModel {
-                shownItems: Kicker.RecentUsageModel.OnlyApps
-            }
-
-            visible: count > 0
-            currentIndex: 0
-            focus: true
-            onActiveFocusChanged: if (activeFocus) launcherHomeColumn.currentSection = recentView
-            delegate: Delegates.AppDelegate {
-                property var modelData: typeof model !== "undefined" ? model : null
-                iconImage: model ? model.decoration : ""
-                text: model ? model.display : ""
-                comment: model ? model.description : ""
-                onClicked: recentView.model.trigger(index, "", null);
-            }
-
-            navigationUp: (typeof shutdownIndicator !== "undefined" ? shutdownIndicator : null)
-            navigationDown: voiceAppsView.visible ? voiceAppsView : appsView
-        }
-
-        BigScreen.TileRepeater {
-            id: voiceAppsView
-            title: i18n("Voice Apps")
-            compactMode: plasmoid.configuration ? plasmoid.configuration.expandingTiles : false
-            model: KItemModels.KSortFilterProxyModel {
-                sourceModel: (plasmoid && plasmoid.nativeInterface) ? plasmoid.nativeInterface.applicationListModel : null
-                filterRole: "ApplicationCategoriesRole"
-                filterRowCallback: function(source_row, source_parent) {
-                    if (!sourceModel) return false;
-                    var idx = sourceModel.index(source_row, 0, source_parent);
-                    var cats = sourceModel.data(idx, ApplicationListModel.ApplicationCategoriesRole);
-                    return cats && (cats.indexOf("VoiceApp") !== -1);
-                }
-            }
-
-            visible: mycroftIntegration && count > 0
-            currentIndex: 0
-            focus: false
-            onActiveFocusChanged: if (activeFocus) launcherHomeColumn.currentSection = voiceAppsView
-            delegate: Delegates.VoiceAppDelegate {
-                property var modelData: typeof model !== "undefined" ? model : null
-            }
-
-            navigationUp: recentView.visible ? recentView : (typeof shutdownIndicator !== "undefined" ? shutdownIndicator : null)
-            navigationDown: appsView.visible ? appsView : (gamesView.visible ? gamesView : settingsView)
-        }
+        height: appsView.implicitHeight > 0 ? appsView.implicitHeight : (Kirigami.Units.gridUnit * 12)
 
         BigScreen.TileRepeater {
             id: appsView
-            title: i18n("Applications")
+            anchors {
+                left: parent.left
+                right: parent.right
+                verticalCenter: parent.verticalCenter
+            }
+            title: ""
             compactMode: plasmoid.configuration ? plasmoid.configuration.expandingTiles : false
             visible: count > 0
             enabled: count > 0
@@ -131,91 +77,35 @@ FocusScope {
                     if (!sourceModel) return true;
                     var idx = sourceModel.index(source_row, 0, source_parent);
                     var cats = sourceModel.data(idx, ApplicationListModel.ApplicationCategoriesRole);
-                    if (cats && (cats.indexOf("Game") !== -1 || cats.indexOf("VoiceApp") !== -1)) return false;
+                    if (cats && cats.indexOf("VoiceApp") !== -1) return false;
                     return true;
                 }
             }
 
             currentIndex: 0
-            focus: false
-            onActiveFocusChanged: if (activeFocus) launcherHomeColumn.currentSection = appsView
+            focus: true
             delegate: Delegates.AppDelegate {
                 property var modelData: typeof model !== "undefined" ? model : null
                 comment: (typeof model !== "undefined" && model && model.ApplicationCommentRole) ? model.ApplicationCommentRole : ""
             }
 
-            navigationUp: voiceAppsView.visible ? voiceAppsView : (recentView.visible ? recentView : (typeof shutdownIndicator !== "undefined" ? shutdownIndicator : null))
-            navigationDown: gamesView.visible ? gamesView : settingsView
-        }
-
-        BigScreen.TileRepeater {
-            id: gamesView
-            title: i18n("Games")
-            compactMode: plasmoid.configuration ? plasmoid.configuration.expandingTiles : false
-            visible: count > 0
-            enabled: count > 0
-            model: KItemModels.KSortFilterProxyModel {
-                sourceModel: (plasmoid && plasmoid.nativeInterface) ? plasmoid.nativeInterface.applicationListModel : null
-                filterRole: "ApplicationCategoriesRole"
-                filterRowCallback: function(source_row, source_parent) {
-                    if (!sourceModel) return false;
-                    var idx = sourceModel.index(source_row, 0, source_parent);
-                    var cats = sourceModel.data(idx, ApplicationListModel.ApplicationCategoriesRole);
-                    return cats && (cats.indexOf("Game") !== -1);
-                }
-            }
-
-            currentIndex: 0
-            focus: false
-            onActiveFocusChanged: if (activeFocus) launcherHomeColumn.currentSection = gamesView
-            delegate: Delegates.AppDelegate {
-                property var modelData: typeof model !== "undefined" ? model : null
-            }
-
-            navigationUp: appsView.visible ? appsView : (voiceAppsView.visible ? voiceAppsView : (recentView.visible ? recentView : (typeof shutdownIndicator !== "undefined" ? shutdownIndicator : null)))
-            navigationDown: settingsView
-        }
-
-        SettingActions {
-            id: settingActions
-        }
-
-        BigScreen.TileRepeater {
-            id: settingsView
-            title: i18n("Settings")
-            model: (plasmoid && plasmoid.nativeInterface) ? plasmoid.nativeInterface.kcmsListModel : null
-            compactMode: plasmoid.configuration ? plasmoid.configuration.expandingTiles : false
-
-            onActiveFocusChanged: if (activeFocus) launcherHomeColumn.currentSection = settingsView
-            delegate: Delegates.SettingDelegate {
-                property var modelData: typeof model !== "undefined" ? model : null
-                visible: model ? model.active : true
-                enabled: model ? model.active : true
-            }
-
-            navigationUp: gamesView.visible ? gamesView : (appsView.visible ? appsView : (voiceAppsView.visible ? voiceAppsView : (recentView.visible ? recentView : (typeof shutdownIndicator !== "undefined" ? shutdownIndicator : null))))
+            navigationUp: (typeof shutdownIndicator !== "undefined" ? shutdownIndicator : null)
             navigationDown: null
         }
+    }
 
-        Component.onCompleted: {
-            if (recentView.visible && recentView.count > 0) {
-                recentView.forceActiveFocus();
-            } else if (voiceAppsView.visible && voiceAppsView.count > 0) {
-                voiceAppsView.forceActiveFocus();
-            } else {
-                appsView.forceActiveFocus();
-            }
-        }
+    SettingActions {
+        id: settingActions
+    }
 
-        Connections {
-            target: root
-            onActivateAppView: {
-                if (recentView.visible && recentView.count > 0) {
-                    recentView.forceActiveFocus();
-                } else {
-                    appsView.forceActiveFocus();
-                }
-            }
+    Component.onCompleted: {
+        appsView.forceActiveFocus();
+    }
+
+    Connections {
+        target: root
+        onActivateAppView: {
+            appsView.forceActiveFocus();
         }
     }
 }
