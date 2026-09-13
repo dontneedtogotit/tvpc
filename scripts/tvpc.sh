@@ -662,9 +662,6 @@ write_blacklist() {   # entries on stdin, one per line
   cat >"$rc" <<RC
 [Applications]
 blacklist=$list
-
-[General]
-blacklist=$list
 RC
   chown "$HTPC_USER:$HTPC_USER" "$rc"
   echo "$list"
@@ -761,7 +758,10 @@ fi
 if [[ $MODE == theme ]]; then
   SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
   THEME_TOOL=""
-  if command -v subcmd_theme >/dev/null 2>&1; then subcmd_theme set "$t"; return; fi
+  if command -v subcmd_theme >/dev/null 2>&1; then
+    if [[ -n $ARG ]]; then subcmd_theme set "$ARG"; else subcmd_theme list; fi
+    exit 0
+  fi
   for cand in "$SCRIPT_DIR/tvpc.sh" /usr/local/bin/tvpc-bigscreen-theme /usr/local/bin/tvpc; do
     [[ -x $cand ]] && { THEME_TOOL="$cand"; break; }
   done
@@ -1034,7 +1034,8 @@ USER_CONF="$(get_user_home)/.config/tvpc/bigscreen-theme.json"
 USER_PLASMOID_DIR="$(get_user_home)/.local/share/plasma/plasmoids/org.kde.mycroft.bigscreen.homescreen"
 
 THEMES=(
-    "midnight:Midnight Glass:Deep obsidian & frosted navy with vibrant sky-blue glow (Default)"
+    "estuary:Estuary (LibreELEC):Iconic Kodi & LibreELEC deep ocean slate with electric cyan glow (Default)"
+    "midnight:Midnight Glass:Deep obsidian & frosted navy with vibrant sky-blue glow"
     "oled:OLED Stealth:Pure pitch black with high-contrast monochrome & silver accents"
     "cyberpunk:Cyberpunk Neon:Dark violet glass with electric magenta & neon cyan accents"
     "sunset:Sunset Amber:Dark charcoal glass with warm amber & radiant sunset glow"
@@ -1052,7 +1053,7 @@ get_active_theme() {
     if [[ -z "$t" && -n "${TVPC_BIGSCREEN_THEME:-}" ]]; then
         t="$TVPC_BIGSCREEN_THEME"
     fi
-    echo "${t:-midnight}"
+    echo "${t:-estuary}"
 }
 
 cmd_list() {
@@ -1078,7 +1079,7 @@ cmd_set() {
     local target="${1:-}"
     if [[ -z "$target" ]]; then
         echo "Usage: tvpc-bigscreen-theme set <theme-id>" >&2
-        echo "Valid themes: midnight, oled, cyberpunk, sunset, emerald" >&2
+        echo "Valid themes: estuary, midnight, oled, cyberpunk, sunset, emerald" >&2
         exit 1
     fi
 
@@ -1093,7 +1094,7 @@ cmd_set() {
 
     if [[ $valid -eq 0 ]]; then
         echo "Error: Unknown theme '$target'." >&2
-        echo "Available themes: midnight, oled, cyberpunk, sunset, emerald" >&2
+        echo "Available themes: estuary, midnight, oled, cyberpunk, sunset, emerald" >&2
         exit 1
     fi
 
@@ -1217,27 +1218,6 @@ EOF
             fi
         fi
     fi
-
-    local kwinrulesrc="$target_dir/kwinrulesrc"
-    cat >"$kwinrulesrc" <<'EOF'
-[General]
-count=1
-rules=tvpc-vacuumtube
-
-[tvpc-vacuumtube]
-Description=VacuumTube starts borderless maximized below top bar
-wmclass=vacuumtube
-wmclassmatch=2
-wmclasscomplete=false
-noborder=true
-noborderrule=3
-maximizehoriz=true
-maximizehorizrule=3
-maximizevert=true
-maximizevertrule=3
-fullscreen=false
-fullscreenrule=3
-EOF
 }
 
 cmd_install() {
@@ -1311,6 +1291,12 @@ cmd_preview() {
     local t="${1:-$(get_active_theme)}"
     echo "== Theme Preview: $t =="
     case "$t" in
+        estuary)
+            echo "  Background: #0c131d (Deep Ocean Slate)"
+            echo "  Surface   : rgba(18, 33, 56, 0.75) (Frosted Kodi Glass)"
+            echo "  Accent    : #00d2ff / #00b4d8 (Electric Cyan Aura)"
+            echo "  Text      : #f1f5f9 (Crisp Ice White)"
+            ;;
         midnight)
             echo "  Background: #0a0e17 (Obsidian Navy)"
             echo "  Surface   : rgba(22, 31, 48, 0.65) (Frosted Glass)"
@@ -1872,25 +1858,13 @@ cmd_gui() {
         echo "python3 not found. sudo apt-get install python3" >&2
         exit 1
     fi
-    local script_dir repo_root cand
+    local script_dir repo_root
     script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
     repo_root="$(cd "$script_dir/.." && pwd)"
     if ! python3 -c "import tvpc_cameras_gui" 2>/dev/null; then
-        for cand in \
-            "$repo_root" \
-            "${REPO_ROOT:-}" \
-            "/usr/lib/python3/dist-packages" \
-            "/usr/local/lib/python3/dist-packages" \
-            /usr/local/lib/python3*/dist-packages \
-            /usr/lib/python3*/dist-packages \
-            "$HOME/tvpc" \
-            "/home/${TVPC_USER:-$USER}/tvpc" \
-            /home/*/tvpc; do
-            if [[ -d "$cand/tvpc_cameras_gui" ]]; then
-                export PYTHONPATH="$cand${PYTHONPATH:+:$PYTHONPATH}"
-                break
-            fi
-        done
+        if [[ -d "$repo_root/tvpc_cameras_gui" ]]; then
+            export PYTHONPATH="${repo_root}${PYTHONPATH:+:$PYTHONPATH}"
+        fi
     fi
     exec python3 -m tvpc_cameras_gui "$@"
 }
@@ -4225,7 +4199,7 @@ do_theme() {
             kde_set "General" "widgetStyle" "Breeze"
             echo "Theme -> light (log out and back in to apply)"
             ;;
-        midnight|oled|cyberpunk|sunset|emerald)
+        estuary|midnight|oled|cyberpunk|sunset|emerald)
             local script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
             local tt=""
             if command -v subcmd_theme >/dev/null 2>&1; then subcmd_theme set "$t"; return; fi
@@ -4239,7 +4213,7 @@ do_theme() {
             fi
             ;;
         *)
-            echo "usage: tvpc-tweaks theme dark|light|midnight|oled|cyberpunk|sunset|emerald" >&2
+            echo "usage: tvpc-tweaks theme dark|light|estuary|midnight|oled|cyberpunk|sunset|emerald" >&2
             return 1
             ;;
     esac
@@ -4672,32 +4646,22 @@ EOF
 
 # Home: VacuumTube + Settings + Cameras + All Apps + Chromium + Update. Everything else hidden.
 curate_home() {
-    local keep="vacuumtube io.github.vacuumtube.VacuumTube YouTube tvpc-setup tvpc-cameras tvpc-cameras-gui tvpc-allapps chromium chromium-browser org.chromium.Chromium tvpc-update tvpc-addapps"
+    local keep="vacuumtube io.github.vacuumtube.VacuumTube YouTube tvpc-setup tvpc-cameras tvpc-cameras-gui tvpc-allapps chromium chromium-browser org.chromium.Chromium tvpc-update"
     local id
-    # Blacklist known terminal apps explicitly
-    for term_app in foot ghostty xterm konsole debian-xterm debian-uxterm alacritty kitty wezterm org.kde.konsole; do
-        hide_app "$term_app" 2>/dev/null || true
-    done
-    # Scan all desktop files and hide everything not in keep
-    for d in /usr/share/applications /usr/local/share/applications "$(target_home)/.local/share/applications" /var/lib/flatpak/exports/share/applications; do
-        [[ -d "$d" ]] || continue
-        for f in "$d"/*.desktop; do
-            [[ -f "$f" ]] || continue
-            id="$(basename "$f" .desktop)"
-            local keepit=0
-            for k in $keep; do
-                [[ $id == "$k" ]] && keepit=1
-            done
-            [[ $keepit -eq 0 ]] && hide_app "$id" 2>/dev/null || true
+    while IFS=$'\t' read -r id name; do
+        local keepit=0
+        for k in $keep; do
+            [[ $id == "$k" ]] && keepit=1
         done
-    done
+        [[ $keepit -eq 0 ]] && hide_app "$id" 2>/dev/null || true
+    done < <(list_apps)
     # Make sure the keepers are actually shown (not blacklisted).
     for k in $keep; do
         show_app "$k" 2>/dev/null || true
     done
     install_home_tiles
     install_addapps_tile
-    echo "Home curated: VacuumTube, Settings, Security Cameras, All Apps, Chromium, Update, Add Apps."
+    echo "Home curated: VacuumTube, Settings, Security Cameras, All Apps, Chromium, Update."
     echo "Run 'tvpc tweaks addapps' (or the Add Apps tile) to put others back."
     reload_shell
 }
@@ -4709,10 +4673,7 @@ reload_shell() {
         nohup plasmashell >/dev/null 2>&1 &
         echo "(refreshed plasmashell)"
     elif pgrep -x plasma-bigscreen >/dev/null 2>&1; then
-        pkill -x plasma-bigscreen 2>/dev/null || true
-        sleep 0.5
-        nohup plasma-bigscreen >/dev/null 2>&1 &
-        echo "(refreshed plasma-bigscreen)"
+        echo "(log out and back in to refresh the Bigscreen home)"
     else
         echo "(log out and back in to see the new home screen)"
     fi
@@ -5767,9 +5728,6 @@ case "${1:-}" in
         ;;
     vacuum-only)
         vacuum_only
-        ;;
-    curate|curate-home)
-        curate_home
         ;;
     home)
         home_preset

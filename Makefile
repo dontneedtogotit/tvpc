@@ -1,7 +1,7 @@
 .PHONY: help install update update-check repair check-boot logs session \
         customize postboot doctor cec-remote cec-poweron check-updates check \
         offline-usb clean cameras-menu cameras-gui status controller-status controller-pair \
-        setup-gui update-gui test theme theme-set theme-install
+        setup-gui update-gui test theme theme-set theme-install install-homescreen
 
 help:
 	@echo "tvpc — Android-like HTPC Linux (Intel NUC7i5BNH + 2013 Samsung TV)"
@@ -18,7 +18,8 @@ help:
 	@echo "                        opt-in: bigscreen|bigscreen-x11|phosh"
 	@echo "  make customize        Apply idempotent UI/theme tweaks"
 	@echo "  make theme            List Bigscreen modern themes"
-	@echo "  make theme-set T=...  Set Bigscreen theme (midnight|oled|cyberpunk|sunset|emerald)"
+	@echo "  make theme-set T=...  Set Bigscreen theme (estuary|midnight|oled|cyberpunk|sunset|emerald)"
+	@echo "  make install-homescreen Install Kodi/LibreELEC Estuary homescreen overlay"
 	@echo "  make tweaks           Install the TV Tweaks app (+ All Apps entry)"
 	@echo "  make home             Apply the full home-screen preset (VacuumTube + Power + Setup + Update + All Apps)"
 	@echo "  make home-vacuum      Curate the home to VacuumTube only + All Apps launcher"
@@ -67,10 +68,13 @@ theme:
 	./scripts/tvpc.sh theme list
 
 theme-set:
-	./scripts/tvpc.sh theme set $(or $(T),midnight)
+	./scripts/tvpc.sh theme set $(or $(T),estuary)
 
 theme-install:
 	sudo ./scripts/tvpc.sh theme install
+
+install-homescreen:
+	./scripts/install-homescreen.sh $(or $(T),estuary)
 
 tweaks:
 	sudo ./scripts/tvpc.sh tweaks install-launcher

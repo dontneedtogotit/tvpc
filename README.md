@@ -140,15 +140,16 @@ after five minutes looks exactly like a boot failure.
 
 ```bash
 sudo tvpc-bigscreen --ui-scale 10      # whole UI too big? this is the knob
-sudo tvpc-bigscreen --theme midnight   # set homescreen theme (midnight, oled, cyberpunk, sunset, emerald)
+sudo tvpc-bigscreen --theme estuary   # set homescreen theme (estuary, midnight, oled, cyberpunk, sunset, emerald)
 sudo tvpc-bigscreen --list-apps        # what the home screen shows, with ids
 sudo tvpc-bigscreen --hide firefox,org.kde.plasma-systemmonitor
 sudo tvpc-bigscreen --show firefox     # put one back
 ```
 
-**Modern Themed Homescreen.** tvpc upgrades Bigscreen's home screen with frosted glass cards, a dynamic hero spotlight banner, an ambient digital clock and date bar, and five tuned color palettes:
+**Modern Themed Homescreen.** tvpc upgrades Bigscreen's home screen to a custom 10-foot media center inspired by the iconic look and polish of Kodi and LibreELEC (Estuary), featuring frosted dark glass cards, dynamic hero fanart showcase banner, live section breadcrumbs, remote navigation hints footer, and tuned color palettes:
 
-* **Midnight Glass** (`midnight` - default): Deep obsidian navy with vibrant sky-blue glow.
+* **Estuary (LibreELEC)** (`estuary` - default): Iconic Kodi & LibreELEC deep ocean slate with electric cyan glow.
+* **Midnight Glass** (`midnight`): Deep obsidian navy with vibrant sky-blue glow.
 * **OLED Stealth** (`oled`): Pure pitch black with high-contrast monochrome & silver accents.
 * **Cyberpunk Neon** (`cyberpunk`): Dark violet glass with electric magenta & neon cyan accents.
 * **Sunset Amber** (`sunset`): Dark charcoal glass with warm amber & radiant sunset glow.
@@ -156,8 +157,8 @@ sudo tvpc-bigscreen --show firefox     # put one back
 
 ```bash
 tvpc-bigscreen-theme list              # list available themes & active theme
-tvpc-bigscreen-theme set cyberpunk     # switch theme instantly
-tvpc-bigscreen-theme preview sunset    # preview color palette in terminal
+tvpc-bigscreen-theme set estuary       # switch theme instantly (or cyberpunk, oled, etc.)
+tvpc-bigscreen-theme preview estuary   # preview color palette in terminal
 sudo tvpc-bigscreen-theme install      # deploy modernized overlay system-wide
 sudo tvpc-bigscreen-theme revert       # restore upstream stock files
 ```

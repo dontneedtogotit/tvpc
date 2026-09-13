@@ -1,7 +1,6 @@
 /*
     SPDX-FileCopyrightText: 2026 tvpc developers
     SPDX-FileCopyrightText: 2019 Aditya Mehra <aix.m@outlook.com>
-    SPDX-FileCopyrightText: 2019 Marco Martin <mart@kde.org>
     SPDX-License-Identifier: GPL-2.0-or-later
 */
 
@@ -10,49 +9,114 @@ import org.kde.mycroft.bigscreen 1.0 as BigScreen
 import org.kde.kirigami 2.12 as Kirigami
 import org.kde.plasma.private.nanoshell 2.0 as NanoShell
 
-BigScreen.IconDelegate {
-    id: delegate
-    readonly property var appStorageIdRole: (typeof modelData !== "undefined" && modelData && modelData.ApplicationStorageIdRole)
-        ? modelData.ApplicationStorageIdRole
-        : ((typeof model !== "undefined" && model && model.ApplicationStorageIdRole) ? model.ApplicationStorageIdRole : "")
+ModernCardDelegate {
+    id: appDelegate
 
-    icon.name: (typeof modelData !== "undefined" && modelData && modelData.ApplicationIconRole)
-        ? modelData.ApplicationIconRole
-        : ((typeof model !== "undefined" && model && model.ApplicationIconRole) ? model.ApplicationIconRole : (typeof iconImage !== "undefined" ? iconImage : "application-x-executable"))
+    readonly property var appStorageIdRole: modelData && modelData.ApplicationStorageIdRole ? modelData.ApplicationStorageIdRole : ""
 
-    text: (typeof modelData !== "undefined" && modelData && modelData.ApplicationNameRole)
-        ? modelData.ApplicationNameRole
-        : ((typeof model !== "undefined" && model && model.ApplicationNameRole) ? model.ApplicationNameRole : ((typeof model !== "undefined" && model && model.display) ? model.display : ""))
+    iconSource: {
+        if (modelData) {
+            if (modelData.ApplicationIconRole) return modelData.ApplicationIconRole;
+            if (modelData.decoration) return modelData.decoration;
+        }
+        if (typeof model !== "undefined" && model) {
+            if (model.decoration) return model.decoration;
+        }
+        return "application-x-executable";
+    }
 
-    comment: (typeof modelData !== "undefined" && modelData && modelData.ApplicationCommentRole)
-        ? modelData.ApplicationCommentRole
-        : ((typeof model !== "undefined" && model && model.ApplicationCommentRole) ? model.ApplicationCommentRole : ((typeof model !== "undefined" && model && model.description) ? model.description : ""))
+    title: {
+        if (modelData) {
+            if (modelData.ApplicationNameRole) return modelData.ApplicationNameRole;
+            if (modelData.display) return modelData.display;
+        }
+        if (typeof model !== "undefined" && model && model.display) {
+            return model.display;
+        }
+        return "";
+    }
 
-    useIconColors: plasmoid.configuration ? plasmoid.configuration.coloredTiles : true
-    compactMode: plasmoid.configuration ? plasmoid.configuration.expandingTiles : false
+    comment: {
+        if (modelData) {
+            if (modelData.ApplicationCommentRole) return modelData.ApplicationCommentRole;
+            if (modelData.description) return modelData.description;
+        }
+        if (typeof model !== "undefined" && model && model.description) {
+            return model.description;
+        }
+        return "";
+    }
+
+    subtitle: {
+        var sid = (appStorageIdRole ? appStorageIdRole.toString().toLowerCase() : "");
+        var t = (title ? title.toString().toLowerCase() : "");
+        if (sid.indexOf("vacuumtube") !== -1 || sid.indexOf("youtube") !== -1 || t.indexOf("youtube") !== -1) return "Streaming Video";
+        if (sid.indexOf("kodi") !== -1 || t.indexOf("kodi") !== -1) return "Media Center";
+        if (sid.indexOf("camera") !== -1 || sid.indexOf("nvr") !== -1 || t.indexOf("camera") !== -1) return "Security NVR";
+        if (sid.indexOf("vlc") !== -1 || sid.indexOf("mpv") !== -1) return "Media Player";
+        if (sid.indexOf("retroarch") !== -1 || sid.indexOf("steam") !== -1) return "Gaming";
+        if (modelData && modelData.ApplicationCategoriesRole) {
+            var cats = modelData.ApplicationCategoriesRole.toString();
+            if (cats.indexOf("AudioVideo") !== -1 || cats.indexOf("Player") !== -1) return "Media";
+            if (cats.indexOf("Game") !== -1) return "Game";
+            if (cats.indexOf("Settings") !== -1) return "Settings";
+            if (cats.indexOf("Network") !== -1) return "Network";
+            if (cats.indexOf("Utility") !== -1) return "Utility";
+            if (cats.indexOf("System") !== -1) return "System";
+        }
+        return "App";
+    }
+
+    readonly property var capabilityTags: {
+        var sid = (appStorageIdRole ? appStorageIdRole.toString().toLowerCase() : "");
+        var t = (title ? title.toString().toLowerCase() : "");
+        if (sid.indexOf("vacuumtube") !== -1 || sid.indexOf("youtube") !== -1 || t.indexOf("youtube") !== -1) {
+            return ["10-FOOT UI", "4K UHD", "HARDWARE DECODE", "HDMI-CEC"];
+        }
+        if (sid.indexOf("kodi") !== -1 || t.indexOf("kodi") !== -1) {
+            return ["10-FOOT UI", "MEDIA SUITE", "PASSTHROUGH AUDIO", "CEC COMPLIANT"];
+        }
+        if (sid.indexOf("camera") !== -1 || sid.indexOf("nvr") !== -1) {
+            return ["LIVE RTSP", "HARDWARE ACCEL", "MOTION ALERT", "LOCAL NVR"];
+        }
+        if (subtitle === "Media" || subtitle === "Media Player") {
+            return ["HD/4K PLAYBACK", "HARDWARE DECODE", "10-FOOT UI"];
+        }
+        if (subtitle === "Game" || subtitle === "Gaming") {
+            return ["GAMEPAD READY", "FULLSCREEN", "LOW LATENCY"];
+        }
+        return ["10-FOOT UI", "READY", "HDMI-CEC"];
+    }
+
+    // Update parent hero spotlight whenever this tile receives active focus
+    onActiveFocusChanged: {
+        if (activeFocus && typeof launcherHomeRoot !== "undefined" && launcherHomeRoot.updateSpotlight) {
+            launcherHomeRoot.updateSpotlight(title, iconSource, comment, subtitle, capabilityTags);
+        }
+    }
 
     onClicked: {
         BigScreen.NavigationSoundEffects.playClickedSound();
         try {
             NanoShell.StartupFeedback.open(
-                delegate.icon.name.length > 0 ? delegate.icon.name : "application-x-executable",
-                delegate.text,
-                delegate.Kirigami.ScenePosition.x + delegate.width / 2,
-                delegate.Kirigami.ScenePosition.y + delegate.height / 2,
-                Math.min(delegate.width, delegate.height),
-                delegate.Kirigami.Theme.backgroundColor
+                iconSource.toString().length > 0 ? iconSource : "application-x-executable",
+                title,
+                appDelegate.Kirigami.ScenePosition.x + appDelegate.width/2,
+                appDelegate.Kirigami.ScenePosition.y + appDelegate.height/2,
+                Math.min(appDelegate.width, appDelegate.height),
+                appDelegate.theme.accentColor
             );
         } catch (e) {
-            // Non-fatal if startup feedback is unsupported
+            // Non-fatal if startup feedback helper differs
         }
 
-        if (typeof recentView !== "undefined" && recentView.model && typeof recentView.model.trigger === "function" && delegate.parent && delegate.parent.parent === recentView.view) {
+        if (typeof recentView !== "undefined" && recentView.model && typeof recentView.model.trigger === "function" && appDelegate.parent && appDelegate.parent.parent === recentView.view) {
             recentView.model.trigger(index, "", null);
-        } else if (appStorageIdRole && plasmoid && plasmoid.nativeInterface && plasmoid.nativeInterface.applicationListModel) {
-            plasmoid.nativeInterface.applicationListModel.runApplication(appStorageIdRole);
+        } else if (modelData && modelData.ApplicationStorageIdRole) {
+            plasmoid.nativeInterface.applicationListModel.runApplication(modelData.ApplicationStorageIdRole);
         }
 
-        if (typeof recentView !== "undefined" && recentView.visible && recentView.count > 0) {
+        if (typeof recentView !== "undefined" && recentView.visible) {
             recentView.forceActiveFocus();
             recentView.currentIndex = 0;
         }

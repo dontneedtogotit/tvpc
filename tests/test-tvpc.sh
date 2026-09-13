@@ -159,6 +159,7 @@ OVERLAY="$ROOT/overlays/usr/share/plasma/plasmoids/org.kde.mycroft.bigscreen.hom
 [[ -f "$OVERLAY/contents/ui/launcher/LauncherHome.qml" ]] || fail "Missing LauncherHome.qml in overlay"
 
 list_out="$(HOME="$TMP" "$ROOT/scripts/tvpc.sh" theme list)"
+assert_contains "$list_out" "estuary"
 assert_contains "$list_out" "midnight"
 assert_contains "$list_out" "oled"
 assert_contains "$list_out" "cyberpunk"
@@ -180,6 +181,9 @@ assert_contains "$(cat "$user_conf")" '"theme": "sunset"'
 if HOME="$TMP" "$ROOT/scripts/tvpc.sh" theme set nonexistent 2>/dev/null; then
   fail "Expected setting nonexistent theme to fail"
 fi
+
+prev_out="$("$ROOT/scripts/tvpc.sh" theme preview estuary)"
+assert_contains "$prev_out" "Theme Preview: estuary"
 
 prev_out="$("$ROOT/scripts/tvpc.sh" theme preview oled)"
 assert_contains "$prev_out" "Theme Preview: oled"

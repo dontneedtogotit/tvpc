@@ -10,8 +10,8 @@ import org.kde.kirigami 2.12 as Kirigami
 QtObject {
     id: themeRoot
 
-    // Active theme name: "midnight" (default), "oled", "cyberpunk", "sunset", "emerald"
-    property string activeThemeName: "midnight"
+    // Active theme name: "estuary" (default Kodi/LibreELEC), "midnight", "oled", "cyberpunk", "sunset", "emerald"
+    property string activeThemeName: "estuary"
 
     // Core color tokens
     property color backgroundColor: currentPalette.background
@@ -49,6 +49,27 @@ QtObject {
 
     // Theme definitions
     readonly property var palettes: ({
+        "estuary": {
+            name: "Estuary (LibreELEC)",
+            background: "#0c131d",
+            backgroundEnd: "#070a10",
+            surface: Qt.rgba(0.07, 0.13, 0.22, 0.75),
+            surfaceHover: Qt.rgba(0.11, 0.20, 0.32, 0.88),
+            surfaceFocused: Qt.rgba(0.14, 0.24, 0.38, 0.98),
+            border: Qt.rgba(0.0, 0.82, 1.0, 0.16),
+            borderFocus: "#00d2ff", // Electric Kodi / LibreELEC Cyan
+            accent: "#00d2ff",
+            accentSecondary: "#00b4d8",
+            accentGlow: Qt.rgba(0.0, 0.82, 1.0, 0.45),
+            text: "#f1f5f9",
+            textMuted: "#94a3b8",
+            textDimmed: "#64748b",
+            topBarBg: Qt.rgba(0.05, 0.09, 0.15, 0.85),
+            topBarBorder: Qt.rgba(0.0, 0.82, 1.0, 0.12),
+            pillBg: Qt.rgba(0.0, 0.82, 1.0, 0.09),
+            pillBorder: Qt.rgba(0.0, 0.82, 1.0, 0.18),
+            pillFocusedBg: Qt.rgba(0.0, 0.82, 1.0, 0.28)
+        },
         "midnight": {
             name: "Midnight Glass",
             background: "#0a0e17",
@@ -156,7 +177,7 @@ QtObject {
         }
     })
 
-    readonly property var currentPalette: palettes[activeThemeName] || palettes["midnight"]
+    readonly property var currentPalette: palettes[activeThemeName] || palettes["estuary"] || palettes["midnight"]
 
     Component.onCompleted: {
         loadConfig()

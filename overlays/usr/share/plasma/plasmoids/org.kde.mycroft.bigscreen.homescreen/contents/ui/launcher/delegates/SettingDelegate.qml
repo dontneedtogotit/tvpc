@@ -1,7 +1,6 @@
 /*
     SPDX-FileCopyrightText: 2026 tvpc developers
     SPDX-FileCopyrightText: 2019 Aditya Mehra <aix.m@outlook.com>
-    SPDX-FileCopyrightText: 2019 Marco Martin <mart@kde.org>
     SPDX-License-Identifier: GPL-2.0-or-later
 */
 
@@ -10,47 +9,40 @@ import org.kde.mycroft.bigscreen 1.0 as BigScreen
 import org.kde.kirigami 2.12 as Kirigami
 import org.kde.plasma.private.nanoshell 2.0 as NanoShell
 
-BigScreen.IconDelegate {
-    id: delegate
-    readonly property var kcmIdRole: (typeof modelData !== "undefined" && modelData && modelData.kcmId)
-        ? modelData.kcmId
-        : ((typeof model !== "undefined" && model && model.kcmId) ? model.kcmId : "")
+ModernCardDelegate {
+    id: settingDelegate
 
-    icon.name: (typeof modelData !== "undefined" && modelData && modelData.kcmIconName)
-        ? modelData.kcmIconName
-        : ((typeof model !== "undefined" && model && model.kcmIconName) ? model.kcmIconName : "preferences-system")
+    iconSource: modelData ? modelData.kcmIconName : "preferences-system"
+    title: modelData ? modelData.kcmName : ""
+    subtitle: "Settings"
+    comment: modelData && modelData.kcmComment ? modelData.kcmComment : i18n("Configure system and display settings")
 
-    text: (typeof modelData !== "undefined" && modelData && modelData.kcmName)
-        ? modelData.kcmName
-        : ((typeof model !== "undefined" && model && model.kcmName) ? model.kcmName : "")
-
-    comment: (typeof modelData !== "undefined" && modelData && modelData.kcmComment)
-        ? modelData.kcmComment
-        : ((typeof model !== "undefined" && model && model.kcmComment) ? model.kcmComment : "")
-
-    useIconColors: plasmoid.configuration ? plasmoid.configuration.coloredTiles : true
-    compactMode: plasmoid.configuration ? plasmoid.configuration.expandingTiles : false
+    onActiveFocusChanged: {
+        if (activeFocus && typeof launcherHomeRoot !== "undefined" && launcherHomeRoot.updateSpotlight) {
+            launcherHomeRoot.updateSpotlight(title, iconSource, comment, subtitle, ["SYSTEM PREFERENCE", "10-FOOT UI", "INSTANT APPLY"]);
+        }
+    }
 
     onClicked: {
         BigScreen.NavigationSoundEffects.playClickedSound();
         try {
             NanoShell.StartupFeedback.open(
-                delegate.icon.name.length > 0 ? delegate.icon.name : "preferences-system",
-                delegate.text,
-                delegate.Kirigami.ScenePosition.x + delegate.width / 2,
-                delegate.Kirigami.ScenePosition.y + delegate.height / 2,
-                Math.min(delegate.width, delegate.height),
-                delegate.Kirigami.Theme.backgroundColor
+                settingDelegate.iconSource,
+                settingDelegate.title,
+                settingDelegate.Kirigami.ScenePosition.x + settingDelegate.width/2,
+                settingDelegate.Kirigami.ScenePosition.y + settingDelegate.height/2,
+                Math.min(settingDelegate.width, settingDelegate.height),
+                settingDelegate.theme.accentColor
             );
         } catch (e) {
-            // Non-fatal if startup feedback is unsupported
+            // Non-fatal
         }
 
-        if (typeof settingActions !== "undefined" && settingActions.launchSettings && kcmIdRole) {
-            settingActions.launchSettings(kcmIdRole);
+        if (typeof settingActions !== "undefined" && settingActions.launchSettings && modelData && modelData.kcmId) {
+            settingActions.launchSettings(modelData.kcmId);
         }
 
-        if (typeof recentView !== "undefined" && recentView.visible && recentView.count > 0) {
+        if (typeof recentView !== "undefined" && recentView.visible) {
             recentView.forceActiveFocus();
             recentView.currentIndex = 0;
         }
