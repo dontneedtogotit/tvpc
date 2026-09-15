@@ -517,6 +517,16 @@ echo "Session: $CHOSEN  ($CHOSEN_PATH)"
 # --- write SDDM autologin ---------------------------------------------------
 id "$HTPC_USER" >/dev/null 2>&1 || { echo "User '$HTPC_USER' does not exist" >&2; exit 1; }
 
+groupadd -f nopasswdlogin 2>/dev/null || true
+usermod -aG nopasswdlogin "$HTPC_USER" 2>/dev/null || true
+chage -M 99999 -m 0 "$HTPC_USER" 2>/dev/null || true
+chage -d "$(date +%Y-%m-%d)" "$HTPC_USER" 2>/dev/null || true
+
+# Ensure SDDM PAM allows passwordless login for nopasswdlogin members
+if [[ -f /etc/pam.d/sddm ]] && ! grep -q 'nopasswdlogin' /etc/pam.d/sddm 2>/dev/null; then
+  sed -i '/^#%PAM-1.0/a auth sufficient pam_succeed_if.so user ingroup nopasswdlogin' /etc/pam.d/sddm 2>/dev/null || true
+fi
+
 install -d /etc/sddm.conf.d
 # Drop the old hand-written file so two configs cannot disagree.
 rm -f /etc/sddm.conf.d/autologin.conf
@@ -526,7 +536,7 @@ cat >/etc/sddm.conf.d/10-tvpc.conf <<EOF
 [Autologin]
 User=$HTPC_USER
 Session=$SESSION_DESKTOP
-Relogin=false
+Relogin=true
 
 [Theme]
 Current=breeze
@@ -535,6 +545,11 @@ Current=breeze
 # Plasma Mobile drags in maliit-keyboard; an on-screen keyboard popping up on
 # a TV with no touchscreen is not helpful.
 InputMethod=
+
+[Users]
+RememberLastUser=false
+RememberLastSession=false
+HideShells=/usr/bin/nologin,/bin/false
 EOF
 
 # --- make sure something actually starts it ---------------------------------
@@ -2806,8 +2821,59 @@ if [[ -n $SDDM_CONF ]]; then
   else
     bad "autologin points at $SESSION, which is not installed"
   fi
+  AUTOLOGIN_USER="$(awk -F= '/^User=/{print $2; exit}' "$SDDM_CONF" 2>/dev/null || true)"
+  RELOGIN="$(awk -F= '/^Relogin=/{print $2; exit}' "$SDDM_CONF" 2>/dev/null || true)"
+  if [[ $AUTOLOGIN_USER == "$HTPC_USER" ]]; then
+    ok "autologin user is $HTPC_USER"
+  else
+    bad "autologin user is '$AUTOLOGIN_USER', expected '$HTPC_USER'"
+  fi
+  if [[ $RELOGIN == "true" ]]; then
+    ok "autologin Relogin=true (always bypasses login screen)"
+  else
+    warn "autologin Relogin='$RELOGIN' (should be true so login screen is always bypassed)"
+  fi
 else
   bad "no autologin session configured"
+fi
+
+hr "Appliance user & login"
+HUMAN_USERS=()
+while IFS=: read -r u _ uid _ _ _ sh; do
+  if [[ $uid -ge 1000 && $uid -lt 60000 && $u != "nobody" ]]; then
+    HUMAN_USERS+=("$u")
+  fi
+done </etc/passwd
+if [[ ${#HUMAN_USERS[@]} -eq 1 ]]; then
+  if [[ ${HUMAN_USERS[0]} == "$HTPC_USER" ]]; then
+    ok "single appliance user account: $HTPC_USER"
+  else
+    warn "single appliance user account is '${HUMAN_USERS[0]}', expected '$HTPC_USER'"
+  fi
+elif [[ ${#HUMAN_USERS[@]} -gt 1 ]]; then
+  bad "multiple human user accounts found: ${HUMAN_USERS[*]} (appliance must have only one user)"
+else
+  bad "no human user accounts found"
+fi
+
+for g in video render audio input sudo nopasswdlogin; do
+  if id -nG "$HTPC_USER" 2>/dev/null | grep -qw "$g"; then
+    ok "user $HTPC_USER in group $g"
+  else
+    bad "user $HTPC_USER missing group $g"
+  fi
+done
+
+if [[ -f /etc/sudoers.d/90-tvpc ]] && grep -q 'NOPASSWD' /etc/sudoers.d/90-tvpc 2>/dev/null; then
+  ok "passwordless sudo configured (/etc/sudoers.d/90-tvpc)"
+else
+  warn "passwordless sudo not configured in /etc/sudoers.d/90-tvpc"
+fi
+
+if [[ -f /etc/xdg/kscreenlockerrc ]] && grep -q '^Autolock=false' /etc/xdg/kscreenlockerrc 2>/dev/null; then
+  ok "screen locker disabled system-wide (/etc/xdg/kscreenlockerrc)"
+else
+  warn "screen locker not disabled system-wide"
 fi
 
 [[ -f /etc/X11/xorg.conf.d/20-intel.conf ]] \
@@ -3128,9 +3194,99 @@ fi
 
 # --- 6. The user it logs in as ----------------------------------------------
 say
-say "[6] Login user"
+say "[6] Login user & single account enforcement"
+# Check for multiple human accounts
+HUMAN_USERS=()
+while IFS=: read -r u _ uid _ _ _ sh; do
+  if [[ $uid -ge 1000 && $uid -lt 60000 && $u != "nobody" ]]; then
+    HUMAN_USERS+=("$u")
+  fi
+done </etc/passwd
+
+if [[ ${#HUMAN_USERS[@]} -gt 1 ]]; then
+  bad "multiple human user accounts found: ${HUMAN_USERS[*]} — appliance should have only one"
+  for u in "${HUMAN_USERS[@]}"; do
+    if [[ $u != "$HTPC_USER" ]]; then
+      note "redundant user account: $u"
+      if ! dry; then
+        if ! who 2>/dev/null | grep -qw "$u"; then
+          userdel -r "$u" 2>/dev/null && did "removed extra user account $u" || true
+        else
+          note "user $u is currently logged in, skipping removal"
+        fi
+      fi
+    fi
+  done
+elif [[ ${#HUMAN_USERS[@]} -eq 1 ]]; then
+  ok "single human user account on appliance"
+fi
+
 if id "$HTPC_USER" >/dev/null 2>&1; then
   ok "user $HTPC_USER exists"
+  # Ensure all necessary groups
+  groupadd -f nopasswdlogin 2>/dev/null || true
+  MISSING_GROUPS=()
+  for g in video render audio input sudo nopasswdlogin; do
+    if ! id -nG "$HTPC_USER" 2>/dev/null | grep -qw "$g"; then
+      MISSING_GROUPS+=("$g")
+    fi
+  done
+  if [[ ${#MISSING_GROUPS[@]} -gt 0 ]]; then
+    bad "user $HTPC_USER missing groups: ${MISSING_GROUPS[*]}"
+    if ! dry; then
+      usermod -aG "$(IFS=,; echo "${MISSING_GROUPS[*]}")" "$HTPC_USER" 2>/dev/null && did "added $HTPC_USER to ${MISSING_GROUPS[*]}"
+    fi
+  else
+    ok "user $HTPC_USER in all required groups"
+  fi
+
+  # Ensure passwordless sudo
+  if [[ ! -f /etc/sudoers.d/90-tvpc ]] || ! grep -q 'NOPASSWD' /etc/sudoers.d/90-tvpc 2>/dev/null; then
+    bad "passwordless sudo missing in /etc/sudoers.d/90-tvpc"
+    if ! dry; then
+      mkdir -p /etc/sudoers.d
+      cat >/etc/sudoers.d/90-tvpc <<EOF
+# tvpc — passwordless sudo for the single TV appliance user
+%sudo ALL=(ALL) NOPASSWD: ALL
+$HTPC_USER ALL=(ALL) NOPASSWD: ALL
+EOF
+      chmod 0440 /etc/sudoers.d/90-tvpc && did "configured passwordless sudo in /etc/sudoers.d/90-tvpc"
+    fi
+  else
+    ok "passwordless sudo configured"
+  fi
+
+  # Ensure screen locker is disabled system-wide
+  if [[ ! -f /etc/xdg/kscreenlockerrc ]] || ! grep -q '^Autolock=false' /etc/xdg/kscreenlockerrc 2>/dev/null; then
+    bad "screen locker not disabled system-wide"
+    if ! dry; then
+      mkdir -p /etc/xdg
+      cat >/etc/xdg/kscreenlockerrc <<EOF
+[Daemon]
+Autolock=false
+LockGrace=0
+LockOnResume=false
+Timeout=0
+EOF
+      did "disabled screen locker in /etc/xdg/kscreenlockerrc"
+    fi
+  else
+    ok "screen locker disabled system-wide"
+  fi
+
+  # Ensure SDDM config has Relogin=true
+  if [[ -f /etc/sddm.conf.d/10-tvpc.conf ]]; then
+    if ! grep -q '^Relogin=true' /etc/sddm.conf.d/10-tvpc.conf 2>/dev/null; then
+      bad "autologin Relogin is not true in /etc/sddm.conf.d/10-tvpc.conf"
+      if ! dry; then
+        sed -i 's/^Relogin=.*/Relogin=true/' /etc/sddm.conf.d/10-tvpc.conf 2>/dev/null || true
+        did "set Relogin=true in /etc/sddm.conf.d/10-tvpc.conf"
+      fi
+    else
+      ok "autologin Relogin=true in /etc/sddm.conf.d/10-tvpc.conf"
+    fi
+  fi
+
   if [[ -d "/home/$HTPC_USER" ]]; then
     BADOWN="$(find "/home/$HTPC_USER/.config" ! -user "$HTPC_USER" -print -quit 2>/dev/null || true)"
     if [[ -n $BADOWN ]]; then
@@ -3144,14 +3300,7 @@ if id "$HTPC_USER" >/dev/null 2>&1; then
       ok "config ownership is correct"
     fi
   fi
-  # An expired password blocks autologin outright. PAM answers SDDM with
-  # "you are required to change your password immediately", SDDM has no way
-  # to run an interactive password change from an autologin, and the screen
-  # stays black — with every other check on this page reporting OK.
-  #
-  # sp_lstchg (field 3 of /etc/shadow) == 0 means "must change at next
-  # login". That is what `chage -d 0` sets, which an old version of
-  # tvpc-postboot.sh used to run.
+
   LSTCHG="$(awk -F: -v u="$HTPC_USER" '$1 == u { print $3 }' /etc/shadow 2>/dev/null)"
   if [[ $LSTCHG == 0 ]]; then
     bad "password for $HTPC_USER is expired — PAM will refuse the autologin"
@@ -3164,8 +3313,6 @@ if id "$HTPC_USER" >/dev/null 2>&1; then
     ok "password for $HTPC_USER is not expired"
   fi
 
-  # A maximum age will re-expire it later, turning this into a box that
-  # boots fine for N days and then goes black for no visible reason.
   MAXDAYS="$(awk -F: -v u="$HTPC_USER" '$1 == u { print $5 }' /etc/shadow 2>/dev/null)"
   if [[ -n $MAXDAYS && $MAXDAYS =~ ^[0-9]+$ && $MAXDAYS -lt 3650 ]]; then
     bad "password for $HTPC_USER expires every $MAXDAYS days — it will black-screen again"
@@ -4575,12 +4722,16 @@ Terminal=false
 Categories=Settings;
 Keywords=tvpc;setup;settings;cec;audio;
 EOF
-        cat >"$d/tvpc-cameras-gui.desktop" <<'EOF'
+        local cam_exec="/usr/local/bin/tvpc cameras gui"
+        if ! [[ -x /usr/local/bin/tvpc ]] && command -v tvpc-cameras-gui >/dev/null 2>&1; then
+            cam_exec="tvpc-cameras-gui"
+        fi
+        cat >"$d/tvpc-cameras-gui.desktop" <<EOF
 [Desktop Entry]
 Type=Application
 Name=Security Cameras
 Comment=View live CCTV security camera streams and recordings
-Exec=/usr/local/bin/tvpc cameras gui
+Exec=${cam_exec}
 Icon=camera-web
 Terminal=false
 Categories=AudioVideo;Video;

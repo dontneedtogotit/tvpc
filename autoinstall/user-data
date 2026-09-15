@@ -55,7 +55,7 @@ autoinstall:
     username: htpc
     password: "$6$tvpcnuc$filixBovOOq.9RTSlPavpykmFcSDuEaeB9nZdxUVGMMR0PsN6uZYWAhv9zm.ubViRolPf/jHkU3eg3to.5xA11"
     realname: HTPC User
-    groups: [adm, cdrom, dip, plugdev, lxd, sudo, video, render, audio, input]
+    groups: [adm, cdrom, dip, plugdev, lxd, sudo, video, render, audio, input, nopasswdlogin]
     shell: /bin/bash
   ssh:
     allow-pw: true
@@ -85,6 +85,13 @@ autoinstall:
     - curtin in-target --target=/target -- sed -i 's/^GRUB_CMDLINE_LINUX_DEFAULT=.*/GRUB_CMDLINE_LINUX_DEFAULT="quiet"/' /etc/default/grub
     - curtin in-target --target=/target -- update-grub
     - curtin in-target --target=/target -- systemctl enable chrony
+    # Passwordless sudo for the single appliance account
+    - curtin in-target --target=/target -- sh -c 'mkdir -p /etc/sudoers.d && printf "%%sudo ALL=(ALL) NOPASSWD: ALL\nhtpc ALL=(ALL) NOPASSWD: ALL\n" > /etc/sudoers.d/90-tvpc && chmod 0440 /etc/sudoers.d/90-tvpc'
+    # Never lock the screen or prompt for wallet passwords on a TV appliance
+    - curtin in-target --target=/target -- sh -c 'mkdir -p /etc/xdg && printf "[Daemon]\nAutolock=false\nLockGrace=0\nLockOnResume=false\nTimeout=0\n" > /etc/xdg/kscreenlockerrc'
+    - curtin in-target --target=/target -- sh -c 'mkdir -p /etc/xdg && printf "[Wallet]\nEnabled=false\nFirst Use=false\n" > /etc/xdg/kwalletrc'
+    # Ensure password aging/expiry never blocks autologin
+    - curtin in-target --target=/target -- chage -M 99999 -m 0 htpc
     # Never act on a lid that does not exist, never idle-suspend a TV box.
     # (The old form used `-- echo ... >> file`, where the shell applied the
     # redirection outside the target, so nothing reached the installed system.)

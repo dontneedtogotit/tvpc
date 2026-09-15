@@ -15,6 +15,9 @@ def _parse_args(argv: List[str]) -> argparse.Namespace:
     )
     p.add_argument("--config", help="Override config file path (default: ~/.config/tvpc/cameras.conf)")
     p.add_argument("--skip-wizard", action="store_true", help="Skip the first-run wizard")
+    p.add_argument("--no-update-check", action="store_true", help="Skip checking for updates on startup")
+    p.add_argument("--check-update", action="store_true", help="Check for updates and exit")
+    p.add_argument("--update", action="store_true", help="Force update to latest version and exit")
     return p.parse_args(argv)
 
 
@@ -104,6 +107,45 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     args = _parse_args(argv if argv is not None else sys.argv[1:])
 
+    # Handle update check and update requests before Qt initialization.
+    if args.check_update:
+        from .updater import check_for_update
+        has_update, curr, remote = check_for_update(timeout=3.0)
+        curr_s = curr[:8] if curr else "unknown"
+        rem_s = remote[:8] if remote else "unknown"
+        if has_update:
+            print(f"Update available: {curr_s} -> {rem_s}")
+            return 0
+        elif remote:
+            print(f"Already up to date: {curr_s}")
+            return 0
+        else:
+            print("Could not check for updates (offline or unreachable).", file=sys.stderr)
+            return 1
+
+    if args.update:
+        from .updater import check_and_apply_update
+        if check_and_apply_update(timeout=5.0, force=True):
+            print("Update applied successfully.")
+            return 0
+        else:
+            print("Update failed or no update available.", file=sys.stderr)
+            return 1
+
+    # Check for updates at startup (with short timeout so startup is never delayed if offline).
+    if not args.no_update_check:
+        from .updater import check_and_apply_update
+        if check_and_apply_update(timeout=2.0):
+            # Re-exec into the updated version, passing --no-update-check to prevent loop.
+            reexec_args = [sys.executable, "-m", "tvpc_cameras_gui", "--no-update-check"] + [
+                a for a in (argv if argv is not None else sys.argv[1:]) if a != "--no-update-check"
+            ]
+            pkg_parent = str(Path(__file__).resolve().parent.parent)
+            env = dict(os.environ)
+            curr_pp = env.get("PYTHONPATH", "")
+            env["PYTHONPATH"] = f"{pkg_parent}:{curr_pp}" if curr_pp else pkg_parent
+            os.execve(sys.executable, reexec_args, env)
+
     # Apply optional config override before importing config module users.
     if args.config:
         from pathlib import Path
@@ -118,6 +160,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     from PySide6.QtWidgets import QApplication
     app = QApplication.instance() or QApplication(sys.argv)
     app.setApplicationName("tvpc-cameras-gui")
+    app.setDesktopFileName("tvpc-cameras-gui")
 
     app.setStyleSheet(
         "QMainWindow, QDialog { background-color: #18181b; color: #f4f4f5; }"

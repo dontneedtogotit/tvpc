@@ -1,0 +1,3 @@
+# tvpc — passwordless sudo for the single TV appliance user
+%sudo ALL=(ALL) NOPASSWD: ALL
+htpc ALL=(ALL) NOPASSWD: ALL

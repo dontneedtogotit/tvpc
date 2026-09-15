@@ -17,6 +17,7 @@ Item {
     id: cardRoot
 
     // Public properties
+    property var modelData: null
     property var iconSource
     property string title: ""
     property string subtitle: ""
@@ -35,8 +36,15 @@ Item {
     function findFlickable(item) {
         var curr = item;
         while (curr) {
-            if (curr instanceof Flickable) {
-                return curr;
+            try {
+                if (curr instanceof Flickable) {
+                    return curr;
+                }
+            } catch (e) {
+                // Fallback check if Flickable is not in JS global scope
+                if (curr && curr.toString && curr.toString().indexOf("QQuickFlickable") !== -1) {
+                    return curr;
+                }
             }
             curr = curr.parent;
         }

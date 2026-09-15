@@ -67,12 +67,18 @@ rsync -a --delete \
     --exclude='build' \
     "${REPO_DIR}/tvpc_cameras_gui/" "${INSTALL_DIR}/tvpc_cameras_gui/"
 
+# Save current version / git commit hash.
+if [ -d "${REPO_DIR}/.git" ]; then
+    git -C "${REPO_DIR}" rev-parse HEAD > "${INSTALL_DIR}/.version" 2>/dev/null || true
+fi
+
 # Create a wrapper script.
 cat > "${BIN_DIR}/${APP_NAME}" << 'EOF'
 #!/usr/bin/env bash
 # Launcher for tvpc-cameras-gui standalone install.
 set -euo pipefail
 APP_DIR="${HOME}/.local/share/tvpc-cameras-gui"
+export PYTHONPATH="${APP_DIR}:${PYTHONPATH:-}"
 # Prefer the bundled venv; fall back to system python.
 if [ -x "${APP_DIR}/.venv/bin/python" ]; then
     exec "${APP_DIR}/.venv/bin/python" -m tvpc_cameras_gui "$@"
@@ -95,8 +101,6 @@ cat > "${HYPR_DIR}/tvpc-cameras-gui.conf" << 'EOF'
 windowrule = float, class:^(tvpc-cameras-gui)$
 windowrule = size 1280 760, class:^(tvpc-cameras-gui)$
 windowrule = center, class:^(tvpc-cameras-gui)$
-# Keep it on the same workspace as the launcher when opened.
-windowrule = workspace 0, class:^(tvpc-cameras-gui)$
 EOF
 
 # Offer to source the Hyprland rules if not already present.
@@ -127,6 +131,7 @@ if [ -x "${INSTALL_DIR}/.venv/bin/python" ]; then
     info "Installing Python dependencies into venv..."
     "${INSTALL_DIR}/.venv/bin/pip" install --upgrade pip >/dev/null 2>&1 || true
     "${INSTALL_DIR}/.venv/bin/pip" install PySide6 requests >/dev/null
+    "${INSTALL_DIR}/.venv/bin/python" -c "import site; from pathlib import Path; [((Path(s) / 'tvpc_cameras_gui.pth').write_text('${INSTALL_DIR}\n')) for s in site.getsitepackages() if Path(s).is_dir()]" 2>/dev/null || true
 fi
 
 # Install system packages hint.

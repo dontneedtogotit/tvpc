@@ -111,7 +111,7 @@ BAD_FILES=(
 
 ITEMS=(
   "config|0|/etc/default/tvpc exists"
-  "user|0|user '$HTPC_USER' exists, is in the right groups and can log in"
+  "user|0|single user '$HTPC_USER' exists, has nopasswdlogin/sudo and password expiry disabled"
   "badfiles|0|configuration known to break the display is absent"
   "helpers|1|helper programs in /usr/local/bin match the repo"
   "cameras_gui|1|tvpc_cameras_gui Python package matches the repo"
@@ -119,7 +119,7 @@ ITEMS=(
   "kernel_cmdline|0|kernel command line has no splash or Broadwell-era flags"
   "graphical_target|0|default systemd target is graphical.target"
   "sddm|0|sddm is installed and enabled"
-  "autologin|0|autologin points at a session that exists"
+  "autologin|0|autologin points at a session that exists with Relogin=true"
   "audio_unit|0|tvpc-audio user service is enabled"
   "cec_poweron|0|htpc-startup (TV power-on) is enabled"
   "cec_remote|0|CEC remote listener and ydotoold are enabled"
@@ -190,13 +190,23 @@ toolBarFont=Noto Sans,$((FONT_SIZE - 1)),-1,5,50,0,0,0,0,0
 LookAndFeelPackage=org.kde.breezedark.desktop
 EOF
 
-# --- No lock screen on a TV -------------------------------------------------
+# --- No lock screen or credential popups on a TV ----------------------------
+mkdir -p "$SKEL/.config" /etc/xdg
 cat >"$SKEL/.config/kscreenlockerrc" <<'EOF'
 [Daemon]
 Autolock=false
 LockGrace=0
 LockOnResume=false
+Timeout=0
 EOF
+cp "$SKEL/.config/kscreenlockerrc" /etc/xdg/kscreenlockerrc 2>/dev/null || true
+
+cat >"$SKEL/.config/kwalletrc" <<'EOF'
+[Wallet]
+Enabled=false
+First Use=false
+EOF
+cp "$SKEL/.config/kwalletrc" /etc/xdg/kwalletrc 2>/dev/null || true
 
 # --- Never blank or suspend -------------------------------------------------
 # Without this the TV goes black after ~5 minutes idle, which looks exactly
@@ -552,9 +562,9 @@ autoinstall:
   identity:
     hostname: tvpc
     username: htpc
-    password: "$6$rounds=656000$5salt5salt5sal$T0cPl47E5BcPl47E5BcPl47E5BcPl47E5BcPl47E5BcPl47E5BcPl47E5BcPl47E5BcPl47E5"
+    password: "$6$tvpcnuc$filixBovOOq.9RTSlPavpykmFcSDuEaeB9nZdxUVGMMR0PsN6uZYWAhv9zm.ubViRolPf/jHkU3eg3to.5xA11"
     realname: HTPC User
-    groups: [adm, cdrom, dip, plugdev, lxd, sudo, video, render, audio, input]
+    groups: [adm, cdrom, dip, plugdev, lxd, sudo, video, render, audio, input, nopasswdlogin]
     shell: /bin/bash
   ssh:
     allow-pw: true
@@ -582,6 +592,13 @@ autoinstall:
     - curtin in-target --target=/target -- chmod +x /target/tvpc/install.sh
     - curtin in-target --target=/target -- chmod +x /target/tvpc/scripts/*.sh
     - curtin in-target --target=/target -- ln -s /tvpc/install.sh /target/usr/local/bin/tvpc-install
+    # Passwordless sudo for the single appliance account
+    - curtin in-target --target=/target -- sh -c 'mkdir -p /etc/sudoers.d && printf "%%sudo ALL=(ALL) NOPASSWD: ALL\nhtpc ALL=(ALL) NOPASSWD: ALL\n" > /etc/sudoers.d/90-tvpc && chmod 0440 /etc/sudoers.d/90-tvpc'
+    # Never lock the screen or prompt for wallet passwords on a TV appliance
+    - curtin in-target --target=/target -- sh -c 'mkdir -p /etc/xdg && printf "[Daemon]\nAutolock=false\nLockGrace=0\nLockOnResume=false\nTimeout=0\n" > /etc/xdg/kscreenlockerrc'
+    - curtin in-target --target=/target -- sh -c 'mkdir -p /etc/xdg && printf "[Wallet]\nEnabled=false\nFirst Use=false\n" > /etc/xdg/kwalletrc'
+    # Ensure password aging/expiry never blocks autologin
+    - curtin in-target --target=/target -- chage -M 99999 -m 0 htpc
     - curtin in-target --target=/target -- echo "HandleLidSwitch=ignore" >> /etc/systemd/logind.conf
     - curtin in-target --target=/target -- echo "HandleLidSwitchExternalPower=ignore" >> /etc/systemd/logind.conf
     - curtin in-target --target=/target -- echo "HandleLidSwitchDocked=ignore" >> /etc/systemd/logind.conf
@@ -963,9 +980,9 @@ autoinstall:
   identity:
     hostname: tvpc
     username: htpc
-    password: "$6$rounds=656000$5salt5salt5sal$T0cPl47E5BcPl47E5BcPl47E5BcPl47E5BcPl47E5BcPl47E5BcPl47E5BcPl47E5BcPl47E5"
+    password: "$6$tvpcnuc$filixBovOOq.9RTSlPavpykmFcSDuEaeB9nZdxUVGMMR0PsN6uZYWAhv9zm.ubViRolPf/jHkU3eg3to.5xA11"
     realname: HTPC User
-    groups: [adm, cdrom, dip, plugdev, lxd, sudo, video, render, audio, input]
+    groups: [adm, cdrom, dip, plugdev, lxd, sudo, video, render, audio, input, nopasswdlogin]
     shell: /bin/bash
   ssh:
     allow-pw: true
@@ -993,6 +1010,13 @@ autoinstall:
     - curtin in-target --target=/target -- chmod +x /target/tvpc/install.sh
     - curtin in-target --target=/target -- chmod +x /target/tvpc/scripts/*.sh
     - curtin in-target --target=/target -- ln -s /tvpc/install.sh /target/usr/local/bin/tvpc-install
+    # Passwordless sudo for the single appliance account
+    - curtin in-target --target=/target -- sh -c 'mkdir -p /etc/sudoers.d && printf "%%sudo ALL=(ALL) NOPASSWD: ALL\nhtpc ALL=(ALL) NOPASSWD: ALL\n" > /etc/sudoers.d/90-tvpc && chmod 0440 /etc/sudoers.d/90-tvpc'
+    # Never lock the screen or prompt for wallet passwords on a TV appliance
+    - curtin in-target --target=/target -- sh -c 'mkdir -p /etc/xdg && printf "[Daemon]\nAutolock=false\nLockGrace=0\nLockOnResume=false\nTimeout=0\n" > /etc/xdg/kscreenlockerrc'
+    - curtin in-target --target=/target -- sh -c 'mkdir -p /etc/xdg && printf "[Wallet]\nEnabled=false\nFirst Use=false\n" > /etc/xdg/kwalletrc'
+    # Ensure password aging/expiry never blocks autologin
+    - curtin in-target --target=/target -- chage -M 99999 -m 0 htpc
     - curtin in-target --target=/target -- echo "HandleLidSwitch=ignore" >> /etc/systemd/logind.conf
     - curtin in-target --target=/target -- echo "HandleLidSwitchExternalPower=ignore" >> /etc/systemd/logind.conf
     - curtin in-target --target=/target -- echo "HandleLidSwitchDocked=ignore" >> /etc/systemd/logind.conf
@@ -1102,14 +1126,44 @@ EOF
 check_user() {
   id "$HTPC_USER" >/dev/null 2>&1 || return 1
   local g
-  for g in video render audio input; do
+  for g in video render audio input sudo nopasswdlogin; do
     id -nG "$HTPC_USER" | grep -w "$g" >/dev/null || return 1
   done
+  local count=0
+  while IFS=: read -r u _ uid _; do
+    if [[ $uid -ge 1000 && $uid -lt 60000 && $u != "nobody" ]]; then
+      ((count++))
+    fi
+  done </etc/passwd
+  [[ $count -eq 1 ]] || return 1
+  [[ -f /etc/sudoers.d/90-tvpc ]] || return 1
   [[ "$(awk -F: -v u="$HTPC_USER" '$1 == u { print $3 }' /etc/shadow 2>/dev/null)" != 0 ]]
 }
 fix_user() {
-  id "$HTPC_USER" >/dev/null 2>&1 || useradd -m -s /bin/bash "$HTPC_USER" || return 1
-  usermod -aG video,render,audio,plugdev,input "$HTPC_USER"
+  groupadd -f nopasswdlogin 2>/dev/null || true
+  if ! id "$HTPC_USER" >/dev/null 2>&1; then
+    useradd -m -G video,render,audio,plugdev,input,sudo,nopasswdlogin -s /bin/bash "$HTPC_USER" || return 1
+    echo "$HTPC_USER:htpc" | chpasswd
+  else
+    usermod -aG video,render,audio,plugdev,input,sudo,nopasswdlogin "$HTPC_USER"
+  fi
+  chage -M 99999 -m 0 "$HTPC_USER" 2>/dev/null || true
+  chage -d "$(date +%Y-%m-%d)" "$HTPC_USER" 2>/dev/null || true
+  mkdir -p /etc/sudoers.d
+  cat >/etc/sudoers.d/90-tvpc <<EOF
+# tvpc — passwordless sudo for the single TV appliance user
+%sudo ALL=(ALL) NOPASSWD: ALL
+$HTPC_USER ALL=(ALL) NOPASSWD: ALL
+EOF
+  chmod 0440 /etc/sudoers.d/90-tvpc
+
+  while IFS=: read -r u _ uid _; do
+    if [[ $uid -ge 1000 && $uid -lt 60000 && $u != "nobody" && $u != "$HTPC_USER" ]]; then
+      if ! who 2>/dev/null | grep -qw "$u"; then
+        userdel -r "$u" 2>/dev/null || true
+      fi
+    fi
+  done </etc/passwd
 }
 
 check_badfiles() {
@@ -1261,11 +1315,14 @@ fix_sddm() {
 
 check_autologin() {
   [[ -f /etc/sddm.conf.d/10-tvpc.conf ]] || return 1
-  local s
+  local s u r
   s="$(awk -F= '/^Session=/{print $2}' /etc/sddm.conf.d/10-tvpc.conf 2>/dev/null || true)"
-  [[ -n $s ]] || return 1
+  u="$(awk -F= '/^User=/{print $2}' /etc/sddm.conf.d/10-tvpc.conf 2>/dev/null || true)"
+  r="$(awk -F= '/^Relogin=/{print $2}' /etc/sddm.conf.d/10-tvpc.conf 2>/dev/null || true)"
+  [[ -n $s && $u == "$HTPC_USER" && $r == "true" ]] || return 1
   local d
-  for d in /usr/local/share/wayland-sessions /usr/share/wayland-sessions            /usr/local/share/xsessions /usr/share/xsessions; do
+  for d in /usr/local/share/wayland-sessions /usr/share/wayland-sessions \
+           /usr/local/share/xsessions /usr/share/xsessions; do
     [[ -f "$d/$s" || -f "$d/$s.desktop" ]] && return 0
   done
   return 1
@@ -1454,16 +1511,32 @@ printf '%s
 
 # 1. Configuration
 if [[ ! -f /etc/default/tvpc ]]; then
-  cat >/etc/default/tvpc <<'EOF'
+  DETECTED_USER=""
+  if [[ -n "${SUDO_USER:-}" && "${SUDO_USER}" != "root" ]]; then
+    DETECTED_USER="$SUDO_USER"
+  else
+    HUMANS=()
+    while IFS=: read -r u _ uid _; do
+      if [[ $uid -ge 1000 && $uid -lt 60000 && $u != "nobody" ]]; then
+        HUMANS+=("$u")
+      fi
+    done </etc/passwd
+    if [[ ${#HUMANS[@]} -eq 1 ]]; then
+      DETECTED_USER="${HUMANS[0]}"
+    fi
+  fi
+  TARGET_USER="${DETECTED_USER:-htpc}"
+
+  cat >/etc/default/tvpc <<EOF
 # tvpc appliance settings — sourced by the tvpc scripts.
-TVPC_USER=htpc
+TVPC_USER=$TARGET_USER
 TVPC_SESSION=auto
 TVPC_SCALE=1.5
 TVPC_MODE=
 TVPC_INSTALL_PLASMA_MOBILE=0
 TVPC_WIRED_ONLY=0
 EOF
-  echo "Wrote /etc/default/tvpc"
+  echo "Wrote /etc/default/tvpc (TVPC_USER=$TARGET_USER)"
 fi
 # shellcheck source=/dev/null
 . /etc/default/tvpc
@@ -1512,14 +1585,34 @@ systemctl daemon-reload
 flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
 flatpak install -y flathub io.github.vacuumtube.VacuumTube ||   echo "!! VacuumTube install failed (no network?) — rerun: flatpak install flathub io.github.vacuumtube.VacuumTube"
 
-# 5. HTPC user
+# 5. Appliance user (ensure single human user account, proper groups, and no password expiry)
+groupadd -f nopasswdlogin 2>/dev/null || true
 if ! id "$HTPC_USER" &>/dev/null; then
-  useradd -m -G video,render,audio,plugdev,input -s /bin/bash "$HTPC_USER"
+  useradd -m -G video,render,audio,plugdev,input,sudo,nopasswdlogin -s /bin/bash "$HTPC_USER"
   echo "$HTPC_USER:htpc" | chpasswd
   echo "Created user $HTPC_USER (password: htpc — change it!)"
 else
-  usermod -aG video,render,audio,plugdev,input "$HTPC_USER"
+  usermod -aG video,render,audio,plugdev,input,sudo,nopasswdlogin "$HTPC_USER"
 fi
+chage -M 99999 -m 0 "$HTPC_USER" 2>/dev/null || true
+chage -d "$(date +%Y-%m-%d)" "$HTPC_USER" 2>/dev/null || true
+
+mkdir -p /etc/sudoers.d
+cat >/etc/sudoers.d/90-tvpc <<EOF
+# tvpc — passwordless sudo for the single TV appliance user
+%sudo ALL=(ALL) NOPASSWD: ALL
+$HTPC_USER ALL=(ALL) NOPASSWD: ALL
+EOF
+chmod 0440 /etc/sudoers.d/90-tvpc
+
+# Enforce single user account: clean up any redundant human accounts
+while IFS=: read -r u _ uid _; do
+  if [[ $uid -ge 1000 && $uid -lt 60000 && $u != "nobody" && $u != "$HTPC_USER" ]]; then
+    if ! who 2>/dev/null | grep -qw "$u"; then
+      userdel -r "$u" 2>/dev/null && echo "Removed extra human user account $u" || true
+    fi
+  fi
+done </etc/passwd
 
 # 6. Overlays, then GRUB
 if [[ -d "$REPO_ROOT/overlays" ]]; then

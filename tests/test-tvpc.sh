@@ -206,6 +206,15 @@ grep -q "topBarHeight" "$OVERLAY/contents/ui/main.qml" || fail "main.qml missing
 grep -q "tvpc-addapps" "$ROOT/scripts/tvpc.sh" || fail "tvpc.sh missing tvpc-addapps"
 grep -q "tvpc-addapps.desktop" "$ROOT/install.sh" || fail "install.sh missing tvpc-addapps.desktop"
 grep -q "noborder=true" "$ROOT/install.sh" || fail "install.sh missing noborder=true for vacuumtube"
+
+# App launcher delegate reliability assertions
+grep -q "property var modelData: null" "$OVERLAY/contents/ui/launcher/delegates/ModernCardDelegate.qml" || fail "ModernCardDelegate missing modelData declaration"
+grep -q "property var modelData: null" "$OVERLAY/contents/ui/launcher/delegates/AppDelegate.qml" || fail "AppDelegate missing modelData declaration"
+grep -q "targetStorageId" "$OVERLAY/contents/ui/launcher/delegates/AppDelegate.qml" || fail "AppDelegate missing targetStorageId safe launch"
+grep -q "startupFeedbackTimeout" "$OVERLAY/contents/ui/launcher/delegates/AppDelegate.qml" || fail "AppDelegate missing startup feedback safety timeout"
+grep -q "targetKcmId" "$OVERLAY/contents/ui/launcher/delegates/SettingDelegate.qml" || fail "SettingDelegate missing targetKcmId safe launch"
+grep -q "vAppStorageIdRole" "$OVERLAY/contents/ui/launcher/delegates/VoiceAppDelegate.qml" || fail "VoiceAppDelegate missing vAppStorageIdRole safe launch"
+
 echo "Layout and dock tests passed."
 
 echo "== 5. Hyprland Config Validation =="
@@ -223,4 +232,33 @@ if [[ -f $CONFIG ]]; then
   fi
 fi
 
+echo "== 6. Single User & Password Login Bypass Tests =="
+# 1. Overlay assertions
+[[ -f "$ROOT/overlays/etc/xdg/kscreenlockerrc" ]] || fail "Missing overlays/etc/xdg/kscreenlockerrc"
+grep -q "Autolock=false" "$ROOT/overlays/etc/xdg/kscreenlockerrc" || fail "kscreenlockerrc missing Autolock=false"
+grep -q "LockOnResume=false" "$ROOT/overlays/etc/xdg/kscreenlockerrc" || fail "kscreenlockerrc missing LockOnResume=false"
+
+[[ -f "$ROOT/overlays/etc/xdg/kwalletrc" ]] || fail "Missing overlays/etc/xdg/kwalletrc"
+grep -q "Enabled=false" "$ROOT/overlays/etc/xdg/kwalletrc" || fail "kwalletrc missing Enabled=false"
+
+[[ -f "$ROOT/overlays/etc/sudoers.d/90-tvpc" ]] || fail "Missing overlays/etc/sudoers.d/90-tvpc"
+grep -q "NOPASSWD: ALL" "$ROOT/overlays/etc/sudoers.d/90-tvpc" || fail "sudoers missing NOPASSWD: ALL"
+
+# 2. Autoinstall configuration assertions
+grep -q "nopasswdlogin" "$ROOT/autoinstall/user-data" || fail "autoinstall missing nopasswdlogin group"
+grep -q "NOPASSWD: ALL" "$ROOT/autoinstall/user-data" || fail "autoinstall missing sudoers NOPASSWD"
+grep -q "kscreenlockerrc" "$ROOT/autoinstall/user-data" || fail "autoinstall missing kscreenlockerrc"
+
+# 3. SDDM autologin contract: Relogin=true
+grep -q "Relogin=true" "$ROOT/scripts/tvpc.sh" || fail "tvpc.sh missing Relogin=true"
+grep -q "nopasswdlogin" "$ROOT/scripts/tvpc.sh" || fail "tvpc.sh missing nopasswdlogin"
+
+# 4. install.sh convergence assertions
+grep -q "nopasswdlogin" "$ROOT/install.sh" || fail "install.sh missing nopasswdlogin"
+grep -q "Relogin=true" "$ROOT/install.sh" || fail "install.sh missing Relogin=true check"
+grep -q "userdel" "$ROOT/install.sh" || fail "install.sh missing single user cleanup enforcement"
+
+echo "Single user and login screen bypass tests passed."
+
 echo "All tvpc tests passed!"
+
