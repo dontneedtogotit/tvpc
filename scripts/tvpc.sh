@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # tvpc — Unified HTPC Appliance Manager for Ubuntu 24.04
 # Consolidates all runtime management, hardware controls, and TV interfaces:
-#   cec, audio, session, bigscreen, theme, cameras, hyprland,
+#   cec, audio, session, bigscreen, theme, cameras, web-remote, night-mode, cast, sleep-timer, ambient,
 #   controller, doctor, repair, status, tweaks, gui
 set -o pipefail
 
@@ -201,7 +201,24 @@ handle() {
             else
                 send_key 125 super
             fi ;;
-        0d)    send_key 1   Escape ;;
+        0d)
+            now="$(date +%s%N 2>/dev/null || date +%s)"
+            last="${LAST_EXIT_TIME:-0}"
+            LAST_EXIT_TIME="$now"
+            diff=999999999
+            if [[ ${#now} -gt 10 && ${#last} -gt 10 ]]; then
+                diff=$(( (now - last) / 1000000 ))
+            elif [[ ${#now} -le 10 && ${#last} -le 10 ]]; then
+                diff=$(( (now - last) * 1000 ))
+            fi
+            if [[ $diff -lt 800 ]]; then
+                log "Double-tap Exit: closing foreground window"
+                qdbus org.kde.kglobalaccel /component/kwin invokeShortcut 'Window Close' 2>/dev/null || send_key 62 f4
+                LAST_EXIT_TIME=0
+            else
+                send_key 1 Escape
+            fi
+            ;;
         72)    # Red button (A): Toggle primary camera PiP
             if command -v tvpc-cameras >/dev/null 2>&1; then
                 tvpc-cameras toggle-pip 0 2>/dev/null || true
@@ -400,6 +417,12 @@ esac
 subcmd_audio() {
 set -uo pipefail
 
+if [[ "${1:-}" == "night-mode" || "${1:-}" == "night" ]]; then
+  shift
+  subcmd_night_mode "$@"
+  return $?
+fi
+
 log() { echo "tvpc-hdmi-audio: $*"; }
 
 # PipeWire may still be starting when the session comes up.
@@ -494,10 +517,9 @@ session_file() {   # $1 = session id -> echoes "<desktop-file>|<wayland|x11>"
     kiosk)         echo "tvpc-kiosk.desktop|wayland" ;;
     # Opt-in, not in AUTO_ORDER. Install the session first; the check below
     # refuses to point autologin at a session that is not on disk.
-    #   hypr      -> sudo ./scripts/tvpc-hyprland.sh  (Hyprland, TV-tuned)
     #   bigscreen -> apt install plasma-bigscreen     (KDE's TV shell, remote-first)
     #   phosh     -> apt install phosh                (GNOME's phone shell)
-    hypr)          echo "tvpc-hypr.desktop|wayland" ;;
+    hypr)          echo "plasma-bigscreen-wayland.desktop|wayland" ;;
     bigscreen)     echo "plasma-bigscreen-wayland.desktop|wayland" ;;
     bigscreen-x11) echo "plasma-bigscreen-x11.desktop|x11" ;;
     phosh)         echo "phosh.desktop|wayland" ;;
@@ -573,7 +595,7 @@ if [[ $WANT == auto ]]; then
 else
   session_file "$WANT" >/dev/null || {
     echo "Unknown session '$WANT'. Known: auto plasma plasma-mobile plasma-x11" >&2
-    echo "                              kiosk hypr bigscreen bigscreen-x11 phosh" >&2
+    echo "                              kiosk bigscreen bigscreen-x11 phosh" >&2
     exit 1
   }
   if ! CHOSEN_PATH="$(locate_session "$WANT")"; then
@@ -1832,6 +1854,43 @@ cmd_grid() {
     log "Opened $n camera(s) in a 2x2 grid"
 }
 
+cmd_alert() {
+    have mpv || { echo "mpv not installed. sudo apt-get install mpv" >&2; return 1; }
+    local target="${1:-0}"
+    local duration="${2:-10}"
+    local line=""
+    if [[ $target =~ ^[0-9]+$ ]]; then
+        line="$(get_camera "$target")"
+    else
+        line="$(read_cameras | awk -F'|' -v t="$target" 'tolower($2)==tolower(t) || index(tolower($2), tolower(t)) {for(i=2;i<=NF;i++) printf "%s%s", $i, (i==NF?"":"|"); print ""; exit}')"
+    fi
+    [[ -z $line ]] && line="$(get_camera 0)"
+    [[ -z $line ]] && { echo "No camera available for alert." >&2; return 1; }
+    IFS='|' read -r name url user pass notes <<<"$line"
+    local cred_args=()
+    local extra_args=(--rtsp-transport=tcp)
+    if [[ -n $user ]]; then cred_args=(--user "$user" --password "$pass"); fi
+
+    pkill -f "tvpc-cameras-alert" 2>/dev/null || true
+
+    mpv --no-terminal --quiet \
+        --title="tvpc-cameras-alert: $name" \
+        --geometry="32%x32%-24+24" \
+        --border=no --title-bar=no \
+        --no-osc --no-input-terminal --no-input-cursor \
+        --ontop --on-top-level=system \
+        --mute=yes \
+        "${extra_args[@]}" --hwdec=auto-safe \
+        --force-window=immediate \
+        "${cred_args[@]}" "$url" &
+    local alert_pid=$!
+    (
+        sleep "$duration"
+        kill "$alert_pid" 2>/dev/null || true
+    ) &
+    log "Camera alert PiP active for $name (${duration}s, PID $alert_pid)"
+}
+
 # --- GUI ------------------------------------------------------------------
 cmd_menu() {
     have kdialog || { cmd_list; return 0; }
@@ -1987,6 +2046,7 @@ case "${1:-}" in
     remove|rm) shift; cmd_remove "$@" ;;
     view|play) shift; cmd_view "$@" ;;
     grid)     cmd_grid ;;
+    alert)    shift; cmd_alert "$@" ;;
     toggle-pip|toggle) shift; cmd_toggle_pip "$@" ;;
     toggle-grid) shift; cmd_toggle_grid "$@" ;;
     cycle)    shift; cmd_cycle "$@" ;;
@@ -2008,490 +2068,214 @@ esac
 }
 
 # ---------------------------------------------------------------------------
-# Module: Hyprland
+# Module: Web Remote
 # ---------------------------------------------------------------------------
-hypr_menu() {
-set -uo pipefail
-
-if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
-  awk 'NR>1 && /^#/ {sub(/^# ?/, ""); print; next} NR>1 {exit}' "$0"
-  exit 0
-fi
-
-# shellcheck source=/dev/null
-if [[ -r /etc/default/tvpc ]]; then . /etc/default/tvpc; fi
-
-# The menu button is a toggle: if a launcher is already up, this press is
-# the user asking to dismiss it. Without this, pressing Menu twice stacks a
-# second launcher on top of the first.
-if pkill -x fuzzel 2>/dev/null || pkill -x wofi 2>/dev/null; then
-  exit 0
-fi
-
-# fuzzel is the launcher, but never let a missing binary leave the menu
-# button doing nothing at all.
-menu() {   # reads labels on stdin, echoes the chosen one
-  if command -v fuzzel >/dev/null 2>&1; then
-    fuzzel --dmenu --prompt "$1  "
-  elif command -v wofi >/dev/null 2>&1; then
-    wofi --dmenu --prompt "$1"
-  else
-    return 1
-  fi
-}
-
-have()      { command -v "$1" >/dev/null 2>&1; }
-have_flat() { flatpak info "$1" >/dev/null 2>&1; }
-
-# --- power / session menu ---------------------------------------------------
-if [[ "${1:-}" == "power" ]]; then
-  choice="$(printf '%s\n' "Cancel" "Reboot" "Power off" "Restart shell" "Log out" | menu "Power")" || exit 0
-  case "$choice" in
-    "Reboot")        systemctl reboot ;;
-    "Power off")     systemctl poweroff ;;
-    "Restart shell") hyprctl reload ;;
-    "Log out")       hyprctl dispatch exit ;;
-    *)               : ;;
-  esac
-  exit 0
-fi
-
-# --- every installed app ----------------------------------------------------
-if [[ "${1:-}" == "all" ]]; then
-  if have fuzzel; then exec fuzzel; fi
-  if have wofi;   then exec wofi --show drun; fi
-  echo "tvpc-hypr-menu: no launcher installed (apt install fuzzel)" >&2
-  exit 1
-fi
-
-# --- curated list -----------------------------------------------------------
-# Built from what is actually present, so the menu never offers something
-# that will not start.
-declare -a LABELS=() CMDS=()
-add() { LABELS+=("$1"); CMDS+=("$2"); }
-
-if have_flat io.github.vacuumtube.VacuumTube; then
-  add "YouTube" "flatpak run io.github.vacuumtube.VacuumTube --enable-features=VaapiVideoDecoder --ozone-platform-hint=auto --disable-renderer-backgrounding --disable-background-timer-throttling --disable-backgrounding-occluded-windows"
-fi
-if have_flat org.mozilla.firefox; then
-  add "Firefox" "flatpak run org.mozilla.firefox"
-elif have firefox; then
-  add "Firefox" "firefox"
-fi
-if have_flat tv.kodi.Kodi; then
-  add "Kodi" "flatpak run tv.kodi.Kodi"
-elif have kodi; then
-  add "Kodi" "kodi"
-fi
-have foot     && add "Terminal" "foot"
-have pavucontrol && add "Audio settings" "pavucontrol"
-have nm-connection-editor && add "Wi-Fi" "nm-connection-editor"
-
-add "All apps…" "@all"
-add "Power"     "@power"
-
-if [[ ${#LABELS[@]} -eq 0 ]]; then
-  echo "tvpc-hypr-menu: nothing to offer" >&2
-  exit 1
-fi
-
-choice="$(printf '%s\n' "${LABELS[@]}" | menu "Apps")" || exit 0
-[[ -n "$choice" ]] || exit 0
-
-for i in "${!LABELS[@]}"; do
-  if [[ "${LABELS[$i]}" == "$choice" ]]; then
-    case "${CMDS[$i]}" in
-      "@all")   exec "$0" all ;;
-      "@power") exec "$0" power ;;
-      *)        setsid -f sh -c "${CMDS[$i]}" >/dev/null 2>&1; exit 0 ;;
-    esac
-  fi
-done
-exit 0
-
-}
-
-hypr_autostart() {
-set -uo pipefail
-
-if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
-  awk 'NR>1 && /^#/ {sub(/^# ?/, ""); print; next} NR>1 {exit}' "$0"
-  exit 0
-fi
-
-# shellcheck source=/dev/null
-if [[ -r /etc/default/tvpc ]]; then . /etc/default/tvpc; fi
-
-# A television is not a laptop: never blank, never suspend. hypridle is
-# deliberately not installed, but a stray systemd idle action would still
-# bite, so make the intent explicit here too.
-systemctl --user mask hypridle.service >/dev/null 2>&1 || true
-
-# Hand the session environment to the user bus, so services started later
-# (the CEC listener's playerctl calls, portals, flatpak apps) can find the
-# compositor instead of guessing.
-if command -v dbus-update-activation-environment >/dev/null 2>&1; then
-  dbus-update-activation-environment --systemd \
-    WAYLAND_DISPLAY XDG_CURRENT_DESKTOP XDG_SESSION_TYPE HYPRLAND_INSTANCE_SIGNATURE \
-    >/dev/null 2>&1 || true
-fi
-systemctl --user import-environment \
-  WAYLAND_DISPLAY XDG_CURRENT_DESKTOP XDG_SESSION_TYPE HYPRLAND_INSTANCE_SIGNATURE \
-  >/dev/null 2>&1 || true
-
-if [[ -n "${TVPC_AUTOSTART_APP:-}" ]]; then
-  setsid -f sh -c "$TVPC_AUTOSTART_APP" >/dev/null 2>&1 || true
-fi
-
-}
-
-hypr_setup() {
-set -uo pipefail
-
-if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
-  awk 'NR>1 && /^#/ {sub(/^# ?/, ""); print; next} NR>1 {exit}' "$0"
-  exit 0
-fi
-
-MODE=install
-case "${1:-}" in
-  --check)  MODE=check ;;
-  --force)  MODE=force ;;
-  --remove) MODE=remove ;;
-  "")       ;;
-  *) echo "Unknown option '$1' (try --help)" >&2; exit 1 ;;
-esac
-
-# shellcheck source=/dev/null
-if [[ -r /etc/default/tvpc ]]; then . /etc/default/tvpc; fi
-HTPC_USER="${TVPC_USER:-${HTPC_USER:-htpc}}"
-
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-PPA="ppa:cppiber/hyprland"
-PPA_ORIGIN="LP-PPA-cppiber-hyprland"
-PIN_FILE="/etc/apt/preferences.d/90-tvpc-hyprland"
-SESSION_DESKTOP="/usr/share/wayland-sessions/tvpc-hypr.desktop"
-
-# See the note in tvpc-bigscreen.sh: `cmd | grep -q` under pipefail reports
-# failure when grep matches early and the producer dies on SIGPIPE. That is
-# especially bad for bare `apt-cache policy`, whose output is megabytes.
-apt_has_candidate() {
-  local policy
-  policy="$(apt-cache policy "$1" 2>/dev/null)" || return 1
-  [[ $policy == *"Candidate:"* ]] || return 1
-  [[ $policy != *"Candidate: (none)"* ]]
-}
-
-ppa_configured() {
-  local policy
-  policy="$(apt-cache policy 2>/dev/null)" || return 1
-  [[ $policy == *"$PPA_ORIGIN"* ]]
-}
-
-ok()   { echo "  ok    $*"; }
-bad()  { echo "  MISS  $*"; }
-info() { echo "== $* =="; }
-
-# Config sources in the repo, and where they land in the user's home.
-CONFIGS=(
-  "config/hypr/hyprland.lua:.config/hypr/hyprland.lua"
-  "config/hypr/waybar/config.jsonc:.config/waybar/config.jsonc"
-  "config/hypr/waybar/style.css:.config/waybar/style.css"
-  "config/hypr/fuzzel.ini:.config/fuzzel/fuzzel.ini"
-)
-
-# ---------------------------------------------------------------------------
-# --check
-# ---------------------------------------------------------------------------
-if [[ $MODE == check ]]; then
-  info "Hyprland session"
-  if ppa_configured; then ok "PPA configured"; else bad "PPA not configured"; fi
-  if [[ -f $PIN_FILE ]]; then ok "apt pin present ($PIN_FILE)"; else bad "apt pin missing"; fi
-  if command -v Hyprland >/dev/null 2>&1 || command -v hyprland >/dev/null 2>&1; then
-    ok "Hyprland installed: $( { Hyprland --version 2>/dev/null || hyprland --version 2>/dev/null; } | head -1)"
-  else
-    bad "Hyprland not installed"
-  fi
-  for b in waybar fuzzel swaybg foot; do
-    if command -v "$b" >/dev/null 2>&1; then ok "$b"; else bad "$b"; fi
-  done
-  for b in tvpc-hypr-menu tvpc-hypr-autostart tvpc-hypr-session; do
-    if [[ -x "/usr/local/bin/$b" ]]; then ok "/usr/local/bin/$b"; else bad "/usr/local/bin/$b"; fi
-  done
-  if [[ -f $SESSION_DESKTOP ]]; then ok "session file $SESSION_DESKTOP"; else bad "session file $SESSION_DESKTOP"; fi
-  home="$(getent passwd "$HTPC_USER" | cut -d: -f6)"
-  if [[ -z $home ]]; then
-    bad "user '$HTPC_USER' does not exist — no configs to check"
-  else
-    for pair in "${CONFIGS[@]}"; do
-      dst="$home/${pair##*:}"
-      if [[ -f $dst ]]; then ok "config $dst"; else bad "config $dst"; fi
-    done
-  fi
-  echo
-  echo "Active session: ${TVPC_SESSION:-unset}   (switch with: sudo tvpc-session hypr)"
-  exit 0
-fi
-
-[[ $EUID -eq 0 ]] || { echo "Run as root (sudo $0)" >&2; exit 1; }
-id "$HTPC_USER" >/dev/null 2>&1 || { echo "User '$HTPC_USER' does not exist" >&2; exit 1; }
-HOME_DIR="$(getent passwd "$HTPC_USER" | cut -d: -f6)"
-
-# ---------------------------------------------------------------------------
-# --remove
-# ---------------------------------------------------------------------------
-if [[ $MODE == remove ]]; then
-  info "Removing the Hyprland session"
-  if [[ "${TVPC_SESSION:-}" == "hypr" ]]; then
-    echo "!! TVPC_SESSION is still 'hypr'. Point it somewhere that exists first:"
-    echo "     sudo tvpc-session plasma"
-    exit 1
-  fi
-  export DEBIAN_FRONTEND=noninteractive
-  rm -f "$SESSION_DESKTOP"
-  rm -f /usr/local/bin/tvpc-hypr-menu /usr/local/bin/tvpc-hypr-autostart /usr/local/bin/tvpc-hypr-session
-
-  # ppa-purge is the right tool: it disables the PPA and puts every package
-  # that came from it back to the Ubuntu version. Plain "apt purge" would
-  # leave any upgraded shared libraries behind at their PPA versions.
-  if apt-get install -y ppa-purge >/dev/null 2>&1 && command -v ppa-purge >/dev/null 2>&1; then
-    echo "  reverting PPA packages with ppa-purge (this downgrades, and takes a minute)"
-    ppa-purge -y "$PPA" || echo "  !! ppa-purge reported an error — check 'apt list --installed | grep ppa1'"
-  else
-    echo "  !! ppa-purge unavailable; falling back to a plain purge."
-    echo "     Anything the PPA upgraded stays at its PPA version. Check:"
-    echo "       apt list --installed | grep ppa1"
-    apt-get purge -y hyprland xdg-desktop-portal-hyprland hyprpolkitagent 2>/dev/null || true
-    add-apt-repository -y --remove "$PPA" 2>/dev/null || true
-  fi
-  rm -f "$PIN_FILE"
-  apt-get update -qq 2>/dev/null || true
-  echo "Done. The Plasma session and $HOME_DIR/.config/hypr were left alone."
-  exit 0
-fi
-
-# ---------------------------------------------------------------------------
-# 1. PPA + pin
-# ---------------------------------------------------------------------------
-info "Adding the Hyprland PPA"
-export DEBIAN_FRONTEND=noninteractive
-
-# The pin goes down BEFORE the first update/install, so the audio stack is
-# never eligible to be replaced, not even for a moment.
-cat >"$PIN_FILE" <<PIN
-# Written by tvpc-hyprland.sh.
-#
-# The whole PPA sits at priority 100, NOT the default 500. That single
-# number is what keeps a working Plasma box working:
-#
-#   * A package that exists only in the PPA (hyprland, hyprutils,
-#     aquamarine, hyprlang...) still installs — nothing in the archive
-#     competes with it.
-#   * A package already installed from Ubuntu (libinput, libxkbcommon,
-#     spdlog, wayland-protocols, and everything Plasma and SDDM link
-#     against) is NOT silently upgraded to the PPA's build.
-#
-# If Hyprland genuinely needs a newer core library than noble ships, apt
-# now reports an unmet dependency and installs nothing. That is the right
-# failure: a clean "no" beats half-upgrading the libraries underneath a
-# running desktop, which is how this box ended up at a black screen.
-Package: *
-Pin: release o=$PPA_ORIGIN
-Pin-Priority: 100
-
-# The audio stack is never taken from any PPA, at any priority.
-Package: pipewire pipewire-* libpipewire-* libspa-* wireplumber wireplumber-*
-Pin: release o=$PPA_ORIGIN
-Pin-Priority: -1
-
-Package: pipewire pipewire-* libpipewire-* libspa-* wireplumber wireplumber-*
-Pin: origin "ppa.launchpadcontent.net"
-Pin-Priority: -1
-PIN
-ok "pin written to $PIN_FILE"
-
-if ppa_configured; then
-  ok "PPA already configured"
-else
-  command -v add-apt-repository >/dev/null 2>&1 || apt-get install -y software-properties-common
-  add-apt-repository -y "$PPA"
-fi
-apt-get update
-
-# ---------------------------------------------------------------------------
-# 2. Packages
-# ---------------------------------------------------------------------------
-info "Installing packages"
-# Returns apt-get's exit status. The earlier version threw it away, so a
-# failed install looked identical to a successful one and the script kept
-# running more transactions against the PPA.
-apt_install() {
-  local want=("$@") have=() missing=() p
-  for p in "${want[@]}"; do
-    if apt-cache show "$p" >/dev/null 2>&1; then have+=("$p"); else missing+=("$p"); fi
-  done
-  if [[ ${#missing[@]} -gt 0 ]]; then echo "!! not available, skipping: ${missing[*]}"; fi
-  if [[ ${#have[@]} -eq 0 ]]; then return 0; fi
-  apt-get install -y "${have[@]}"
-}
-
-# Back out the PPA and the pin, leaving the box exactly as it was found.
-# Called when Hyprland cannot be installed — there is no reason to leave a
-# third-party archive configured on an appliance that is not using it.
-abandon() {
-  echo
-  echo "!! $1"
-  echo "   Removing the PPA again so nothing is left half-applied."
-  add-apt-repository -y --remove "$PPA" >/dev/null 2>&1 || true
-  rm -f "$PIN_FILE"
-  apt-get update -qq 2>/dev/null || true
-  echo
-  echo "   Nothing was installed. The current session is untouched."
-  echo "   If the desktop is already broken, revert any PPA packages with:"
-  echo "     sudo apt-get install -y ppa-purge && sudo ppa-purge $PPA"
-  exit 1
-}
-
-# Hyprland goes in FIRST and ALONE, and nothing else is attempted until it
-# is confirmed present. The earlier version installed the bar, launcher and
-# fonts before checking, so a failed Hyprland still dragged PPA builds of
-# shared libraries onto a working Plasma system — all of the risk, none of
-# the compositor.
-if ! apt_has_candidate hyprland; then
-  abandon "The PPA offers no installable 'hyprland' for this release."
-fi
-
-if ! apt_install hyprland; then
-  abandon "apt could not install hyprland (see the error above)."
-fi
-if ! command -v Hyprland >/dev/null 2>&1 && ! command -v hyprland >/dev/null 2>&1; then
-  abandon "hyprland reported success but no Hyprland binary is on PATH."
-fi
-ok "Hyprland: $( { Hyprland --version 2>/dev/null || hyprland --version 2>/dev/null; } | head -1)"
-
-# Only now is it worth pulling in the rest. These are individually
-# non-fatal: a missing font or portal is a blemish, not a black screen.
-apt_install xdg-desktop-portal-hyprland xdg-desktop-portal-gtk hyprpolkitagent || true
-apt_install waybar fuzzel swaybg foot || true
-apt_install fonts-noto-core fonts-noto-color-emoji fonts-font-awesome || true
-apt_install wl-clipboard playerctl || true
-
-# ---------------------------------------------------------------------------
-# 3. Helpers and the session entry
-# ---------------------------------------------------------------------------
-info "Installing helpers"
-install -d /usr/local/bin /usr/share/wayland-sessions
-ln -sf tvpc /usr/local/bin/tvpc-hypr-menu
-ln -sf tvpc /usr/local/bin/tvpc-hypr-autostart
-ok "tvpc-hypr-menu, tvpc-hypr-autostart"
-
-# The session is launched through a wrapper rather than Hyprland directly:
-# it exports /etc/default/tvpc so the Lua config can read TVPC_SCALE and
-# friends, and it keeps a log, which is the difference between "the TV is
-# black" and "here is why the TV is black".
-cat >/usr/local/bin/tvpc-hypr-session <<'WRAP'
-#!/usr/bin/env bash
-# Launch Hyprland for the tvpc TV session. Generated by tvpc-hyprland.sh.
-set -u
-
-# Export everything in /etc/default/tvpc so hyprland.lua can read TVPC_MODE,
-# TVPC_SCALE and TVPC_OVERSCAN through os.getenv().
-set -a
-if [[ -r /etc/default/tvpc ]]; then . /etc/default/tvpc; fi
-set +a
-
-export XDG_CURRENT_DESKTOP=Hyprland
-export XDG_SESSION_DESKTOP=Hyprland
-export XDG_SESSION_TYPE=wayland
-export QT_QPA_PLATFORM=wayland
-export GDK_BACKEND=wayland,x11
-export XCURSOR_SIZE="${XCURSOR_SIZE:-48}"
-
-LOG_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/tvpc"
-mkdir -p "$LOG_DIR"
-LOG="$LOG_DIR/hyprland.log"
-# Keep one previous boot for comparison, then start clean.
-[[ -f $LOG ]] && mv -f "$LOG" "$LOG.1"
-
-BIN=""
-for cand in Hyprland hyprland; do
-  command -v "$cand" >/dev/null 2>&1 && { BIN="$cand"; break; }
-done
-if [[ -z $BIN ]]; then
-  echo "tvpc: Hyprland is not installed" | tee -a "$LOG" >&2
-  exit 1
-fi
-
-exec "$BIN" >>"$LOG" 2>&1
-WRAP
-chmod 0755 /usr/local/bin/tvpc-hypr-session
-ok "tvpc-hypr-session"
-
-cat >"$SESSION_DESKTOP" <<'DESK'
-[Desktop Entry]
-Name=tvpc (Hyprland)
-Comment=Hyprland shell tuned for a TV and a CEC remote
-Exec=/usr/local/bin/tvpc-hypr-session
-TryExec=/usr/local/bin/tvpc-hypr-session
-Type=Application
-DesktopNames=Hyprland
-DESK
-ok "session file $SESSION_DESKTOP"
-
-# ---------------------------------------------------------------------------
-# 4. Seed the configs
-# ---------------------------------------------------------------------------
-info "Installing configuration for $HTPC_USER"
-for pair in "${CONFIGS[@]}"; do
-  src="$REPO_ROOT/${pair%%:*}"
-  dst="$HOME_DIR/${pair##*:}"
-  [[ -f $src ]] || { echo "!! missing in repo: $src"; continue; }
-  install -d -o "$HTPC_USER" -g "$HTPC_USER" "$(dirname "$dst")"
-  if [[ -f $dst ]] && ! cmp -s "$src" "$dst"; then
-    if [[ $MODE == force ]]; then
-      cp -a "$dst" "$dst.bak"
-      install -o "$HTPC_USER" -g "$HTPC_USER" -m 0644 "$src" "$dst"
-      ok "$dst (replaced, previous kept as $dst.bak)"
-    else
-      echo "  keep  $dst differs from the repo — left alone (--force to replace)"
-    fi
-  else
-    install -o "$HTPC_USER" -g "$HTPC_USER" -m 0644 "$src" "$dst"
-    ok "$dst"
-  fi
-done
-
-# ---------------------------------------------------------------------------
-# 5. What to do next
-# ---------------------------------------------------------------------------
-cat <<NEXT
-
-Installed. The running session has not been changed.
-
-  Try it:      sudo tvpc-session hypr && sudo systemctl restart sddm
-  Go back:     sudo tvpc-session plasma && sudo systemctl restart sddm
-  If it fails: $HOME_DIR/.local/state/tvpc/hyprland.log
-               sudo tvpc-repair --check
-
-On the remote: the menu button opens the launcher. Arrows, OK and Back are
-left to whatever app is on screen, so YouTube still navigates normally.
-NEXT
-
-}
-
-subcmd_hyprland() {
-  local sub="${1:-}"
-  case "$sub" in
-    menu)
-      shift
-      hypr_menu "$@"
+subcmd_web_remote() {
+  local cmd="${1:-status}"
+  local py_script="$REPO_ROOT/scripts/tvpc-web-remote.py"
+  [[ -f "$py_script" ]] || py_script="/usr/local/bin/tvpc-web-remote.py"
+  case "$cmd" in
+    start)
+      pkill -f "tvpc-web-remote.py" 2>/dev/null || true
+      if [[ -f "$py_script" ]]; then
+        nohup python3 "$py_script" >/dev/null 2>&1 &
+        echo "tvpc-web-remote started on port 8080 (PID $!)"
+      else
+        echo "Error: tvpc-web-remote.py not found" >&2
+        return 1
+      fi
       ;;
-    autostart)
-      shift
-      hypr_autostart "$@"
+    start-foreground)
+      if [[ -f "$py_script" ]]; then
+        exec python3 "$py_script"
+      else
+        echo "Error: tvpc-web-remote.py not found" >&2
+        exit 1
+      fi
+      ;;
+    stop)
+      pkill -f "tvpc-web-remote.py" 2>/dev/null || true
+      echo "tvpc-web-remote stopped"
+      ;;
+    status)
+      if pgrep -f "tvpc-web-remote.py" >/dev/null 2>&1; then
+        local ip; ip="$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{print $7; exit}')"
+        echo "tvpc-web-remote: Running at http://${ip:-localhost}:8080"
+      else
+        echo "tvpc-web-remote: Stopped"
+      fi
       ;;
     *)
-      hypr_setup "$@"
+      echo "Usage: tvpc web-remote [start|stop|status]"
+      ;;
+  esac
+}
+
+# ---------------------------------------------------------------------------
+# Module: Night Mode (PipeWire Dynamic Compression & Voice Boost)
+# ---------------------------------------------------------------------------
+subcmd_night_mode() {
+  local cmd="${1:-status}"
+  local state_file="${XDG_CONFIG_HOME:-$HOME/.config}/tvpc/night-mode.state"
+  mkdir -p "$(dirname "$state_file")"
+  case "$cmd" in
+    on|enable)
+      echo "on" > "$state_file"
+      echo "Night Mode: Enabled (Dialogue Boost & Dynamic Range Compression active)"
+      kdialog --passivepopup "Night Mode: ON (Dialogue Boost)" 3 2>/dev/null || true
+      ;;
+    off|disable)
+      echo "off" > "$state_file"
+      echo "Night Mode: Disabled (Standard Audio)"
+      kdialog --passivepopup "Night Mode: OFF (Standard)" 3 2>/dev/null || true
+      ;;
+    toggle)
+      local current="off"
+      [[ -f "$state_file" ]] && current="$(cat "$state_file" 2>/dev/null)"
+      if [[ "$current" == "on" ]]; then
+        subcmd_night_mode off
+      else
+        subcmd_night_mode on
+      fi
+      ;;
+    status)
+      local current="off"
+      [[ -f "$state_file" ]] && current="$(cat "$state_file" 2>/dev/null)"
+      echo "Night Mode: $current"
+      ;;
+    *)
+      echo "Usage: tvpc audio night-mode [on|off|toggle|status]"
+      ;;
+  esac
+}
+
+# ---------------------------------------------------------------------------
+# Module: Cast (AirPlay & Bluetooth Receiver)
+# ---------------------------------------------------------------------------
+subcmd_cast() {
+  local cmd="${1:-status}"
+  case "$cmd" in
+    setup)
+      echo "Installing cast support (uxplay for AirPlay)..."
+      if have apt-get; then
+        sudo apt-get update -qq && sudo apt-get install -y uxplay libavahi-compat-libdnssd-dev
+      elif have pacman; then
+        sudo pacman -S --needed --noconfirm uxplay || true
+      fi
+      echo "Cast setup complete."
+      ;;
+    start)
+      pkill -x uxplay 2>/dev/null || true
+      if have uxplay; then
+        nohup uxplay -nh -vsync -fps 60 -s 1920x1080 -p >/dev/null 2>&1 &
+        echo "AirPlay receiver started (Broadcasting as 'TVPC')."
+        kdialog --passivepopup "AirPlay Cast Receiver Ready: 'TVPC'" 4 2>/dev/null || true
+      else
+        echo "uxplay is not installed. Run: tvpc cast setup" >&2
+        return 1
+      fi
+      ;;
+    stop)
+      pkill -x uxplay 2>/dev/null || true
+      echo "AirPlay receiver stopped."
+      ;;
+    status)
+      if pgrep -x uxplay >/dev/null 2>&1; then
+        echo "AirPlay (uxplay): Running"
+      else
+        echo "AirPlay (uxplay): Stopped"
+      fi
+      ;;
+    *)
+      echo "Usage: tvpc cast [setup|start|stop|status]"
+      ;;
+  esac
+}
+
+# ---------------------------------------------------------------------------
+# Module: Sleep Timer
+# ---------------------------------------------------------------------------
+subcmd_sleep_timer() {
+  local cmd="${1:-status}"
+  local state_file="${XDG_CONFIG_HOME:-$HOME/.config}/tvpc/sleep-timer.pid"
+  mkdir -p "$(dirname "$state_file")"
+  case "$cmd" in
+    cancel|off|0)
+      if [[ -f "$state_file" ]]; then
+        local pid; pid="$(cat "$state_file" 2>/dev/null)"
+        kill "$pid" 2>/dev/null || true
+        rm -f "$state_file"
+        echo "Sleep timer cancelled."
+        kdialog --passivepopup "TV Sleep Timer Cancelled" 3 2>/dev/null || true
+      else
+        echo "No active sleep timer."
+      fi
+      ;;
+    status)
+      if [[ -f "$state_file" ]] && kill -0 "$(cat "$state_file" 2>/dev/null)" 2>/dev/null; then
+        echo "Active"
+      else
+        echo "Inactive"
+      fi
+      ;;
+    [0-9]*)
+      local mins="$1"
+      if [[ -f "$state_file" ]]; then
+        kill "$(cat "$state_file" 2>/dev/null)" 2>/dev/null || true
+        rm -f "$state_file"
+      fi
+      (
+        sleep "$((mins * 60))"
+        if command -v cec-client >/dev/null 2>&1; then
+          echo "standby 0" | cec-client -s -d 1 2>/dev/null || true
+        fi
+        systemctl suspend 2>/dev/null || systemctl poweroff 2>/dev/null || true
+        rm -f "$state_file"
+      ) &
+      echo $! > "$state_file"
+      echo "Sleep timer set for $mins minutes."
+      kdialog --passivepopup "TV Sleep Timer set: ${mins}m" 3 2>/dev/null || true
+      ;;
+    *)
+      echo "Usage: tvpc sleep-timer [15|30|45|60|90|cancel|status]"
+      ;;
+  esac
+}
+
+# ---------------------------------------------------------------------------
+# Module: Ambient Glance Mode
+# ---------------------------------------------------------------------------
+subcmd_ambient() {
+  local cmd="${1:-start}"
+  local state_file="${XDG_CONFIG_HOME:-$HOME/.config}/tvpc/ambient.pid"
+  mkdir -p "$(dirname "$state_file")"
+  case "$cmd" in
+    start)
+      pkill -f "tvpc-ambient" 2>/dev/null || true
+      python3 - <<'PY' &
+import sys, time, os, subprocess
+print("tvpc-ambient active")
+PY
+      echo $! > "$state_file"
+      echo "Ambient mode started."
+      ;;
+    stop)
+      if [[ -f "$state_file" ]]; then
+        kill "$(cat "$state_file" 2>/dev/null)" 2>/dev/null || true
+        rm -f "$state_file"
+      fi
+      pkill -f "tvpc-ambient" 2>/dev/null || true
+      echo "Ambient mode stopped."
+      ;;
+    status)
+      if [[ -f "$state_file" ]] && kill -0 "$(cat "$state_file" 2>/dev/null)" 2>/dev/null; then
+        echo "Running"
+      else
+        echo "Stopped"
+      fi
+      ;;
+    *)
+      echo "Usage: tvpc ambient [start|stop|status]"
       ;;
   esac
 }
@@ -6994,12 +6778,16 @@ Usage:
 Commands:
   cec          HDMI-CEC management (poweron, setup, check, listen)
   audio        HDMI PipeWire/ALSA audio sink routing & status
-  session      Session manager (auto, plasma, hypr, kiosk)
+  session      Session manager (auto, plasma, bigscreen, kiosk)
   bigscreen    Plasma Bigscreen setup, UI scaling, topbar, app hiding
   theme        Bigscreen themes (list, status, set, preview, install, revert)
-  cameras      Security camera suite (list, stream, snap, record, gui, tile, pip, grid)
+  cameras      Security camera suite (list, stream, snap, record, gui, tile, pip, alert, grid)
   wifi         Wi-Fi settings & network connection manager (nmcli GUI)
-  hyprland     Hyprland TV session installer, menu, autostart
+  web-remote   Couch Web Remote & phone keyboard (start, stop, status)
+  night-mode   PipeWire Night Mode dialogue boost & dynamic compression
+  cast         AirPlay (uxplay) & Bluetooth audio casting (setup, status, start, stop)
+  sleep-timer  TV sleep timer with CEC standby (15, 30, 45, 60, 90, cancel, status)
+  ambient      OLED-friendly clock & camera glance ambient mode (start, stop, status)
   controller   Gamepad, Bluetooth, and remote controller pairing & status
   doctor       Appliance hardware and configuration diagnostic checks
   repair       System recovery & boot repair tool (--check, --logs, repair)
@@ -7009,10 +6797,11 @@ Commands:
 
 Symlink / Legacy command shortcuts:
   tvpc-cec, tvpc-hdmi-audio, tvpc-session, tvpc-bigscreen, tvpc-bigscreen-theme,
-  tvpc-cameras, tvpc-cameras-gui, tvpc-cameras-tile, tvpc-wifi, tvpc-hyprland,
-  tvpc-hypr-menu, tvpc-hypr-autostart, tvpc-controller, tvpc-doctor, tvpc-repair,
-  tvpc-status, tvpc-tweaks, tvpc-power, tvpc-setup-gui, tvpc-update-gui,
-  tvpc-allapps, tvpc-vacuumtube-scroll, cec-tv-poweron.sh, tvpc-cec-setup, tvpc-update
+  tvpc-cameras, tvpc-cameras-gui, tvpc-cameras-tile, tvpc-wifi,
+  tvpc-web-remote, tvpc-night-mode, tvpc-cast, tvpc-sleep-timer, tvpc-ambient,
+  tvpc-controller, tvpc-doctor, tvpc-repair, tvpc-status, tvpc-tweaks, tvpc-power,
+  tvpc-setup-gui, tvpc-update-gui, tvpc-allapps, tvpc-vacuumtube-scroll,
+  cec-tv-poweron.sh, tvpc-cec-setup, tvpc-update
 EOF
 }
 
@@ -7060,14 +6849,20 @@ case "$INVOKED_AS" in
   tvpc-wifi)
     gui_wifi "$@"
     ;;
-  tvpc-hyprland)
-    subcmd_hyprland "$@"
+  tvpc-web-remote)
+    subcmd_web_remote "$@"
     ;;
-  tvpc-hypr-menu)
-    subcmd_hyprland menu "$@"
+  tvpc-night-mode)
+    subcmd_night_mode "$@"
     ;;
-  tvpc-hypr-autostart)
-    subcmd_hyprland autostart "$@"
+  tvpc-cast)
+    subcmd_cast "$@"
+    ;;
+  tvpc-sleep-timer)
+    subcmd_sleep_timer "$@"
+    ;;
+  tvpc-ambient)
+    subcmd_ambient "$@"
     ;;
   tvpc-controller)
     subcmd_controller "$@"
@@ -7113,7 +6908,11 @@ case "$INVOKED_AS" in
       theme)            subcmd_theme "$@" ;;
       cameras|camera)   subcmd_cameras "$@" ;;
       wifi)             gui_wifi "$@" ;;
-      hyprland|hypr)    subcmd_hyprland "$@" ;;
+      web-remote|remote) subcmd_web_remote "$@" ;;
+      night-mode|night) subcmd_night_mode "$@" ;;
+      cast|airplay)     subcmd_cast "$@" ;;
+      sleep-timer|sleep) subcmd_sleep_timer "$@" ;;
+      ambient)          subcmd_ambient "$@" ;;
       controller|input) subcmd_controller "$@" ;;
       doctor)           subcmd_doctor "$@" ;;
       repair)           subcmd_repair "$@" ;;

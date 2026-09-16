@@ -1,0 +1,13 @@
+[Unit]
+Description=tvpc: Couch Web Remote & Phone Keyboard
+After=network.target graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/tvpc web-remote start-foreground
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=default.target

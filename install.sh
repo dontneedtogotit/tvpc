@@ -79,9 +79,11 @@ SYMLINKS=(
   tvpc-session
   tvpc-bigscreen
   tvpc-bigscreen-theme
-  tvpc-hyprland
-  tvpc-hypr-menu
-  tvpc-hypr-autostart
+  tvpc-web-remote
+  tvpc-night-mode
+  tvpc-cast
+  tvpc-sleep-timer
+  tvpc-ambient
   tvpc-controller
   tvpc-status
   tvpc-tweaks
@@ -131,7 +133,6 @@ ITEMS=(
   "user_config|0|the TV user's Plasma config is seeded"
   "bigscreen|0|Plasma Bigscreen is installed with its session files"
   "curate_home|0|Bigscreen homescreen is curated to the 6 core apps"
-  "hypr|1|Hyprland session files match the repo"
 )
 
 # ---------------------------------------------------------------------------
@@ -1239,43 +1240,6 @@ fix_curate_home() {
   "$REPO_ROOT/scripts/tvpc.sh" tweaks curate
 }
 
-
-HYPR_CONFIGS=(
-  "config/hypr/hyprland.lua:.config/hypr/hyprland.lua"
-  "config/hypr/waybar/config.jsonc:.config/waybar/config.jsonc"
-  "config/hypr/waybar/style.css:.config/waybar/style.css"
-  "config/hypr/fuzzel.ini:.config/fuzzel/fuzzel.ini"
-)
-when_hypr() { [[ "${TVPC_SESSION:-}" == "hypr" ]]; }
-check_hypr() {
-  command -v Hyprland >/dev/null 2>&1 || command -v hyprland >/dev/null 2>&1 || return 1
-  [[ -f /usr/share/wayland-sessions/tvpc-hypr.desktop ]] || return 1
-  [[ -x /usr/local/bin/tvpc-hypr-session   ]] || return 1
-  [[ -x /usr/local/bin/tvpc-hypr-menu      ]] || return 1
-  [[ -x /usr/local/bin/tvpc-hypr-autostart ]] || return 1
-  local home pair
-  home="$(getent passwd "$HTPC_USER" | cut -d: -f6)"
-  [[ -n $home ]] || return 1
-  for pair in "${HYPR_CONFIGS[@]}"; do
-    cmp -s "$REPO_ROOT/${pair%%:*}" "$home/${pair##*:}" || return 1
-  done
-}
-fix_hypr() {
-  command -v Hyprland >/dev/null 2>&1 || command -v hyprland >/dev/null 2>&1 || {
-    echo "Hyprland is not installed. Run: sudo ./scripts/tvpc-hyprland.sh" >&2
-    return 1
-  }
-  local home pair src dst
-  home="$(getent passwd "$HTPC_USER" | cut -d: -f6)"
-  for pair in "${HYPR_CONFIGS[@]}"; do
-    src="$REPO_ROOT/${pair%%:*}"; dst="$home/${pair##*:}"
-    if [[ -f $src ]]; then
-      mkdir -p "$(dirname "$dst")"
-      install -m 0644 "$src" "$dst"
-      chown "$HTPC_USER:$HTPC_USER" "$dst"
-    fi
-  done
-}
 
 check_overlays() {
   [[ -d "$REPO_ROOT/overlays" ]] || return 0

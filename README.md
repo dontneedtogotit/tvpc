@@ -51,12 +51,11 @@ sudo ./scripts/tvpc-session.sh plasma-x11      # X11 fallback
 sudo ./scripts/tvpc-session.sh kiosk           # kwin_wayland + one app
 sudo ./scripts/tvpc-session.sh auto            # first of the above that exists
 
-sudo ./scripts/tvpc-session.sh hypr            # opt-in: Hyprland, TV-tuned
-sudo ./scripts/tvpc-session.sh bigscreen       # opt-in: KDE's TV shell
+sudo ./scripts/tvpc-session.sh bigscreen       # opt-in: KDE's TV shell (Recommended)
 sudo ./scripts/tvpc-session.sh phosh           # opt-in: GNOME's phone shell
 ```
 
-The opt-in ones need installing first (`tvpc-hyprland.sh`, `plasma-bigscreen`,
+The opt-in ones need installing first (`plasma-bigscreen`,
 `phosh`). They are not in the `auto` chain. If the session is missing the
 resolver refuses rather than writing autologin for a session that is not there.
 
@@ -80,7 +79,6 @@ you want to leave alone.
 | **Kodi** `kodi` 20.5 | yes | The classic 10-foot media centre, HDMI-CEC built in | Best remote experience by a distance, but it replaces the session rather than running inside one. Noble ships no Kodi session file, and no `kodi-gbm` / `kodi-standalone-service` |
 | **Phosh** `phosh` 0.38 | yes | GNOME's phone shell — the direct Plasma Mobile equivalent | Same problem as Plasma Mobile: built for touch. `tvpc-session.sh phosh` |
 | **Lomiri** `lomiri` 0.2.1 | yes | Ubuntu Touch's shell | Touch-first, niche on desktop hardware |
-| **Hyprland** 0.56 | not in the archive | Animated Wayland compositor, Lua-configured | Ships via the actively maintained `ppa:cppiber/hyprland`. Built into a TV shell here: `tvpc-hyprland.sh`, then `tvpc-session.sh hypr` |
 | **Sway** 1.9, **labwc** 0.7, **wayfire** 0.8 | yes | Tiling/stacking Wayland compositors | Keyboard-driven; no remote story |
 | **Cage** 0.1.5 | yes | Single-application kiosk compositor | Genuinely useful — close to what the built-in `kiosk` session does with `kwin_wayland` |
 | **Weston** 13 | yes | Reference compositor with a kiosk shell | Works, but you get nothing else |
@@ -178,111 +176,64 @@ undocumented but it is how Bigscreen is meant to be filtered; the ids are the
 terminal applications and anything marked `NoDisplay`, and `--list-apps`
 applies the same filter so what it prints is what you see on the TV.
 
-### The Hyprland session
+### Living-Room TV Features: Web Remote, Night Mode, Cast & Alerts
 
-> **Warning — this broke a working box.** On a real NUC the install failed and
-> left the machine at a black screen. Two defects: the installer discarded
-> `apt-get`'s exit status, and it checked for Hyprland only *after* installing
-> the bar, launcher and fonts. So a failed Hyprland still pulled PPA builds of
-> shared libraries onto a system whose Plasma was linked against Ubuntu's.
->
-> Both are fixed — the PPA is now pinned to priority 100 so it can never
-> replace an already-installed Ubuntu package, Hyprland goes in first and
-> alone, and any failure backs the PPA out again. But the underlying tension
-> is real: Hyprland 0.56 wants newer core libraries than noble ships, and this
-> box's Plasma does not. **Use Bigscreen above.** If you want Hyprland
-> properly, Ubuntu 26.04 LTS packages it natively (0.53.3) and needs no PPA.
->
-> Recovery, if you are reading this too late:
-> ```bash
-> sudo apt-get install -y ppa-purge
-> sudo ppa-purge ppa:cppiber/hyprland
-> sudo rm -f /etc/apt/preferences.d/90-tvpc-hyprland
-> sudo tvpc-session plasma && sudo systemctl restart sddm
-> ```
+`tvpc` provides a dedicated suite of couch-friendly features designed for high-end living-room TV usage:
 
-
-A Plasma Mobile-shaped shell with Hyprland's look: one app fills the screen,
-a blurred status bar on top, a launcher on the menu button, and animations.
+#### 1. Couch Web Remote & Mobile Keyboard (`tvpc web-remote`)
+Typing search queries on a TV with an arrow remote is slow. `tvpc` includes a responsive mobile web remote served locally on port 8080:
+* Open `http://<tvpc-ip>:8080` on any mobile phone on your home Wi-Fi.
+* **Phone Keyboard Typing**: Type on your phone keyboard and hit Send to stream keystrokes directly into the active TV window (YouTube search, browser, etc.).
+* **Virtual Navigation**: Full D-Pad (Up, Down, Left, Right, OK, Back, Home, Menu, Close Window).
+* **Audio & App Launchers**: Volume control, mute, and 1-tap app launchers (YouTube, Cameras, Kodi, Settings).
 
 ```bash
-sudo ./scripts/tvpc-hyprland.sh     # install (adds a PPA)
-sudo tvpc-session hypr              # switch to it
-sudo systemctl restart sddm
+tvpc web-remote start      # launch the web remote service
+tvpc web-remote status     # view running status & web remote URL
+tvpc web-remote stop       # stop the service
 ```
 
-`sudo tvpc-session plasma` puts you straight back, and
-`sudo tvpc-hyprland --remove` uninstalls the lot.
-
-**What makes it TV-shaped rather than a tiling desktop.** The layout is
-`monocle`, so one app owns the screen and the rest stack behind it — you are
-never asked to manage a tiling tree with a five-button remote. The only key
-the shell claims is the menu button; **arrows, OK and Back are deliberately
-left unbound** so they reach the app, which is what keeps YouTube navigable in
-VacuumTube. Screen blanking is off, `hypridle` is not installed, and the
-pointer hides after three seconds so an idle box shows a picture, not a cursor
-on black.
-
-**Where things live.** Config is Lua, not the old `hyprland.conf` — Hyprland
-deprecated hyprlang in 0.55, and the PPA is on 0.56.
-
-| File | Purpose |
-|------|---------|
-| `config/hypr/hyprland.lua` | compositor: layout, look, binds, window rules |
-| `config/hypr/waybar/` | the status bar |
-| `config/hypr/fuzzel.ini` | the launcher |
-| `scripts/tvpc-hypr-menu.sh` | curated app + power menu |
-
-Edit them in the repo and re-run `sudo tvpc-hyprland` to push them out;
-a config you have edited by hand is left alone unless you pass `--force`
-(which keeps a `.bak`). Hyprland reloads on save, so tuning over SSH while
-watching the TV works.
-
-**Knobs**, all in `/etc/default/tvpc`:
-
-| Variable | Effect |
-|----------|--------|
-| `TVPC_OVERSCAN` | pixel inset if your TV crops the edges (try the TV's "Just Scan" mode first) |
-| `TVPC_SCALE` / `TVPC_MODE` | force a scale factor or a video mode |
-| `TVPC_AUTOSTART_APP` | command to launch at login; unset means start at the launcher |
-
-**The PPA caveat, stated plainly.** Hyprland is not in the Ubuntu 24.04
-archive, so this pulls from `ppa:cppiber/hyprland` — third-party, though
-actively maintained and current. That PPA also carries its own builds of
-core libraries: PipeWire, libinput, libxkbcommon, wayland-protocols, spdlog.
-Letting those upgrade underneath a working Plasma desktop is how you get a
-black screen, so the installer pins the **entire PPA to priority 100**:
-
-* packages that exist only in the PPA (Hyprland and its own libraries)
-  install normally, because nothing in the archive competes with them;
-* packages already installed from Ubuntu are **never** silently replaced.
-
-If Hyprland genuinely needs a newer core library than noble ships, apt now
-reports an unmet dependency and installs nothing at all. That is the correct
-outcome: a clean "no" is much better than half-upgrading the libraries under
-a running desktop. The installer also puts Hyprland in **first and alone**,
-and backs the PPA out again if it does not appear — so a failed install
-leaves the box exactly as it was found.
-
-**If it does go wrong**, `ppa-purge` reverts every package that came from
-the PPA to its Ubuntu version:
+#### 2. PipeWire Night Mode (`tvpc night-mode`)
+In movies, whispers can be inaudible while explosions shake the room. Night Mode applies dynamic range compression and mid-range voice equalisation (boosting the 1–4 kHz dialogue band) so you can watch movies late without riding the volume button:
 
 ```bash
-sudo apt-get install -y ppa-purge
-sudo ppa-purge ppa:cppiber/hyprland
-sudo rm -f /etc/apt/preferences.d/90-tvpc-hyprland
-sudo tvpc-session plasma && sudo systemctl restart sddm
+tvpc audio night-mode on      # enable dialogue boost & dynamic compression
+tvpc audio night-mode off     # return to standard uncompressed audio
+tvpc audio night-mode toggle  # toggle on/off (also available on Web Remote)
 ```
 
-`sudo tvpc-hyprland --remove` does the same thing for you.
+#### 3. AirPlay & Bluetooth Cast Target (`tvpc cast`)
+Stream video or mirror iPhone/iPad screens to the TV using hardware-accelerated AirPlay:
 
-**Untested on hardware.** I have no NUC to try this on. The config is
-validated against Hyprland 0.56's documented Lua API and executed against a
-mock of it, the installer has been run end-to-end against stubs, and
-`tvpc-session` refuses to point autologin at a session that is not on disk —
-so a failed install cannot black-screen the box. But the first real boot is
-still the first real boot: keep SSH open, and `tvpc-repair --check` and
-`~/.local/state/tvpc/hyprland.log` are there if it comes up wrong.
+```bash
+tvpc cast setup   # installs and configures uxplay
+tvpc cast start   # broadcasts TVPC as an AirPlay screen mirroring target
+tvpc cast status  # checks casting status
+tvpc cast stop    # stops receiver
+```
+
+#### 4. Smart Doorbell / Camera Motion Auto-PiP (`tvpc cameras alert`)
+When someone rings the doorbell or motion is detected at the front door, a borderless PiP window automatically pops up in the top-right corner of the TV, displays live video for 10 seconds, and gracefully disappears without interrupting background playback:
+
+```bash
+tvpc cameras alert 0 10       # pop up camera 0 in top-right PiP for 10s
+tvpc cameras alert FrontDoor  # trigger alert for named camera
+```
+External systems (Home Assistant, Frigate, or webhook scripts) can trigger alerts via `POST /api/alert {"camera": "FrontDoor", "duration": 10}` to the Web Remote.
+
+#### 5. TV Sleep Timer (`tvpc sleep-timer`)
+Set an automated sleep timer that puts the TV into HDMI-CEC standby (`standby 0`) and suspends the PC when time expires:
+
+```bash
+tvpc sleep-timer 30    # power down TV and PC in 30 minutes
+tvpc sleep-timer cancel
+tvpc sleep-timer status
+```
+
+#### 6. KWin Alt+F4 & CEC Remote Window Closing
+* **Alt+F4** gracefully closes the active foreground application.
+* **CEC Remote Double-Tap Exit**: On your Samsung/TV remote, double-tapping the `Exit / Return` button within 800ms closes the active foreground application and returns to the home screen.
+* **Green Button**: Cycles through open windows (Alt+Tab task switcher).
 
 ---
 

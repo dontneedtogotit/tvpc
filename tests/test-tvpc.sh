@@ -252,24 +252,31 @@ grep -q "gui_wifi" "$ROOT/scripts/tvpc.sh" || fail "tvpc.sh missing gui_wifi"
 # Alt+Tab window cycling & Home screen selection assertions
 grep -q "ShowDesktopMode=1" "$ROOT/install.sh" || fail "install.sh missing ShowDesktopMode=1"
 grep -q "ShowDesktopMode=1" "$ROOT/scripts/tvpc.sh" || fail "tvpc.sh missing ShowDesktopMode=1"
-grep -q "ALT + Tab" "$ROOT/config/hypr/hyprland.lua" || fail "hyprland.lua missing ALT + Tab"
+grep -q "Window Close=Alt+F4" "$ROOT/install.sh" || fail "install.sh missing Window Close=Alt+F4"
+grep -q "Walk Through Windows=Alt+Tab" "$ROOT/install.sh" || fail "install.sh missing Walk Through Windows=Alt+Tab"
+grep -q "Window Close=Alt+F4" "$ROOT/scripts/tvpc.sh" || fail "tvpc.sh missing Window Close=Alt+F4"
 
-echo "Layout, dock, CEC, Wi-Fi, mouse wheel, Alt+Tab, and background playback tests passed."
+echo "Layout, dock, CEC, Wi-Fi, mouse wheel, Alt+Tab, Alt+F4, and background playback tests passed."
 
-echo "== 5. Hyprland Config Validation =="
-CONFIG="$ROOT/config/hypr/hyprland.lua"
-if [[ -f $CONFIG ]]; then
-  LUA=""
-  for cand in lua lua5.4 lua5.3 luajit; do
-    command -v "$cand" >/dev/null 2>&1 && { LUA="$cand"; break; }
-  done
-  if [[ -n $LUA ]]; then
-    if command -v luac >/dev/null 2>&1; then
-      luac -p "$CONFIG" || exit 1
-    fi
-    echo "Hyprland Lua config valid."
-  fi
-fi
+echo "== 5. Living-Room TV Feature Suite Assertions =="
+# Web remote assertions
+grep -q "web-remote" "$ROOT/scripts/tvpc.sh" || fail "tvpc.sh missing web-remote command"
+[[ -x "$ROOT/scripts/tvpc-web-remote.py" ]] || fail "tvpc-web-remote.py missing or not executable"
+python3 -m py_compile "$ROOT/scripts/tvpc-web-remote.py" || fail "tvpc-web-remote.py syntax error"
+[[ -f "$ROOT/overlays/etc/systemd/user/tvpc-web-remote.service" ]] || fail "tvpc-web-remote.service overlay missing"
+
+# Night mode assertions
+grep -q "night-mode" "$ROOT/scripts/tvpc.sh" || fail "tvpc.sh missing night-mode"
+
+# Cast receiver assertions
+grep -q "subcmd_cast" "$ROOT/scripts/tvpc.sh" || fail "tvpc.sh missing cast command"
+
+# Sleep timer assertions
+grep -q "sleep-timer" "$ROOT/scripts/tvpc.sh" || fail "tvpc.sh missing sleep-timer command"
+
+# Camera alert assertions
+grep -q "cmd_alert" "$ROOT/scripts/tvpc.sh" || fail "tvpc.sh missing cmd_alert in camera suite"
+echo "Living-room TV feature suite tests passed."
 
 echo "== 6. Single User & Password Login Bypass Tests =="
 # 1. Overlay assertions
