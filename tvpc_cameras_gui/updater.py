@@ -148,22 +148,38 @@ def apply_update(remote_version: str, install_dir: Optional[Path] = None) -> boo
             return False
 
     # For standalone installation: download and unpack tarball
-    tarball_url = REPO_ARCHIVE_URL.format(ref=remote_version)
+    candidate_urls = [
+        "https://github.com/dontneedtogotit/tvpc/archive/refs/heads/main.tar.gz",
+        f"https://api.github.com/repos/dontneedtogotit/tvpc/tarball/{remote_version}",
+        f"https://github.com/dontneedtogotit/tvpc/archive/{remote_version}.tar.gz",
+    ]
     tmp_dir = Path(tempfile.mkdtemp(prefix="tvpc_update_"))
     tar_path = tmp_dir / "repo.tar.gz"
 
     try:
-        # Download archive
-        req = urllib.request.Request(
-            tarball_url,
-            headers={"User-Agent": "tvpc-cameras-gui-updater"},
-        )
-        with urllib.request.urlopen(req, timeout=15.0) as resp, open(tar_path, "wb") as f:
-            shutil.copyfileobj(resp, f)
+        downloaded = False
+        for tarball_url in candidate_urls:
+            try:
+                req = urllib.request.Request(
+                    tarball_url,
+                    headers={"User-Agent": "tvpc-cameras-gui-updater"},
+                )
+                with urllib.request.urlopen(req, timeout=15.0) as resp, open(tar_path, "wb") as f:
+                    shutil.copyfileobj(resp, f)
+                downloaded = True
+                break
+            except Exception:
+                continue
+
+        if not downloaded:
+            return False
 
         # Extract archive
         with tarfile.open(tar_path, "r:gz") as tar:
-            tar.extractall(path=tmp_dir)
+            try:
+                tar.extractall(path=tmp_dir, filter="data")
+            except TypeError:
+                tar.extractall(path=tmp_dir)
 
         # Find the extracted root (e.g. tvpc-main or tvpc-<sha>)
         extracted_dirs = [p for p in tmp_dir.iterdir() if p.is_dir() and p != tmp_dir]

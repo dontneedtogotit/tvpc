@@ -6471,10 +6471,10 @@ resolve_repo_root() {
     IFS= read -r candidate < /etc/tvpc/repo.path
   else
     source_path="$(readlink -f "$0" 2>/dev/null || printf '%s' "$0")"
-    candidate="$(cd "$(dirname "$source_path")/../.." 2>/dev/null && pwd || true)"
+    candidate="$(cd "$(dirname "$source_path")/.." 2>/dev/null && pwd || true)"
   fi
 
-  for p in "$candidate" "$HOME/tvpc" "/home/$HTPC_USER/tvpc" "/tvpc"; do
+  for p in "$candidate" "$HOME/Projects/tvpc" "$HOME/tvpc" "/home/$HTPC_USER/tvpc" "/tvpc"; do
     if [[ -n $p && -f "$p/install.sh" && -d "$p/scripts" ]]; then
       candidate="$p"
       break
@@ -6791,7 +6791,7 @@ $flatpak_state
 
 Apply them now?"
   btn="$(kdialog --warningcontinuecancel "$msg" --title "tvpc update" 2>/dev/null)" || return 0
-  [[ $btn == "continue" ]] || return 0
+  [[ $btn == "continue" || $btn == "yes" ]] || return 0
 
   acquire_lock || return 1
   before_reboot=0

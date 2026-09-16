@@ -744,6 +744,10 @@ def main():
         run_zenity_wifi_flow()
         return 0
 
+    os.environ.setdefault("QT_SCALE_FACTOR_ROUNDING_POLICY", "RoundPreferFloor")
+    from PySide6.QtGui import QGuiApplication
+    QGuiApplication.setHighDpiScaleFactorRoundingPolicy(Qt.HighDpiScaleFactorRoundingPolicy.RoundPreferFloor)
+
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
     window = WifiSettingsWindow()

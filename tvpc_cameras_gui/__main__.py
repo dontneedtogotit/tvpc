@@ -157,6 +157,12 @@ def main(argv: Optional[List[str]] = None) -> int:
         return 1
 
     # Now safe to import Qt.
+    # Prevent fractional scaling font smudge on Wayland (e.g. 1.25x scaling).
+    os.environ.setdefault("QT_SCALE_FACTOR_ROUNDING_POLICY", "RoundPreferFloor")
+    from PySide6.QtGui import QGuiApplication
+    from PySide6.QtCore import Qt
+    QGuiApplication.setHighDpiScaleFactorRoundingPolicy(Qt.HighDpiScaleFactorRoundingPolicy.RoundPreferFloor)
+
     from PySide6.QtWidgets import QApplication
     app = QApplication.instance() or QApplication(sys.argv)
     app.setApplicationName("tvpc-cameras-gui")

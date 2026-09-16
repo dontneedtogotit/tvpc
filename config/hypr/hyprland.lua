@@ -118,6 +118,7 @@ hl.env("LIBVA_DRIVER_NAME", "iHD")
 -- Electron/Chromium apps (VacuumTube) should use Wayland directly.
 hl.env("ELECTRON_OZONE_PLATFORM_HINT", "auto")
 hl.env("MOZ_ENABLE_WAYLAND", "1")
+hl.env("QT_SCALE_FACTOR_ROUNDING_POLICY", "RoundPreferFloor")
 
 ----------------------------------------------------------------------
 -- Autostart
