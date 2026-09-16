@@ -317,7 +317,7 @@ cat >"$SKEL/.config/autostart/vacuumtube.desktop" <<'EOF'
 Type=Application
 Name=VacuumTube
 Comment=YouTube client with hardware video decode
-Exec=flatpak run io.github.vacuumtube.VacuumTube --enable-features=VaapiVideoDecoder --ozone-platform-hint=auto
+Exec=flatpak run io.github.vacuumtube.VacuumTube --enable-features=VaapiVideoDecoder --ozone-platform-hint=auto --disable-renderer-backgrounding --disable-background-timer-throttling --disable-backgrounding-occluded-windows
 X-KDE-autostart-phase=2
 EOF
 

@@ -139,6 +139,18 @@ ModernCardDelegate {
         return ["10-FOOT UI", "READY", "HDMI-CEC"];
     }
 
+    isRunning: {
+        var sid = (appStorageIdRole ? appStorageIdRole.toString().toLowerCase() : "");
+        var t = (title ? title.toString().toLowerCase() : "");
+        if (typeof launcherHomeRoot !== "undefined" && launcherHomeRoot.runningAppIds) {
+            for (var i = 0; i < launcherHomeRoot.runningAppIds.length; i++) {
+                var r = launcherHomeRoot.runningAppIds[i];
+                if (r && r.length > 0 && (sid.indexOf(r) !== -1 || t.indexOf(r) !== -1)) return true;
+            }
+        }
+        return false;
+    }
+
     // Safety timeout: dismiss startup feedback if application window doesn't steal focus in 4s
     Timer {
         id: startupFeedbackTimeout
@@ -155,9 +167,14 @@ ModernCardDelegate {
         }
     }
 
-    // Update parent hero spotlight whenever this tile receives active focus
+    // Update parent hero spotlight whenever this tile receives active focus or becomes current
     onActiveFocusChanged: {
         if (activeFocus && typeof launcherHomeRoot !== "undefined" && launcherHomeRoot.updateSpotlight) {
+            launcherHomeRoot.updateSpotlight(title, iconSource, comment, subtitle, capabilityTags);
+        }
+    }
+    onIsCurrentChanged: {
+        if (isCurrent && typeof launcherHomeRoot !== "undefined" && launcherHomeRoot.updateSpotlight) {
             launcherHomeRoot.updateSpotlight(title, iconSource, comment, subtitle, capabilityTags);
         }
     }

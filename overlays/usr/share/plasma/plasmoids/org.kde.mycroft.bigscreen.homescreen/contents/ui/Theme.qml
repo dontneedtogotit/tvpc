@@ -185,7 +185,9 @@ QtObject {
 
     function loadConfig() {
         var paths = [
-            "/etc/tvpc/bigscreen-theme.json"
+            "/etc/tvpc/bigscreen-theme.json",
+            "/run/tvpc-theme.json",
+            "/tmp/tvpc-theme.json"
         ];
         
         for (var i = 0; i < paths.length; i++) {
@@ -204,5 +206,21 @@ QtObject {
                 // Ignore file read error and continue with default
             }
         }
+    }
+
+    function cycleTheme() {
+        var themeKeys = ["estuary", "midnight", "oled", "cyberpunk", "sunset", "emerald"];
+        var idx = themeKeys.indexOf(activeThemeName);
+        var nextIdx = (idx + 1) % themeKeys.length;
+        activeThemeName = themeKeys[nextIdx];
+        saveTheme(activeThemeName);
+    }
+
+    function saveTheme(name) {
+        try {
+            if (typeof plasmoid !== "undefined" && plasmoid.nativeInterface && typeof plasmoid.nativeInterface.executeCommand === "function") {
+                plasmoid.nativeInterface.executeCommand("tvpc-bigscreen-theme set " + name);
+            }
+        } catch (e) {}
     }
 }

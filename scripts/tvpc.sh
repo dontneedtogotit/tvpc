@@ -112,8 +112,10 @@ cmd_setup() {
     install -d /etc/modules-load.d
     echo uinput >/etc/modules-load.d/uinput.conf
 
-    groupadd -f uinput
-    id -nG "$HTPC_USER" | grep -w uinput >/dev/null || usermod -aG uinput "$HTPC_USER"
+    for grp in uinput dialout video input; do
+        groupadd -f "$grp"
+        id -nG "$HTPC_USER" | grep -w "$grp" >/dev/null || usermod -aG "$grp" "$HTPC_USER"
+    done
 
     cat >/etc/udev/rules.d/80-uinput.rules <<'EOF'
 KERNEL=="uinput", SUBSYSTEM=="misc", MODE="0660", GROUP="uinput", OPTIONS+="static_node=uinput"
@@ -121,21 +123,20 @@ EOF
     udevadm control --reload-rules 2>/dev/null || true
     udevadm trigger --name-match=uinput 2>/dev/null || true
 
-    groupadd -f dialout
-    id -nG "$HTPC_USER" | grep -w dialout >/dev/null || usermod -aG dialout "$HTPC_USER"
     cat >/etc/udev/rules.d/99-cec-adapter.rules <<'EOF'
-# Pulse-Eight USB-CEC adapter and similar tty-based CEC devices.
-# Give the dialout group rw so libCEC (cec-client) can open it.
-KERNEL=="ttyACM[0-9]*", SUBSYSTEM=="tty", MODE="0660", GROUP="dialout"
-KERNEL=="ttyUSB[0-9]*", SUBSYSTEM=="tty", MODE="0660", GROUP="dialout", ATTRS{idVendor}=="1a44"
+# Kernel CEC framework (/dev/cec*) and Pulse-Eight / tty-based CEC adapters.
+# Give dialout/video rw so libCEC (cec-client) can open without root.
+KERNEL=="cec[0-9]*", SUBSYSTEM=="cec", MODE="0666", GROUP="dialout"
+KERNEL=="ttyACM[0-9]*", SUBSYSTEM=="tty", MODE="0666", GROUP="dialout"
+KERNEL=="ttyUSB[0-9]*", SUBSYSTEM=="tty", MODE="0666", GROUP="dialout", ATTRS{idVendor}=="1a44"
 EOF
     udevadm control --reload-rules 2>/dev/null || true
     udevadm trigger --subsystem-match=tty 2>/dev/null || true
 
-    for dev in /dev/ttyACM* /dev/ttyUSB*; do
+    for dev in /dev/cec* /dev/ttyACM* /dev/ttyUSB*; do
         [[ -e $dev ]] || continue
         chgrp dialout "$dev" 2>/dev/null || true
-        chmod 0660 "$dev" 2>/dev/null || true
+        chmod 0666 "$dev" 2>/dev/null || true
     done
 
     if ! id -nG "$HTPC_USER" | grep -wq dialout; then
@@ -175,17 +176,17 @@ log() { echo "tvpc-cec-remote: $*" >&2; }
 send_key() {
     local code="$1"
     if command -v ydotool >/dev/null 2>&1; then
-        ydotool key "${code}:1" "${code}:0" 2>/dev/null && return 0
+        ydotool key "${code}:1" 2>/dev/null && sleep 0.04 && ydotool key "${code}:0" 2>/dev/null && return 0
     fi
     command -v xdotool >/dev/null 2>&1 && DISPLAY=:0 xdotool key "$2" 2>/dev/null
 }
 
 handle() {
     case "$1" in
-        44|45) playerctl play-pause 2>/dev/null || true ;;
-        46)    playerctl stop       2>/dev/null || true ;;
-        47)    playerctl next       2>/dev/null || true ;;
-        48)    playerctl previous   2>/dev/null || true ;;
+        44|45) playerctl play-pause 2>/dev/null || send_key 164 play ;;
+        46)    playerctl stop       2>/dev/null || send_key 128 stop ;;
+        47)    playerctl next       2>/dev/null || send_key 208 fastforward ;;
+        48)    playerctl previous   2>/dev/null || send_key 168 rewind ;;
         41)    pactl set-sink-volume @DEFAULT_SINK@ +2%     2>/dev/null || true ;;
         42)    pactl set-sink-volume @DEFAULT_SINK@ -2%     2>/dev/null || true ;;
         43)    pactl set-sink-mute   @DEFAULT_SINK@ toggle  2>/dev/null || true ;;
@@ -219,11 +220,14 @@ handle() {
             elif [[ -x "/home/$HTPC_USER/tvpc/scripts/tvpc-cameras.sh" ]]; then
                 "/home/$HTPC_USER/tvpc/scripts/tvpc-cameras.sh" cycle 2>/dev/null || true
             fi ;;
+        73)    # Green button (B): Cycle themes or trigger task switch
+            qdbus org.kde.kglobalaccel /component/kwin invokeShortcut 'Walk Through Windows' 2>/dev/null || true
+            ;;
         53)    # Tools button: Launch camera GUI
             if command -v tvpc-cameras-gui >/dev/null 2>&1; then
                 nohup tvpc-cameras-gui >/dev/null 2>&1 &
             elif [[ -x "/home/$HTPC_USER/tvpc/scripts/tvpc-cameras-gui.sh" ]]; then
-                nohup "/home/$HTPC_USER/tvpc/scripts/tvpc-cameras-gui.sh" >/dev/null 2>&1 &
+                nohup "/home/$HTPC_USER/tvpc/scripts/tvpc-cameras.sh" >/dev/null 2>&1 &
             fi ;;
         *)     return ;;
     esac
@@ -231,10 +235,85 @@ handle() {
 }
 
 log "listener started (socket=$YDOTOOL_SOCKET)"
-stdbuf -oL cec-client -d 8 2>&1 | while IFS= read -r line; do
+
+# Setup FIFO for two-way communication with cec-client to assert Active Source
+CEC_FIFO="/run/tvpc-cec.fifo"
+rm -f "$CEC_FIFO" 2>/dev/null || true
+mkfifo -m 0666 "$CEC_FIFO" 2>/dev/null || true
+
+# Keep FIFO open permanently with descriptor 3 so cec-client never encounters EOF
+exec 3<>"$CEC_FIFO"
+
+# Assert Active Source shortly after startup
+(
+    sleep 2
+    echo "as" >&3 2>/dev/null || true
+) &
+
+# Background status monitor for MPRIS Now Playing, Running Apps, and Weather
+(
+    while true; do
+        # 1. Weather update (every ~10 minutes, or initially)
+        if [[ ! -f /run/tvpc-weather.json || $(($(date +%s) - $(stat -c %Y /run/tvpc-weather.json 2>/dev/null || echo 0))) -gt 600 ]]; then
+            weather_out="$(curl -s --max-time 3 'wttr.in/?format=%c+%t' 2>/dev/null || true)"
+            if [[ -n "$weather_out" && "$weather_out" =~ ([^[:space:]]+)[[:space:]]*([+-]?[0-9]+.*) ]]; then
+                w_icon="${BASH_REMATCH[1]}"
+                w_temp="${BASH_REMATCH[2]}"
+                printf '{"icon":"%s","temp":"%s"}\n' "$w_icon" "$w_temp" > /tmp/tvpc-weather.tmp 2>/dev/null && mv -f /tmp/tvpc-weather.tmp /run/tvpc-weather.json 2>/dev/null || true
+            fi
+        fi
+
+        # 2. MPRIS & Running Apps update
+        mpris_status="$(playerctl status 2>/dev/null || echo "Stopped")"
+        mpris_title="$(playerctl metadata title 2>/dev/null || echo "")"
+        mpris_artist="$(playerctl metadata artist 2>/dev/null || echo "")"
+        mpris_active=false
+        if [[ "$mpris_status" == "Playing" || "$mpris_status" == "Paused" ]]; then
+            mpris_active=true
+        fi
+
+        running_apps="[]"
+        procs="$(pgrep -a "vacuumtube|kodi|retroarch|steam|chromium|vlc|mpv|tvpc-cameras" 2>/dev/null | awk '{print tolower($2)}' | tr '\n' ' ' || true)"
+        r_list=()
+        for p in vacuumtube kodi retroarch steam chromium vlc mpv tvpc-cameras; do
+            if [[ "$procs" == *"$p"* ]]; then
+                r_list+=("\"$p\"")
+            fi
+        done
+        if [[ ${#r_list[@]} -gt 0 ]]; then
+            running_apps="[$(IFS=,; echo "${r_list[*]}")]"
+        fi
+
+        # Write atomic JSON
+        json_out="{\"active\":$mpris_active,\"status\":\"$mpris_status\",\"title\":$(python3 -c 'import json,sys; print(json.dumps(sys.argv[1]))' "$mpris_title" 2>/dev/null || echo "\"$mpris_title\""),\"artist\":$(python3 -c 'import json,sys; print(json.dumps(sys.argv[1]))' "$mpris_artist" 2>/dev/null || echo "\"$mpris_artist\""),\"running\":$running_apps}"
+
+        printf '%s\n' "$json_out" > /tmp/tvpc-mpris.tmp 2>/dev/null
+        chmod 0666 /tmp/tvpc-mpris.tmp 2>/dev/null || true
+        cp -f /tmp/tvpc-mpris.tmp /tmp/tvpc-mpris.json 2>/dev/null || true
+        cp -f /tmp/tvpc-mpris.tmp /run/tvpc-mpris.json 2>/dev/null || true
+        if [[ -d "${XDG_RUNTIME_DIR:-}" ]]; then
+            cp -f /tmp/tvpc-mpris.tmp "$XDG_RUNTIME_DIR/tvpc-mpris.json" 2>/dev/null || true
+        fi
+        rm -f /tmp/tvpc-mpris.tmp 2>/dev/null || true
+
+        sleep 2.5
+    done
+) &
+STATUS_MONITOR_PID=$!
+trap 'kill $STATUS_MONITOR_PID 2>/dev/null || true; exec 3>&-; rm -f "$CEC_FIFO" 2>/dev/null || true' EXIT
+
+# Launch cec-client as a Playback device (-t p) with OSD name 'tvpc' (-o tvpc)
+# Samsung Anynet+ requires device type Playback to forward D-pad navigation keys
+stdbuf -oL cec-client -t p -o "tvpc" -d 8 < "$CEC_FIFO" 2>&1 | while IFS= read -r line; do
     if [[ "$line" == *TRAFFIC* ]]; then
         log "raw: $line"
     fi
+    # Re-assert Active Source if TV requests it (Request Active Source 0x85 or Set Stream Path 0x86)
+    if [[ "$line" =~ \>\>[[:space:]]*[0-9a-fA-F]{2}:(85|86) ]]; then
+        log "TV requested active source; asserting 'as'"
+        echo "as" >&3 2>/dev/null || true
+    fi
+    # Match User Control Pressed (opcode 44)
     if [[ "$line" =~ \>\>[[:space:]]*[0-9a-fA-F]{2}:44:([0-9a-fA-F]{2}) ]]; then
         handle "$(tr '[:upper:]' '[:lower:]' <<<"${BASH_REMATCH[1]}")"
     fi
@@ -451,7 +530,8 @@ install_kiosk_session() {
 # Single application for the tvpc kiosk session, most-wanted first.
 if flatpak info io.github.vacuumtube.VacuumTube >/dev/null 2>&1; then
   exec flatpak run io.github.vacuumtube.VacuumTube \
-       --enable-features=VaapiVideoDecoder --ozone-platform-hint=auto
+       --enable-features=VaapiVideoDecoder --ozone-platform-hint=auto \
+       --disable-renderer-backgrounding --disable-background-timer-throttling --disable-backgrounding-occluded-windows
 fi
 for term in konsole xterm x-terminal-emulator; do
   command -v "$term" >/dev/null 2>&1 && exec "$term"
@@ -1140,6 +1220,14 @@ cmd_set() {
     else
         mkdir -p "$(dirname "$USER_CONF")"
         printf "%b" "$json" >"$USER_CONF"
+    fi
+
+    # Broadcast to runtime and temporary paths for instant QML UI detection
+    if [[ -w /run ]]; then
+        printf "%b" "$json" >/run/tvpc-theme.json 2>/dev/null || true
+    fi
+    if [[ -w /tmp ]]; then
+        printf "%b" "$json" >/tmp/tvpc-theme.json 2>/dev/null || true
     fi
 
     echo "Theme successfully set to: $target ($name)"
@@ -1977,7 +2065,7 @@ declare -a LABELS=() CMDS=()
 add() { LABELS+=("$1"); CMDS+=("$2"); }
 
 if have_flat io.github.vacuumtube.VacuumTube; then
-  add "YouTube" "flatpak run io.github.vacuumtube.VacuumTube --enable-features=VaapiVideoDecoder --ozone-platform-hint=auto"
+  add "YouTube" "flatpak run io.github.vacuumtube.VacuumTube --enable-features=VaapiVideoDecoder --ozone-platform-hint=auto --disable-renderer-backgrounding --disable-background-timer-throttling --disable-backgrounding-occluded-windows"
 fi
 if have_flat org.mozilla.firefox; then
   add "Firefox" "flatpak run org.mozilla.firefox"
@@ -3827,10 +3915,20 @@ HOOK_NAME="tvpc-hover-scroll.js"
 MARKER_START="/* >>> tvpc hover-horizontal-scroll >>> */"
 MARKER_END="/* <<< tvpc hover-horizontal-scroll <<< */"
 
-HOOK_JS='/* tvpc hover-horizontal-scroll for VacuumTube.
+HOOK_JS='/* tvpc hover-horizontal-scroll and background playback for VacuumTube.
  * Run from the Electron preload context. Vertical wheel over a
- * horizontally-scrollable element becomes horizontal scroll. */
+ * horizontally-scrollable element becomes horizontal scroll.
+ * Also keeps media playing when the window is minimized or occluded. */
 (function () {
+    /* Prevent YouTube/Electron from pausing media when window is minimized or occluded */
+    try {
+        Object.defineProperty(document, "hidden", { value: false, writable: false });
+        Object.defineProperty(document, "visibilityState", { value: "visible", writable: false });
+        var stopVis = function(e) { if (e) e.stopImmediatePropagation(); };
+        window.addEventListener("visibilitychange", stopVis, true);
+        document.addEventListener("visibilitychange", stopVis, true);
+    } catch (e) {}
+
     var SKIP = { INPUT: 1, TEXTAREA: 1, SELECT: 1 };
     function scrollerOf(el) {
         var n = el;

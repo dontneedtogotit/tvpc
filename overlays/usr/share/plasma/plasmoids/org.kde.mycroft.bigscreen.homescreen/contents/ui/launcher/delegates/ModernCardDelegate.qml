@@ -23,10 +23,19 @@ Item {
     property string subtitle: ""
     property string category: ""
     property string comment: ""
+    property bool isRunning: false
+    property bool isWideCard: false
+    property bool isFavorite: false
     property bool isCurrent: {
+        try {
+            if (typeof isCurrentItem !== "undefined" && isCurrentItem) {
+                var pf = findFlickable(parent);
+                return (!pf || pf.activeFocus || activeFocus) && (!pf || !pf.moving);
+            }
+        } catch (e) {}
         var parentFlickable = findFlickable(parent);
         if (parentFlickable) {
-            return parentFlickable.currentIndex === index && activeFocus && !parentFlickable.moving;
+            return parentFlickable.currentIndex === index && (parentFlickable.activeFocus || activeFocus) && !parentFlickable.moving;
         }
         return activeFocus;
     }
@@ -58,16 +67,20 @@ Item {
     // Dimensions derived from parent cell or grid
     implicitWidth: {
         var fl = findFlickable(parent);
-        return fl && fl.cellWidth ? fl.cellWidth : Kirigami.Units.gridUnit * 12;
+        if (fl && fl.cellWidth) return fl.cellWidth;
+        return isWideCard ? Kirigami.Units.gridUnit * 15 : Kirigami.Units.gridUnit * 12;
     }
     implicitHeight: {
         var fl = findFlickable(parent);
-        return fl && fl.cellHeight ? fl.cellHeight : Kirigami.Units.gridUnit * 9;
+        if (fl && fl.cellHeight) return fl.cellHeight;
+        return isWideCard ? Kirigami.Units.gridUnit * 8.5 : Kirigami.Units.gridUnit * 9;
     }
 
     z: isCurrent ? 10 : 1
     scale: isCurrent ? theme.focusedCardScale : 1.0
     opacity: isCurrent ? 1.0 : 0.88
+    layer.enabled: cardRoot.isCurrent
+    layer.smooth: true
 
     Behavior on scale {
         NumberAnimation {
@@ -109,7 +122,7 @@ Item {
             margins: Kirigami.Units.smallSpacing
         }
         radius: cardRoot.theme.cardRadius
-        color: cardRoot.isCurrent ? cardRoot.theme.surfaceFocusedColor : cardRoot.theme.surfaceColor
+        color: cardRoot.isCurrent ? cardRoot.theme.surfaceFocusedColor : (cardMouse.containsMouse ? cardRoot.theme.surfaceHoverColor : cardRoot.theme.surfaceColor)
         border.color: cardRoot.isCurrent ? cardRoot.theme.borderFocusColor : cardRoot.theme.borderColor
         border.width: cardRoot.isCurrent ? cardRoot.theme.focusBorderWidth : 1
 
@@ -152,6 +165,68 @@ Item {
 
             Behavior on opacity {
                 NumberAnimation { duration: cardRoot.theme.animDurationFast }
+            }
+        }
+
+        // Pinned & Favorite star badge
+        Rectangle {
+            anchors {
+                top: parent.top
+                left: parent.left
+                margins: Kirigami.Units.smallSpacing * 1.5
+            }
+            z: 25
+            visible: cardRoot.isFavorite
+            height: Kirigami.Units.gridUnit * 0.95
+            width: height
+            radius: cardRoot.theme.badgeRadius
+            color: Qt.rgba(0.96, 0.73, 0.20, 0.25)
+            border.color: "#f59e0b"
+            border.width: 1
+
+            Controls.Label {
+                anchors.centerIn: parent
+                text: "★"
+                font.bold: true
+                font.pixelSize: Kirigami.Units.gridUnit * 0.58
+                color: "#fbbf24"
+            }
+        }
+
+        // Active / running application indicator badge
+        Rectangle {
+            anchors {
+                top: parent.top
+                right: parent.right
+                margins: Kirigami.Units.smallSpacing * 1.5
+            }
+            z: 25
+            visible: cardRoot.isRunning
+            height: Kirigami.Units.gridUnit * 0.95
+            width: runningBadgeRow.implicitWidth + Kirigami.Units.smallSpacing * 2
+            radius: cardRoot.theme.badgeRadius
+            color: Qt.rgba(0.13, 0.77, 0.36, 0.25)
+            border.color: "#22c55e"
+            border.width: 1
+
+            RowLayout {
+                id: runningBadgeRow
+                anchors.centerIn: parent
+                spacing: 3
+
+                Rectangle {
+                    width: 5
+                    height: 5
+                    radius: 2.5
+                    color: "#22c55e"
+                }
+
+                Controls.Label {
+                    text: "RUNNING"
+                    font.bold: true
+                    font.pixelSize: Kirigami.Units.gridUnit * 0.55
+                    color: "#86efac"
+                }
             }
         }
 
@@ -262,8 +337,10 @@ Item {
 
     // Focus & remote activation
     MouseArea {
+        id: cardMouse
         anchors.fill: parent
         hoverEnabled: true
+        cursorShape: Qt.PointingHandCursor
         onClicked: {
             var fl = cardRoot.findFlickable(cardRoot.parent);
             if (fl) {

@@ -48,6 +48,76 @@ FocusScope {
         }
     }
 
+    onActiveFocusChanged: {
+        if (activeFocus) {
+            if (singleRowContainer && singleRowContainer.currentSection && singleRowContainer.currentSection.visible) {
+                singleRowContainer.currentSection.forceActiveFocus();
+            } else if (favoritesView.visible && favoritesView.count > 0) {
+                favoritesView.forceActiveFocus();
+            }
+        }
+    }
+
+    property var runningAppIds: ["vacuumtube"]
+    property bool nowPlayingActive: false
+    property string nowPlayingTitle: ""
+    property string nowPlayingArtist: ""
+    property string nowPlayingStatus: "Playing"
+
+    function toggleNowPlaying() {
+        if (plasmoid && plasmoid.nativeInterface && typeof plasmoid.nativeInterface.executeCommand === "function") {
+            plasmoid.nativeInterface.executeCommand("playerctl play-pause 2>/dev/null || true");
+            updateMediaState();
+        }
+    }
+
+    Timer {
+        id: mediaPollTimer
+        interval: 3000
+        running: true
+        repeat: true
+        onTriggered: updateMediaState()
+    }
+
+    function updateMediaState() {
+        var paths = ["/run/user/1000/tvpc-mpris.json", "/tmp/tvpc-mpris.json", "/run/tvpc-mpris.json"];
+        function tryPath(idx) {
+            if (idx >= paths.length) return;
+            var xhr = new XMLHttpRequest();
+            xhr.open("GET", "file://" + paths[idx], true);
+            xhr.onreadystatechange = function() {
+                if (xhr.readyState === XMLHttpRequest.DONE) {
+                    if (xhr.status === 200 || xhr.status === 0) {
+                        try {
+                            var d = JSON.parse(xhr.responseText);
+                            if (d) {
+                                nowPlayingActive = !!d.active;
+                                nowPlayingTitle = d.title || "";
+                                nowPlayingArtist = d.artist || "";
+                                nowPlayingStatus = d.status || "Playing";
+                                if (d.running) runningAppIds = d.running;
+                                return;
+                            }
+                        } catch (e) {}
+                    }
+                    tryPath(idx + 1);
+                }
+            };
+            try { xhr.send(); } catch (e) { tryPath(idx + 1); }
+        }
+        tryPath(0);
+    }
+
+    function isFavoriteApp(cats, storageId) {
+        var sid = storageId ? storageId.toString().toLowerCase() : "";
+        if (sid.indexOf("vacuumtube") !== -1 || sid.indexOf("youtube") !== -1) return true;
+        if (sid.indexOf("kodi") !== -1) return true;
+        if (sid.indexOf("camera") !== -1 || sid.indexOf("nvr") !== -1) return true;
+        if (sid.indexOf("chromium") !== -1) return true;
+        if (sid.indexOf("retroarch") !== -1 || sid.indexOf("steam") !== -1) return true;
+        return false;
+    }
+
     function isMediaApp(cats, storageId) {
         var sid = storageId ? storageId.toString().toLowerCase() : "";
         if (sid.indexOf("foot") !== -1 || sid.indexOf("term") !== -1 || sid.indexOf("ghostty") !== -1 || sid.indexOf("konsole") !== -1) return false;
@@ -146,11 +216,28 @@ FocusScope {
                             cornerRadius: launcherHomeRoot.theme.cardRadius + 2
                         }
 
+                        Image {
+                            id: cameraLiveThumb
+                            anchors.fill: parent
+                            anchors.margins: 4
+                            visible: (launcherHomeRoot.currentCategory === "Security NVR" || launcherHomeRoot.currentTitle.indexOf("Camera") !== -1 || launcherHomeRoot.currentTitle.indexOf("NVR") !== -1) && status === Image.Ready
+                            source: "file:///run/tvpc-cameras/live_feed.jpg"
+                            fillMode: Image.PreserveAspectCrop
+                            asynchronous: true
+                            cache: false
+                            onStatusChanged: {
+                                if (status === Image.Error && source === "file:///run/tvpc-cameras/live_feed.jpg") {
+                                    source = "file:///var/lib/tvpc-nvr/snapshots/cam0_latest.jpg";
+                                }
+                            }
+                        }
+
                         PlasmaCore.IconItem {
                             anchors.centerIn: parent
                             width: parent.width * 0.72
                             height: width
                             source: launcherHomeRoot.currentIcon
+                            visible: !cameraLiveThumb.visible
                         }
                     }
                 }
@@ -161,7 +248,7 @@ FocusScope {
                     Layout.alignment: Qt.AlignVCenter
                     spacing: Kirigami.Units.smallSpacing
 
-                    // Category Pill, Capability Badges & Remote Action Prompt
+                    // Category Pill, Now Playing, Capability Badges & Remote Action Prompt
                     RowLayout {
                         spacing: Kirigami.Units.largeSpacing
 
@@ -180,6 +267,43 @@ FocusScope {
                                 font.capitalization: Font.AllUppercase
                                 font.pixelSize: Kirigami.Units.gridUnit * 0.65
                                 color: "#000000"
+                            }
+                        }
+
+                        // Now Playing Media Pill (when media is active)
+                        Rectangle {
+                            visible: launcherHomeRoot.nowPlayingActive
+                            height: Kirigami.Units.gridUnit * 1.15
+                            width: nowPlayingPillRow.implicitWidth + Kirigami.Units.largeSpacing * 1.4
+                            radius: launcherHomeRoot.theme.badgeRadius
+                            color: Qt.rgba(0.13, 0.77, 0.36, 0.35)
+                            border.color: "#22c55e"
+                            border.width: 1
+
+                            RowLayout {
+                                id: nowPlayingPillRow
+                                anchors.centerIn: parent
+                                spacing: 4
+
+                                PlasmaCore.IconItem {
+                                    Layout.preferredWidth: Kirigami.Units.iconSizes.small * 0.75
+                                    Layout.preferredHeight: width
+                                    source: launcherHomeRoot.nowPlayingStatus === "Playing" ? "media-playback-start" : "media-playback-pause"
+                                }
+
+                                Controls.Label {
+                                    text: "NOW PLAYING: " + (launcherHomeRoot.nowPlayingTitle.length > 0 ? launcherHomeRoot.nowPlayingTitle : "Media")
+                                    font.bold: true
+                                    font.pixelSize: Kirigami.Units.gridUnit * 0.65
+                                    color: "#86efac"
+                                    elide: Text.ElideRight
+                                }
+                            }
+
+                            MouseArea {
+                                anchors.fill: parent
+                                hoverEnabled: true
+                                onClicked: launcherHomeRoot.toggleNowPlaying()
                             }
                         }
 
@@ -257,6 +381,135 @@ FocusScope {
                         maximumLineCount: 2
                         wrapMode: Text.WordWrap
                     }
+
+                    // Quick Action Chips Row
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: Kirigami.Units.smallSpacing * 1.5
+
+                        // Action 1: Launch / Play
+                        Rectangle {
+                            height: Kirigami.Units.gridUnit * 1.15
+                            width: chip1Row.implicitWidth + Kirigami.Units.largeSpacing * 1.4
+                            radius: launcherHomeRoot.theme.badgeRadius
+                            color: launcherHomeRoot.theme.pillFocusedBackground
+                            border.color: launcherHomeRoot.theme.borderFocusColor
+                            border.width: 1
+
+                            RowLayout {
+                                id: chip1Row
+                                anchors.centerIn: parent
+                                spacing: Kirigami.Units.smallSpacing / 2
+
+                                PlasmaCore.IconItem {
+                                    Layout.preferredWidth: Kirigami.Units.iconSizes.small * 0.75
+                                    Layout.preferredHeight: width
+                                    source: "media-playback-start"
+                                }
+
+                                Controls.Label {
+                                    text: i18n("Launch on TV")
+                                    font.bold: true
+                                    font.pixelSize: Kirigami.Units.gridUnit * 0.65
+                                    color: launcherHomeRoot.theme.textColor
+                                }
+                            }
+
+                            MouseArea {
+                                anchors.fill: parent
+                                hoverEnabled: true
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: {
+                                    if (singleRowContainer.currentSection && singleRowContainer.currentSection.currentItem) {
+                                        singleRowContainer.currentSection.currentItem.clicked();
+                                    }
+                                }
+                            }
+                        }
+
+                        // Action 2: Contextual action (PiP for camera, Subscriptions for YouTube, Media control)
+                        Rectangle {
+                            height: Kirigami.Units.gridUnit * 1.15
+                            width: chip2Row.implicitWidth + Kirigami.Units.largeSpacing * 1.4
+                            radius: launcherHomeRoot.theme.badgeRadius
+                            color: chip2Mouse.containsMouse ? Qt.rgba(1.0, 1.0, 1.0, 0.16) : Qt.rgba(1.0, 1.0, 1.0, 0.08)
+                            border.color: Qt.rgba(1.0, 1.0, 1.0, 0.18)
+                            border.width: 1
+
+                            RowLayout {
+                                id: chip2Row
+                                anchors.centerIn: parent
+                                spacing: Kirigami.Units.smallSpacing / 2
+
+                                PlasmaCore.IconItem {
+                                    Layout.preferredWidth: Kirigami.Units.iconSizes.small * 0.75
+                                    Layout.preferredHeight: width
+                                    source: (launcherHomeRoot.currentTitle.indexOf("Camera") !== -1 || launcherHomeRoot.currentCategory === "Security NVR") ? "video-television" : (launcherHomeRoot.nowPlayingActive ? "media-playback-pause" : "view-media-playlist")
+                                }
+
+                                Controls.Label {
+                                    text: (launcherHomeRoot.currentTitle.indexOf("Camera") !== -1 || launcherHomeRoot.currentCategory === "Security NVR") ? i18n("Toggle PiP (🔴)") : (launcherHomeRoot.nowPlayingActive ? i18n("Pause/Resume") : i18n("Explore"))
+                                    font.bold: true
+                                    font.pixelSize: Kirigami.Units.gridUnit * 0.65
+                                    color: launcherHomeRoot.theme.textColor
+                                }
+                            }
+
+                            MouseArea {
+                                id: chip2Mouse
+                                anchors.fill: parent
+                                hoverEnabled: true
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: {
+                                    if (launcherHomeRoot.currentTitle.indexOf("Camera") !== -1 || launcherHomeRoot.currentCategory === "Security NVR") {
+                                        if (typeof root !== "undefined") root.triggerCameraPip();
+                                    } else if (launcherHomeRoot.nowPlayingActive) {
+                                        launcherHomeRoot.toggleNowPlaying();
+                                    }
+                                }
+                            }
+                        }
+
+                        // Action 3: 2x2 Grid for Cameras
+                        Rectangle {
+                            height: Kirigami.Units.gridUnit * 1.15
+                            width: chip3Row.implicitWidth + Kirigami.Units.largeSpacing * 1.4
+                            radius: launcherHomeRoot.theme.badgeRadius
+                            color: chip3Mouse.containsMouse ? Qt.rgba(1.0, 1.0, 1.0, 0.16) : Qt.rgba(1.0, 1.0, 1.0, 0.08)
+                            border.color: Qt.rgba(1.0, 1.0, 1.0, 0.18)
+                            border.width: 1
+                            visible: (launcherHomeRoot.currentTitle.indexOf("Camera") !== -1 || launcherHomeRoot.currentCategory === "Security NVR")
+
+                            RowLayout {
+                                id: chip3Row
+                                anchors.centerIn: parent
+                                spacing: Kirigami.Units.smallSpacing / 2
+
+                                PlasmaCore.IconItem {
+                                    Layout.preferredWidth: Kirigami.Units.iconSizes.small * 0.75
+                                    Layout.preferredHeight: width
+                                    source: "view-split-left-right"
+                                }
+
+                                Controls.Label {
+                                    text: i18n("2x2 Grid (🔵)")
+                                    font.bold: true
+                                    font.pixelSize: Kirigami.Units.gridUnit * 0.65
+                                    color: launcherHomeRoot.theme.textColor
+                                }
+                            }
+
+                            MouseArea {
+                                id: chip3Mouse
+                                anchors.fill: parent
+                                hoverEnabled: true
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: {
+                                    if (typeof root !== "undefined") root.triggerCameraGrid();
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -269,12 +522,11 @@ FocusScope {
         anchors {
             left: parent.left
             right: parent.right
-            top: heroSpotlight.bottom
-            topMargin: Kirigami.Units.largeSpacing * 2
         }
 
         property Item currentSection
-        y: currentSection ? -currentSection.y + (parent.height - heroSpotlight.height) / 3 : 0
+        readonly property real baseTop: heroSpotlight.y + heroSpotlight.height + Kirigami.Units.largeSpacing * 2
+        y: currentSection ? Math.min(baseTop, baseTop - currentSection.y) : baseTop
 
         Behavior on y {
             YAnimator {
@@ -283,6 +535,38 @@ FocusScope {
             }
         }
         spacing: Kirigami.Units.largeSpacing * 2.5
+
+        // 0. PINNED & FAVORITES ROW (Top Curated TV Apps)
+        BigScreen.TileRepeater {
+            id: favoritesView
+            title: i18n("⭐ Pinned & Favorites")
+            compactMode: plasmoid.configuration.expandingTiles
+            visible: count > 0
+            enabled: count > 0
+            model: KItemModels.KSortFilterProxyModel {
+                sourceModel: plasmoid.nativeInterface.applicationListModel
+                filterRole: "ApplicationCategoriesRole"
+                filterRowCallback: function(source_row, source_parent) {
+                    var cats = sourceModel.data(sourceModel.index(source_row, 0, source_parent), ApplicationListModel.ApplicationCategoriesRole);
+                    var storageId = sourceModel.data(sourceModel.index(source_row, 0, source_parent), ApplicationListModel.ApplicationStorageIdRole);
+                    return isFavoriteApp(cats, storageId);
+                }
+            }
+
+            currentIndex: 0
+            focus: visible
+            onActiveFocusChanged: if (activeFocus) {
+                launcherHomeColumn.currentSection = favoritesView;
+                if (typeof root !== "undefined") root.currentSectionTitle = i18n("Favorites & Pinned");
+            }
+            delegate: Delegates.AppDelegate {
+                property var modelData: typeof model !== "undefined" ? model : null
+                isFavorite: true
+            }
+
+            navigationUp: typeof audioPill !== "undefined" ? audioPill : (typeof shutdownIndicator !== "undefined" ? shutdownIndicator : null)
+            navigationDown: recentView.visible ? recentView : (mediaView.visible ? mediaView : (appsView.visible ? appsView : settingsView))
+        }
 
         // 1. RECENT ROW
         BigScreen.TileRepeater {
@@ -295,7 +579,7 @@ FocusScope {
 
             visible: plasmoid.configuration.expandingTiles && count > 0
             currentIndex: 0
-            focus: visible
+            focus: false
             onActiveFocusChanged: if (activeFocus) {
                 launcherHomeColumn.currentSection = recentView;
                 if (typeof root !== "undefined") root.currentSectionTitle = i18n("Recently Used");
@@ -304,7 +588,7 @@ FocusScope {
                 property var modelData: typeof model !== "undefined" ? model : null
             }
 
-            navigationUp: typeof shutdownIndicator !== "undefined" ? shutdownIndicator : null
+            navigationUp: favoritesView.visible ? favoritesView : (typeof shutdownIndicator !== "undefined" ? shutdownIndicator : null)
             navigationDown: mediaView.visible ? mediaView : (appsView.visible ? appsView : (gamesView.visible ? gamesView : settingsView))
         }
 
@@ -333,9 +617,10 @@ FocusScope {
             }
             delegate: Delegates.AppDelegate {
                 property var modelData: typeof model !== "undefined" ? model : null
+                isWideCard: true
             }
 
-            navigationUp: recentView.visible ? recentView : (typeof shutdownIndicator !== "undefined" ? shutdownIndicator : null)
+            navigationUp: recentView.visible ? recentView : (favoritesView.visible ? favoritesView : (typeof shutdownIndicator !== "undefined" ? shutdownIndicator : null))
             navigationDown: gamesView.visible ? gamesView : (appsView.visible ? appsView : settingsView)
         }
 
@@ -470,7 +755,10 @@ FocusScope {
         }
 
         Component.onCompleted: {
-            if (mediaView.visible && mediaView.count > 0) {
+            if (favoritesView.visible && favoritesView.count > 0) {
+                favoritesView.forceActiveFocus();
+                if (typeof root !== "undefined") root.currentSectionTitle = i18n("Favorites & Pinned");
+            } else if (mediaView.visible && mediaView.count > 0) {
                 mediaView.forceActiveFocus();
                 if (typeof root !== "undefined") root.currentSectionTitle = i18n("Videos & Streaming");
             } else if (recentView.visible && recentView.count > 0) {
@@ -485,7 +773,10 @@ FocusScope {
         Connections {
             target: root
             onActivateAppView: {
-                if (mediaView.visible && mediaView.count > 0) {
+                if (favoritesView.visible && favoritesView.count > 0) {
+                    favoritesView.forceActiveFocus();
+                    if (typeof root !== "undefined") root.currentSectionTitle = i18n("Favorites & Pinned");
+                } else if (mediaView.visible && mediaView.count > 0) {
                     mediaView.forceActiveFocus();
                     if (typeof root !== "undefined") root.currentSectionTitle = i18n("Videos & Streaming");
                 } else if (recentView.visible && recentView.count > 0) {

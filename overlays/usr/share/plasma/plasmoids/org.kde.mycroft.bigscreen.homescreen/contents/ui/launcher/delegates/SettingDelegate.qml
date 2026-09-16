@@ -49,6 +49,11 @@ ModernCardDelegate {
             launcherHomeRoot.updateSpotlight(title, iconSource, comment, subtitle, ["SYSTEM PREFERENCE", "10-FOOT UI", "INSTANT APPLY"]);
         }
     }
+    onIsCurrentChanged: {
+        if (isCurrent && typeof launcherHomeRoot !== "undefined" && launcherHomeRoot.updateSpotlight) {
+            launcherHomeRoot.updateSpotlight(title, iconSource, comment, subtitle, ["SYSTEM PREFERENCE", "10-FOOT UI", "INSTANT APPLY"]);
+        }
+    }
 
     // Safety timeout: dismiss startup feedback if KCM doesn't steal focus in 4s
     Timer {

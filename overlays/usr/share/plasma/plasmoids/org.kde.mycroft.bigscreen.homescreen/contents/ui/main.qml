@@ -33,6 +33,9 @@ Item {
     // Live Kodi Estuary breadcrumb section title (updated dynamically by LauncherHome)
     property string currentSectionTitle: i18n("Videos & Streaming")
     property int topBarHeight: Math.round((Kirigami.Units.iconSizes.large + Kirigami.Units.smallSpacing * 2) * 1.75)
+    property string weatherIcon: "☀️"
+    property string weatherTemp: "22°C"
+    property bool isBluetoothAudio: false
 
     property bool mycroftIntegration: (plasmoid && plasmoid.nativeInterface && plasmoid.nativeInterface.bigLauncherDbusAdapterInterface)
         ? (plasmoid.nativeInterface.bigLauncherDbusAdapterInterface.mycroftIntegrationActive() ? 1 : 0)
@@ -307,6 +310,34 @@ Item {
                     font.pixelSize: Kirigami.Units.gridUnit * 0.9
                     color: root.theme.textMutedColor
                 }
+
+                // Weather & Temperature Pill
+                Rectangle {
+                    Layout.preferredHeight: topBar.height - Kirigami.Units.smallSpacing * 2
+                    Layout.preferredWidth: weatherRow.implicitWidth + Kirigami.Units.largeSpacing * 1.5
+                    radius: root.theme.pillRadius
+                    color: root.theme.pillBackground
+                    border.color: root.theme.pillBorder
+                    border.width: 1
+
+                    RowLayout {
+                        id: weatherRow
+                        anchors.centerIn: parent
+                        spacing: Kirigami.Units.smallSpacing / 2
+
+                        Controls.Label {
+                            text: root.weatherIcon
+                            font.pixelSize: Kirigami.Units.gridUnit * 0.85
+                        }
+
+                        Controls.Label {
+                            text: root.weatherTemp
+                            font.bold: true
+                            font.pixelSize: Kirigami.Units.gridUnit * 0.75
+                            color: root.theme.textColor
+                        }
+                    }
+                }
             }
 
             RowLayout {
@@ -323,7 +354,94 @@ Item {
                 bottom: parent.bottom
                 rightMargin: Kirigami.Units.largeSpacing * 2
             }
-            spacing: Kirigami.Units.largeSpacing
+            // Audio Output Switcher Pill (HDMI vs Bluetooth)
+            Rectangle {
+                id: audioPill
+                activeFocusOnTab: true
+                Layout.preferredHeight: topBar.height - Kirigami.Units.smallSpacing * 2
+                Layout.preferredWidth: audioRow.implicitWidth + Kirigami.Units.largeSpacing * 1.5
+                radius: root.theme.pillRadius
+                color: audioPill.activeFocus ? root.theme.pillFocusedBackground : (audioMouse.containsMouse ? Qt.rgba(1.0, 1.0, 1.0, 0.16) : root.theme.pillBackground)
+                border.color: audioPill.activeFocus ? root.theme.borderFocusColor : root.theme.pillBorder
+                border.width: audioPill.activeFocus ? 2 : 1
+
+                RowLayout {
+                    id: audioRow
+                    anchors.centerIn: parent
+                    spacing: Kirigami.Units.smallSpacing / 2
+
+                    PlasmaCore.IconItem {
+                        Layout.preferredWidth: Kirigami.Units.iconSizes.small * 0.85
+                        Layout.preferredHeight: width
+                        source: root.isBluetoothAudio ? "audio-headset" : "audio-speakers"
+                    }
+
+                    Controls.Label {
+                        text: root.isBluetoothAudio ? "Audio: BT" : "Audio: HDMI"
+                        font.bold: true
+                        font.pixelSize: Kirigami.Units.gridUnit * 0.72
+                        color: root.theme.textColor
+                    }
+                }
+
+                MouseArea {
+                    id: audioMouse
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: root.toggleAudioSink()
+                }
+
+                Keys.onReturnPressed: root.toggleAudioSink()
+                Keys.onSelectPressed: root.toggleAudioSink()
+                KeyNavigation.right: themePill
+                KeyNavigation.down: launcher
+            }
+
+            // In-UI Theme Switcher Pill
+            Rectangle {
+                id: themePill
+                activeFocusOnTab: true
+                Layout.preferredHeight: topBar.height - Kirigami.Units.smallSpacing * 2
+                Layout.preferredWidth: themeRow.implicitWidth + Kirigami.Units.largeSpacing * 1.5
+                radius: root.theme.pillRadius
+                color: themePill.activeFocus ? root.theme.pillFocusedBackground : (themeMouse.containsMouse ? Qt.rgba(1.0, 1.0, 1.0, 0.16) : root.theme.pillBackground)
+                border.color: themePill.activeFocus ? root.theme.borderFocusColor : root.theme.pillBorder
+                border.width: themePill.activeFocus ? 2 : 1
+
+                RowLayout {
+                    id: themeRow
+                    anchors.centerIn: parent
+                    spacing: Kirigami.Units.smallSpacing / 2
+
+                    PlasmaCore.IconItem {
+                        Layout.preferredWidth: Kirigami.Units.iconSizes.small * 0.8
+                        Layout.preferredHeight: width
+                        source: "preferences-desktop-theme"
+                    }
+
+                    Controls.Label {
+                        text: root.theme.palettes[root.theme.activeThemeName] ? root.theme.palettes[root.theme.activeThemeName].name : "Theme"
+                        font.bold: true
+                        font.pixelSize: Kirigami.Units.gridUnit * 0.72
+                        color: root.theme.textColor
+                    }
+                }
+
+                MouseArea {
+                    id: themeMouse
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: root.cycleTheme()
+                }
+
+                Keys.onReturnPressed: root.cycleTheme()
+                Keys.onSelectPressed: root.cycleTheme()
+                KeyNavigation.left: audioPill
+                KeyNavigation.right: switchAppsBtn
+                KeyNavigation.down: launcher
+            }
 
             // Task Controls Pill: App Switcher (Alt+Tab) and Close Active Window (✕)
             Rectangle {
@@ -342,10 +460,11 @@ Item {
                     // Switch Apps Button (Alt+Tab)
                     Rectangle {
                         id: switchAppsBtn
+                        activeFocusOnTab: true
                         Layout.fillHeight: true
                         Layout.preferredWidth: switchRow.implicitWidth + Kirigami.Units.largeSpacing
                         radius: root.theme.pillRadius
-                        color: switchAppsBtn.activeFocus ? root.theme.pillFocusedBackground : (switchMouse.containsMouse ? Qt.rgba(1.0, 1.0, 1.0, 0.12) : "transparent")
+                        color: switchAppsBtn.activeFocus ? root.theme.pillFocusedBackground : (switchMouse.containsMouse ? Qt.rgba(1.0, 1.0, 1.0, 0.14) : "transparent")
                         border.color: switchAppsBtn.activeFocus ? root.theme.borderFocusColor : "transparent"
                         border.width: switchAppsBtn.activeFocus ? 2 : 0
 
@@ -372,11 +491,13 @@ Item {
                             id: switchMouse
                             anchors.fill: parent
                             hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
                             onClicked: root.triggerAltTab()
                         }
 
                         Keys.onReturnPressed: root.triggerAltTab()
                         Keys.onSelectPressed: root.triggerAltTab()
+                        KeyNavigation.left: themePill
                         KeyNavigation.right: closeAppBtn
                         KeyNavigation.down: launcher
                     }
@@ -384,10 +505,11 @@ Item {
                     // Close Active App Button (✕)
                     Rectangle {
                         id: closeAppBtn
+                        activeFocusOnTab: true
                         Layout.fillHeight: true
                         Layout.preferredWidth: closeRow.implicitWidth + Kirigami.Units.largeSpacing
                         radius: root.theme.pillRadius
-                        color: closeAppBtn.activeFocus ? Qt.rgba(0.94, 0.25, 0.25, 0.40) : (closeMouse.containsMouse ? Qt.rgba(0.94, 0.25, 0.25, 0.22) : "transparent")
+                        color: closeAppBtn.activeFocus ? Qt.rgba(0.94, 0.25, 0.25, 0.40) : (closeMouse.containsMouse ? Qt.rgba(0.94, 0.25, 0.25, 0.25) : "transparent")
                         border.color: closeAppBtn.activeFocus ? "#ef4444" : "transparent"
                         border.width: closeAppBtn.activeFocus ? 2 : 0
 
@@ -414,6 +536,7 @@ Item {
                             id: closeMouse
                             anchors.fill: parent
                             hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
                             onClicked: root.triggerCloseApp()
                         }
 
@@ -453,8 +576,8 @@ Item {
                         KeyNavigation.down: launcher
                         KeyNavigation.right: volumeIndicator
                         KeyNavigation.tab: volumeIndicator
-                        KeyNavigation.backtab: launcher
-                        KeyNavigation.left: kdeconnectIndicator
+                        KeyNavigation.backtab: closeAppBtn
+                        KeyNavigation.left: closeAppBtn
                     }
 
                     Indicators.Volume {
@@ -464,7 +587,7 @@ Item {
                         KeyNavigation.down: launcher
                         KeyNavigation.right: wifiIndicator
                         KeyNavigation.tab: wifiIndicator
-                        KeyNavigation.backtab: launcher
+                        KeyNavigation.backtab: kdeconnectIndicator
                         KeyNavigation.left: kdeconnectIndicator
                     }
 
@@ -484,8 +607,8 @@ Item {
                         Layout.fillHeight: true
                         implicitWidth: height
                         KeyNavigation.down: launcher
-                        KeyNavigation.right: launcher
-                        KeyNavigation.tab: launcher
+                        KeyNavigation.right: audioPill
+                        KeyNavigation.tab: audioPill
                         KeyNavigation.backtab: wifiIndicator
                         KeyNavigation.left: wifiIndicator
                     }
@@ -502,9 +625,39 @@ Item {
         onTriggered: updateDateTime()
     }
 
+    // Weather periodic poll timer
+    Timer {
+        id: weatherTimer
+        interval: 30000
+        running: true
+        repeat: true
+        triggeredOnStart: true
+        onTriggered: updateWeather()
+    }
+
+    function updateWeather() {
+        var paths = ["/run/tvpc-weather.json", "/tmp/tvpc-weather.json"];
+        for (var i = 0; i < paths.length; i++) {
+            var xhr = new XMLHttpRequest();
+            xhr.open("GET", "file://" + paths[i], true);
+            xhr.onreadystatechange = function() {
+                if (xhr.readyState === XMLHttpRequest.DONE && (xhr.status === 200 || xhr.status === 0)) {
+                    try {
+                        var d = JSON.parse(xhr.responseText);
+                        if (d && d.temp) {
+                            root.weatherTemp = d.temp;
+                            if (d.icon) root.weatherIcon = d.icon;
+                        }
+                    } catch (e) {}
+                }
+            };
+            try { xhr.send(); } catch (e) {}
+        }
+    }
+
     function updateDateTime() {
         var now = new Date();
-        clockTime.text = Qt.formatTime(now, "hh:mm AP");
+        clockTime.text = Qt.formatTime(now, "h:mm AP");
         clockDate.text = Qt.formatDate(now, "dddd, MMM d");
     }
 
@@ -519,6 +672,47 @@ Item {
         BigScreen.NavigationSoundEffects.playClickedSound();
         if (plasmoid && plasmoid.nativeInterface && typeof plasmoid.nativeInterface.executeCommand === "function") {
             plasmoid.nativeInterface.executeCommand("qdbus org.kde.kglobalaccel /component/kwin invokeShortcut 'Window Close'");
+        }
+    }
+
+    function toggleAudioSink() {
+        BigScreen.NavigationSoundEffects.playClickedSound();
+        isBluetoothAudio = !isBluetoothAudio;
+        if (plasmoid && plasmoid.nativeInterface && typeof plasmoid.nativeInterface.executeCommand === "function") {
+            plasmoid.nativeInterface.executeCommand("pactl set-default-sink $(pactl list short sinks | awk '{print $2}' | grep -v $(pactl get-default-sink) | head -1) 2>/dev/null || true");
+        }
+    }
+
+    function cycleTheme() {
+        BigScreen.NavigationSoundEffects.playClickedSound();
+        root.theme.cycleTheme();
+    }
+
+    function triggerCameraPip() {
+        BigScreen.NavigationSoundEffects.playClickedSound();
+        if (plasmoid && plasmoid.nativeInterface && typeof plasmoid.nativeInterface.executeCommand === "function") {
+            plasmoid.nativeInterface.executeCommand("tvpc-cameras toggle-pip 0 2>/dev/null || true");
+        }
+    }
+
+    function triggerCameraCycle() {
+        BigScreen.NavigationSoundEffects.playClickedSound();
+        if (plasmoid && plasmoid.nativeInterface && typeof plasmoid.nativeInterface.executeCommand === "function") {
+            plasmoid.nativeInterface.executeCommand("tvpc-cameras cycle 2>/dev/null || true");
+        }
+    }
+
+    function triggerCameraGrid() {
+        BigScreen.NavigationSoundEffects.playClickedSound();
+        if (plasmoid && plasmoid.nativeInterface && typeof plasmoid.nativeInterface.executeCommand === "function") {
+            plasmoid.nativeInterface.executeCommand("tvpc-cameras toggle-grid 2>/dev/null || true");
+        }
+    }
+
+    function triggerCameraGui() {
+        BigScreen.NavigationSoundEffects.playClickedSound();
+        if (plasmoid && plasmoid.nativeInterface && typeof plasmoid.nativeInterface.executeCommand === "function") {
+            plasmoid.nativeInterface.executeCommand("tvpc-cameras-gui 2>/dev/null || true");
         }
     }
 
@@ -654,13 +848,142 @@ Item {
 
                 Item { Layout.fillWidth: true }
 
+                // Samsung TV Remote Color Buttons (HDMI-CEC)
+                RowLayout {
+                    spacing: Kirigami.Units.smallSpacing
+                    Rectangle {
+                        height: Kirigami.Units.gridUnit * 1.15
+                        width: redHint.implicitWidth + Kirigami.Units.smallSpacing * 2
+                        radius: root.theme.badgeRadius
+                        color: redMouse.containsMouse ? Qt.rgba(0.94, 0.25, 0.25, 0.45) : Qt.rgba(0.94, 0.25, 0.25, 0.25)
+                        border.color: "#ef4444"
+                        border.width: 1
+                        Controls.Label {
+                            id: redHint
+                            anchors.centerIn: parent
+                            text: "🔴 PiP"
+                            font.bold: true
+                            font.pixelSize: Kirigami.Units.gridUnit * 0.65
+                            color: "#fca5a5"
+                        }
+                    }
+                    Controls.Label {
+                        text: i18n("Cam PiP")
+                        font.pixelSize: Kirigami.Units.gridUnit * 0.72
+                        color: root.theme.textMutedColor
+                    }
+                    MouseArea {
+                        id: redMouse
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: root.triggerCameraPip()
+                    }
+                }
+
+                RowLayout {
+                    spacing: Kirigami.Units.smallSpacing
+                    Rectangle {
+                        height: Kirigami.Units.gridUnit * 1.15
+                        width: yellowHint.implicitWidth + Kirigami.Units.smallSpacing * 2
+                        radius: root.theme.badgeRadius
+                        color: yellowMouse.containsMouse ? Qt.rgba(0.92, 0.70, 0.03, 0.45) : Qt.rgba(0.92, 0.70, 0.03, 0.25)
+                        border.color: "#eab308"
+                        border.width: 1
+                        Controls.Label {
+                            id: yellowHint
+                            anchors.centerIn: parent
+                            text: "🟡 Cycle"
+                            font.bold: true
+                            font.pixelSize: Kirigami.Units.gridUnit * 0.65
+                            color: "#fef08a"
+                        }
+                    }
+                    Controls.Label {
+                        text: i18n("Cycle Feeds")
+                        font.pixelSize: Kirigami.Units.gridUnit * 0.72
+                        color: root.theme.textMutedColor
+                    }
+                    MouseArea {
+                        id: yellowMouse
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: root.triggerCameraCycle()
+                    }
+                }
+
+                RowLayout {
+                    spacing: Kirigami.Units.smallSpacing
+                    Rectangle {
+                        height: Kirigami.Units.gridUnit * 1.15
+                        width: blueHint.implicitWidth + Kirigami.Units.smallSpacing * 2
+                        radius: root.theme.badgeRadius
+                        color: blueMouse.containsMouse ? Qt.rgba(0.23, 0.51, 0.96, 0.45) : Qt.rgba(0.23, 0.51, 0.96, 0.25)
+                        border.color: "#3b82f6"
+                        border.width: 1
+                        Controls.Label {
+                            id: blueHint
+                            anchors.centerIn: parent
+                            text: "🔵 Grid"
+                            font.bold: true
+                            font.pixelSize: Kirigami.Units.gridUnit * 0.65
+                            color: "#93c5fd"
+                        }
+                    }
+                    Controls.Label {
+                        text: i18n("2x2 View")
+                        font.pixelSize: Kirigami.Units.gridUnit * 0.72
+                        color: root.theme.textMutedColor
+                    }
+                    MouseArea {
+                        id: blueMouse
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: root.triggerCameraGrid()
+                    }
+                }
+
+                RowLayout {
+                    spacing: Kirigami.Units.smallSpacing
+                    Rectangle {
+                        height: Kirigami.Units.gridUnit * 1.15
+                        width: toolsHint.implicitWidth + Kirigami.Units.smallSpacing * 2
+                        radius: root.theme.badgeRadius
+                        color: toolsMouse.containsMouse ? Qt.rgba(0.66, 0.33, 0.97, 0.45) : Qt.rgba(0.66, 0.33, 0.97, 0.25)
+                        border.color: "#a855f7"
+                        border.width: 1
+                        Controls.Label {
+                            id: toolsHint
+                            anchors.centerIn: parent
+                            text: "🛠️ Tools"
+                            font.bold: true
+                            font.pixelSize: Kirigami.Units.gridUnit * 0.65
+                            color: "#d8b4fe"
+                        }
+                    }
+                    Controls.Label {
+                        text: i18n("NVR GUI")
+                        font.pixelSize: Kirigami.Units.gridUnit * 0.72
+                        color: root.theme.textMutedColor
+                    }
+                    MouseArea {
+                        id: toolsMouse
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: root.triggerCameraGui()
+                    }
+                }
+
                 RowLayout {
                     spacing: Kirigami.Units.smallSpacing
                     Rectangle {
                         height: Kirigami.Units.gridUnit * 1.15
                         width: switchHint.implicitWidth + Kirigami.Units.smallSpacing * 2
                         radius: root.theme.badgeRadius
-                        color: root.theme.pillBackground
+                        color: switchHintMouse.containsMouse ? root.theme.pillFocusedBackground : root.theme.pillBackground
                         border.color: root.theme.pillBorder
                         border.width: 1
                         Controls.Label {
@@ -678,8 +1001,10 @@ Item {
                         color: root.theme.textMutedColor
                     }
                     MouseArea {
+                        id: switchHintMouse
                         anchors.fill: parent
                         hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
                         onClicked: root.triggerAltTab()
                     }
                 }
@@ -690,7 +1015,7 @@ Item {
                         height: Kirigami.Units.gridUnit * 1.15
                         width: closeHint.implicitWidth + Kirigami.Units.smallSpacing * 2
                         radius: root.theme.badgeRadius
-                        color: Qt.rgba(0.94, 0.25, 0.25, 0.25)
+                        color: closeHintMouse.containsMouse ? Qt.rgba(0.94, 0.25, 0.25, 0.45) : Qt.rgba(0.94, 0.25, 0.25, 0.25)
                         border.color: "#ef4444"
                         border.width: 1
                         Controls.Label {
@@ -708,8 +1033,10 @@ Item {
                         color: root.theme.textMutedColor
                     }
                     MouseArea {
+                        id: closeHintMouse
                         anchors.fill: parent
                         hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
                         onClicked: root.triggerCloseApp()
                     }
                 }

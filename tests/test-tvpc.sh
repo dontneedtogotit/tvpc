@@ -202,20 +202,41 @@ echo "Theme tests passed."
 
 echo "== 4. Layout, Dock, and Add Apps Tests =="
 grep -q "singleRowContainer" "$OVERLAY/contents/ui/launcher/LauncherHome.qml" || fail "LauncherHome.qml missing singleRowContainer"
+grep -q "favoritesView" "$OVERLAY/contents/ui/launcher/LauncherHome.qml" || fail "LauncherHome.qml missing favoritesView"
+grep -q "nowPlayingActive" "$OVERLAY/contents/ui/launcher/LauncherHome.qml" || fail "LauncherHome.qml missing nowPlayingActive"
 grep -q "topBarHeight" "$OVERLAY/contents/ui/main.qml" || fail "main.qml missing topBarHeight"
+grep -q "audioPill" "$OVERLAY/contents/ui/main.qml" || fail "main.qml missing audioPill"
+grep -q "weatherRow" "$OVERLAY/contents/ui/main.qml" || fail "main.qml missing weatherRow"
+grep -q "redHint" "$OVERLAY/contents/ui/main.qml" || fail "main.qml missing redHint (Samsung CEC color button)"
+grep -q "blueHint" "$OVERLAY/contents/ui/main.qml" || fail "main.qml missing blueHint (Samsung CEC color button)"
 grep -q "tvpc-addapps" "$ROOT/scripts/tvpc.sh" || fail "tvpc.sh missing tvpc-addapps"
 grep -q "tvpc-addapps.desktop" "$ROOT/install.sh" || fail "install.sh missing tvpc-addapps.desktop"
 grep -q "noborder=true" "$ROOT/install.sh" || fail "install.sh missing noborder=true for vacuumtube"
 
+# VacuumTube background playback assertions
+grep -q "disable-renderer-backgrounding" "$ROOT/install.sh" || fail "install.sh missing disable-renderer-backgrounding"
+grep -q "disable-backgrounding-occluded-windows" "$ROOT/scripts/tvpc.sh" || fail "tvpc.sh missing disable-backgrounding-occluded-windows"
+grep -q "visibilitychange" "$ROOT/scripts/tvpc.sh" || fail "tvpc.sh missing visibilitychange hook in vacuumtube preload"
+
+# CEC Anynet+ remote assertions
+grep -q "\-t p" "$ROOT/scripts/tvpc.sh" || fail "tvpc.sh missing cec-client -t p (Playback device)"
+grep -q "tvpc-cec.fifo" "$ROOT/scripts/tvpc.sh" || fail "tvpc.sh missing tvpc-cec.fifo active source management"
+grep -q "exec 3<>" "$ROOT/scripts/tvpc.sh" || fail "tvpc.sh missing persistent FIFO descriptor 3"
+grep -q "sleep 0.04" "$ROOT/scripts/tvpc.sh" || fail "tvpc.sh missing 40ms key delay in send_key"
+
 # App launcher delegate reliability assertions
 grep -q "property var modelData: null" "$OVERLAY/contents/ui/launcher/delegates/ModernCardDelegate.qml" || fail "ModernCardDelegate missing modelData declaration"
+grep -q "property bool isRunning" "$OVERLAY/contents/ui/launcher/delegates/ModernCardDelegate.qml" || fail "ModernCardDelegate missing isRunning declaration"
+grep -q "property bool isFavorite" "$OVERLAY/contents/ui/launcher/delegates/ModernCardDelegate.qml" || fail "ModernCardDelegate missing isFavorite declaration"
+grep -q "updateWeather" "$OVERLAY/contents/ui/main.qml" || fail "main.qml missing updateWeather method"
+grep -q "KeyNavigation.left: closeAppBtn" "$OVERLAY/contents/ui/main.qml" || fail "main.qml missing indicator left navigation to closeAppBtn"
 grep -q "property var modelData: null" "$OVERLAY/contents/ui/launcher/delegates/AppDelegate.qml" || fail "AppDelegate missing modelData declaration"
 grep -q "targetStorageId" "$OVERLAY/contents/ui/launcher/delegates/AppDelegate.qml" || fail "AppDelegate missing targetStorageId safe launch"
 grep -q "startupFeedbackTimeout" "$OVERLAY/contents/ui/launcher/delegates/AppDelegate.qml" || fail "AppDelegate missing startup feedback safety timeout"
 grep -q "targetKcmId" "$OVERLAY/contents/ui/launcher/delegates/SettingDelegate.qml" || fail "SettingDelegate missing targetKcmId safe launch"
 grep -q "vAppStorageIdRole" "$OVERLAY/contents/ui/launcher/delegates/VoiceAppDelegate.qml" || fail "VoiceAppDelegate missing vAppStorageIdRole safe launch"
 
-echo "Layout and dock tests passed."
+echo "Layout, dock, CEC, and background playback tests passed."
 
 echo "== 5. Hyprland Config Validation =="
 CONFIG="$ROOT/config/hypr/hyprland.lua"

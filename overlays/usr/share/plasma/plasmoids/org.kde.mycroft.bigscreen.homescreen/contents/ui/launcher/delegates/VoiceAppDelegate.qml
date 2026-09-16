@@ -42,6 +42,17 @@ ModernCardDelegate {
         return "";
     }
 
+    onActiveFocusChanged: {
+        if (activeFocus && typeof launcherHomeRoot !== "undefined" && launcherHomeRoot.updateSpotlight) {
+            launcherHomeRoot.updateSpotlight(title, iconSource, comment, subtitle, ["VOICE ASSISTANT", "MICROPHONE", "AI SKILL"]);
+        }
+    }
+    onIsCurrentChanged: {
+        if (isCurrent && typeof launcherHomeRoot !== "undefined" && launcherHomeRoot.updateSpotlight) {
+            launcherHomeRoot.updateSpotlight(title, iconSource, comment, subtitle, ["VOICE ASSISTANT", "MICROPHONE", "AI SKILL"]);
+        }
+    }
+
     onClicked: {
         BigScreen.NavigationSoundEffects.playClickedSound();
         if (vAppStorageIdRole && plasmoid && plasmoid.nativeInterface && plasmoid.nativeInterface.applicationListModel) {
