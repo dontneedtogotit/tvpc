@@ -207,13 +207,36 @@ ModernCardDelegate {
 
         var targetStorageId = (appStorageIdRole ? appStorageIdRole.toString() : "");
         var targetExec = (appEntryPathRole ? appEntryPathRole.toString() : "");
+        var cleanId = targetStorageId.replace(/\.desktop$/i, "");
+        var appTitleLower = (title ? title.toString().toLowerCase() : "");
 
         if (isRecent && typeof recentView !== "undefined" && recentView.model && typeof recentView.model.trigger === "function") {
             recentView.model.trigger(index, "", null);
-        } else if (targetStorageId.length > 0 && plasmoid && plasmoid.nativeInterface && plasmoid.nativeInterface.applicationListModel) {
-            plasmoid.nativeInterface.applicationListModel.runApplication(targetStorageId);
-        } else if (targetExec.length > 0 && plasmoid && plasmoid.nativeInterface && plasmoid.nativeInterface.applicationListModel && typeof plasmoid.nativeInterface.applicationListModel.executeCommand === "function") {
-            plasmoid.nativeInterface.applicationListModel.executeCommand(targetExec);
+        } else {
+            var nativeRan = false;
+            if (targetStorageId.length > 0 && plasmoid && plasmoid.nativeInterface && plasmoid.nativeInterface.applicationListModel && typeof plasmoid.nativeInterface.applicationListModel.runApplication === "function") {
+                try {
+                    plasmoid.nativeInterface.applicationListModel.runApplication(targetStorageId);
+                    nativeRan = true;
+                } catch (e) {
+                    console.warn("runApplication failed: " + e);
+                }
+            }
+
+            // Fallback / direct runner for desktop environments & standalone apps (Cameras, Chromium, etc.)
+            if (plasmoid && plasmoid.nativeInterface && typeof plasmoid.nativeInterface.executeCommand === "function") {
+                if (cleanId === "tvpc-cameras-gui" || cleanId.indexOf("camera") !== -1 || appTitleLower.indexOf("camera") !== -1 || appTitleLower.indexOf("nvr") !== -1) {
+                    plasmoid.nativeInterface.executeCommand("tvpc-cameras-gui 2>/dev/null || ~/.local/bin/tvpc-cameras-gui 2>/dev/null || /usr/local/bin/tvpc cameras gui 2>/dev/null || python3 -m tvpc_cameras_gui 2>/dev/null || true");
+                } else if (cleanId === "chromium" || cleanId.indexOf("chromium") !== -1 || appTitleLower.indexOf("chromium") !== -1) {
+                    plasmoid.nativeInterface.executeCommand("gtk-launch chromium 2>/dev/null || gio launch /usr/share/applications/chromium.desktop 2>/dev/null || chromium 2>/dev/null || true");
+                } else if (!nativeRan) {
+                    if (targetExec.length > 0) {
+                        plasmoid.nativeInterface.executeCommand("gio launch \"" + targetExec + "\" 2>/dev/null || gtk-launch \"" + cleanId + "\" 2>/dev/null || kioclient5 exec \"" + targetStorageId + "\" 2>/dev/null || true");
+                    } else if (cleanId.length > 0) {
+                        plasmoid.nativeInterface.executeCommand("gtk-launch \"" + cleanId + "\" 2>/dev/null || kioclient5 exec \"" + targetStorageId + "\" 2>/dev/null || \"" + cleanId + "\" 2>/dev/null || true");
+                    }
+                }
+            }
         }
 
         if (typeof recentView !== "undefined" && recentView.visible && recentView.count > 0) {

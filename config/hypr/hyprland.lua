@@ -97,9 +97,10 @@ hl.config({
     },
 
     input = {
-        kb_layout    = "us",
-        follow_mouse = 1,
-        sensitivity  = 0,
+        kb_layout     = "us",
+        follow_mouse  = 1,
+        sensitivity   = 0.35,
+        accel_profile = "flat",
 
         -- No touchpad on a NUC, but harmless if a wireless keyboard has one.
         touchpad = { natural_scroll = false },
@@ -156,11 +157,16 @@ hl.bind(MOD .. " + F",      hl.dsp.window.fullscreen({ mode = "fullscreen", acti
 hl.bind(MOD .. " + M",      hl.dsp.exec_cmd("tvpc-hypr-menu power"))
 
 -- Cycle apps: with monocle this is how you get "back to the other thing".
-hl.bind(MOD .. " + Tab",   hl.dsp.focus({ last = true }))
-hl.bind(MOD .. " + left",  hl.dsp.focus({ direction = "left" }))
-hl.bind(MOD .. " + right", hl.dsp.focus({ direction = "right" }))
-hl.bind(MOD .. " + up",    hl.dsp.focus({ direction = "up" }))
-hl.bind(MOD .. " + down",  hl.dsp.focus({ direction = "down" }))
+hl.bind(MOD .. " + Tab",     hl.dsp.focus({ last = true }))
+hl.bind("ALT + Tab",         hl.dsp.exec_cmd("hyprctl dispatch cyclenext"))
+hl.bind("ALT + SHIFT + Tab", hl.dsp.exec_cmd("hyprctl dispatch cyclenext prev"))
+hl.bind("ALT + Escape",      hl.dsp.exec_cmd("tvpc-hypr-menu"))
+hl.bind(MOD .. " + Escape",   hl.dsp.exec_cmd("tvpc-hypr-menu"))
+hl.bind("ALT + F4",          hl.dsp.window.close())
+hl.bind(MOD .. " + left",    hl.dsp.focus({ direction = "left" }))
+hl.bind(MOD .. " + right",   hl.dsp.focus({ direction = "right" }))
+hl.bind(MOD .. " + up",      hl.dsp.focus({ direction = "up" }))
+hl.bind(MOD .. " + down",    hl.dsp.focus({ direction = "down" }))
 
 -- Volume and transport, for a USB/Bluetooth keyboard. The remote's own
 -- volume and media keys are handled in the CEC listener instead, because

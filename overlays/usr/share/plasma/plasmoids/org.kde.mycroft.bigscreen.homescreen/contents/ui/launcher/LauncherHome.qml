@@ -48,6 +48,103 @@ FocusScope {
         }
     }
 
+    function getVisibleRows() {
+        var all = [favoritesView, recentView, mediaView, gamesView, appsView, voiceAppsView, settingsView];
+        var vis = [];
+        for (var i = 0; i < all.length; i++) {
+            if (all[i] && all[i].visible && (typeof all[i].count === "undefined" || all[i].count > 0)) {
+                vis.push(all[i]);
+            }
+        }
+        return vis;
+    }
+
+    function scrollRows(direction) {
+        var rows = getVisibleRows();
+        if (rows.length === 0) return;
+        var curr = singleRowContainer.currentSection;
+        var idx = -1;
+        for (var i = 0; i < rows.length; i++) {
+            if (rows[i] === curr) {
+                idx = i;
+                break;
+            }
+        }
+        if (idx === -1) {
+            for (var j = 0; j < rows.length; j++) {
+                if (rows[j].activeFocus) {
+                    idx = j;
+                    break;
+                }
+            }
+            if (idx === -1) idx = 0;
+        }
+
+        var nextIdx = idx + direction;
+        if (nextIdx < 0) nextIdx = 0;
+        if (nextIdx >= rows.length) nextIdx = rows.length - 1;
+
+        var targetRow = rows[nextIdx];
+        if (targetRow) {
+            singleRowContainer.currentSection = targetRow;
+            targetRow.forceActiveFocus();
+        }
+    }
+
+    function scrollCurrentRowHorizontal(direction) {
+        var curr = singleRowContainer.currentSection;
+        if (!curr) {
+            var rows = getVisibleRows();
+            if (rows.length > 0) curr = rows[0];
+        }
+        if (!curr) return;
+
+        if (typeof curr.currentIndex !== "undefined") {
+            var count = typeof curr.count !== "undefined" ? curr.count : 0;
+            var newIdx = curr.currentIndex + direction;
+            if (newIdx >= 0 && (count === 0 || newIdx < count)) {
+                curr.currentIndex = newIdx;
+            }
+        }
+    }
+
+    function resetToTop() {
+        if (favoritesView.visible && favoritesView.count > 0) {
+            favoritesView.currentIndex = 0;
+            singleRowContainer.currentSection = favoritesView;
+            favoritesView.forceActiveFocus();
+            if (typeof root !== "undefined") root.currentSectionTitle = i18n("Favorites & Pinned");
+        } else if (mediaView.visible && mediaView.count > 0) {
+            mediaView.currentIndex = 0;
+            singleRowContainer.currentSection = mediaView;
+            mediaView.forceActiveFocus();
+            if (typeof root !== "undefined") root.currentSectionTitle = i18n("Videos & Streaming");
+        }
+    }
+
+    Keys.onPressed: {
+        if (event.key === Qt.Key_Home) {
+            resetToTop();
+            event.accepted = true;
+        }
+    }
+
+    MouseArea {
+        id: homeWheelArea
+        anchors.fill: parent
+        z: -1
+        acceptedButtons: Qt.NoButton
+        onWheel: {
+            if (wheel.angleDelta.y !== 0) {
+                launcherHomeRoot.scrollRows(wheel.angleDelta.y < 0 ? 1 : -1);
+                wheel.accepted = true;
+            } else if (wheel.angleDelta.x !== 0) {
+                launcherHomeRoot.scrollCurrentRowHorizontal(wheel.angleDelta.x < 0 ? 1 : -1);
+                wheel.accepted = true;
+            }
+        }
+    }
+
     onActiveFocusChanged: {
         if (activeFocus) {
             if (singleRowContainer && singleRowContainer.currentSection && singleRowContainer.currentSection.visible) {

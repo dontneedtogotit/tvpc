@@ -1264,6 +1264,7 @@ MultiScreenMode=0
 OrderMinimizedMode=0
 ShowDelay=false
 ShowDesktop=true
+ShowDesktopMode=1
 SwitchingMode=0
 EOF
     else
@@ -1290,8 +1291,12 @@ MultiScreenMode=0
 OrderMinimizedMode=0
 ShowDelay=false
 ShowDesktop=true
+ShowDesktopMode=1
 SwitchingMode=0
 EOF
+        else
+            grep -q 'ShowDesktopMode=' "$kwinrc" || sed -i '/^\[TabBox\]/a ShowDesktopMode=1' "$kwinrc"
+            grep -q 'ShowDesktop=' "$kwinrc" || sed -i '/^\[TabBox\]/a ShowDesktop=true' "$kwinrc"
         fi
     fi
 
@@ -1304,12 +1309,12 @@ Walk Through Windows (Reverse)=Alt+Shift+Tab,Alt+Shift+Backtab,Walk Through Wind
 Walk Through Windows Alternative=none,,Walk Through Windows Alternative
 Walk Through Windows Alternative (Reverse)=none,,Walk Through Windows Alternative (Reverse)
 Window Close=Alt+F4,Alt+F4,Close Window
-Show Desktop=Meta+D,Meta+D,Show Desktop
+Show Desktop=Meta+D\tAlt+Escape,Meta+D,Show Desktop
 EOF
     else
         if ! grep -q 'Walk Through Windows=' "$kg"; then
             if grep -q '^\[kwin\]' "$kg"; then
-                sed -i '/^\[kwin\]/a Walk Through Windows=Alt+Tab,Alt+Tab,Walk Through Windows\nWalk Through Windows (Reverse)=Alt+Shift+Tab,Alt+Shift+Backtab,Walk Through Windows (Reverse)\nWindow Close=Alt+F4,Alt+F4,Close Window' "$kg"
+                sed -i '/^\[kwin\]/a Walk Through Windows=Alt+Tab,Alt+Tab,Walk Through Windows\nWalk Through Windows (Reverse)=Alt+Shift+Tab,Alt+Shift+Backtab,Walk Through Windows (Reverse)\nWindow Close=Alt+F4,Alt+F4,Close Window\nShow Desktop=Meta+D\tAlt+Escape,Meta+D,Show Desktop' "$kg"
             else
                 cat >>"$kg" <<'EOF'
 
@@ -1317,6 +1322,7 @@ EOF
 Walk Through Windows=Alt+Tab,Alt+Tab,Walk Through Windows
 Walk Through Windows (Reverse)=Alt+Shift+Tab,Alt+Shift+Backtab,Walk Through Windows (Reverse)
 Window Close=Alt+F4,Alt+F4,Close Window
+Show Desktop=Meta+D\tAlt+Escape,Meta+D,Show Desktop
 EOF
             fi
         fi
@@ -5437,11 +5443,12 @@ add_network_tiles() {
 [Desktop Entry]
 Type=Application
 Name=Wi-Fi
-Comment=Network settings
-Exec=kcmshell5 kcm_networkmanagement
+Comment=Wireless network settings and connections
+Exec=tvpc gui wifi
 Terminal=false
 Icon=network-wireless
 Categories=Settings;Network;
+Keywords=wifi;network;wireless;internet;settings;
 EOF
     cat >"$tile_dir/tvpc-bluetooth.desktop" <<'EOF'
 [Desktop Entry]
@@ -5863,12 +5870,51 @@ plugin_manager() {
     done
 }
 
-cmd_wifi() {
-    if [[ -t 0 ]]; then
-        kcmshell5 kcm_networkmanagement 2>/dev/null || echo "kcm_networkmanagement not available"
-    else
-        echo "Run from a TTY or GUI" >&2
+gui_wifi() {
+    local script_dir; script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    local repo_dir; repo_dir="$(cd "$script_dir/.." && pwd)"
+    local py_cand=()
+    py_cand+=("$repo_dir/tvpc_wifi_gui.py")
+    py_cand+=("/usr/local/share/tvpc/tvpc_wifi_gui.py")
+    py_cand+=("/usr/share/tvpc/tvpc_wifi_gui.py")
+    py_cand+=("${HOME}/.local/share/tvpc/tvpc_wifi_gui.py")
+
+    local py_script=""
+    for cand in "${py_cand[@]}"; do
+        if [[ -f "$cand" ]]; then
+            py_script="$cand"
+            break
+        fi
+    done
+
+    local py_bin; py_bin="$(command -v python3 || command -v python)"
+    if [[ -n "$py_script" && -n "$py_bin" ]]; then
+        if "$py_bin" -c "import PySide6" >/dev/null 2>&1; then
+            exec "$py_bin" "$py_script" "$@"
+        fi
     fi
+
+    # Fallbacks: plasma-settings / kcmshell5 / zenity / nmtui
+    if command -v plasma-settings >/dev/null 2>&1; then
+        exec plasma-settings -s -m kcm_mediacenter_wifi
+    elif command -v kcmshell5 >/dev/null 2>&1; then
+        exec kcmshell5 kcm_networkmanagement
+    elif command -v zenity >/dev/null 2>&1 && [[ -n "${DISPLAY:-}" || -n "${WAYLAND_DISPLAY:-}" ]]; then
+        local st; st="$(nmcli -t -f DEVICE,TYPE,STATE,CONNECTION dev 2>/dev/null | grep wifi | head -1 || true)"
+        local ssid; ssid="$(echo "$st" | cut -d: -f4)"
+        local dev; dev="$(echo "$st" | cut -d: -f1)"
+        local msg="Wi-Fi Device: ${dev:-None}\nConnected to: ${ssid:-Not connected}"
+        zenity --info --title="Wi-Fi Settings" --text="$msg" 2>/dev/null || true
+    elif [[ -t 0 ]] && command -v nmtui >/dev/null 2>&1; then
+        exec nmtui-connect
+    else
+        echo "No GUI available for Wi-Fi settings" >&2
+        return 1
+    fi
+}
+
+cmd_wifi() {
+    gui_wifi "$@"
 }
 
 cmd_bluetooth() {
@@ -6906,6 +6952,10 @@ pick_and_run
 subcmd_gui() {
   local dialog="${1:-}"
   case "$dialog" in
+    wifi)
+      shift
+      gui_wifi "$@"
+      ;;
     setup)
       shift
       gui_setup "$@"
@@ -6926,7 +6976,7 @@ subcmd_gui() {
       subcmd_tweaks ""
       ;;
     *)
-      echo "Unknown GUI dialog: $dialog (expected: setup, update, power, allapps, tweaks)" >&2
+      echo "Unknown GUI dialog: $dialog (expected: wifi, setup, update, power, allapps, tweaks)" >&2
       exit 1
       ;;
   esac
@@ -6948,20 +6998,21 @@ Commands:
   bigscreen    Plasma Bigscreen setup, UI scaling, topbar, app hiding
   theme        Bigscreen themes (list, status, set, preview, install, revert)
   cameras      Security camera suite (list, stream, snap, record, gui, tile, pip, grid)
+  wifi         Wi-Fi settings & network connection manager (nmcli GUI)
   hyprland     Hyprland TV session installer, menu, autostart
   controller   Gamepad, Bluetooth, and remote controller pairing & status
   doctor       Appliance hardware and configuration diagnostic checks
   repair       System recovery & boot repair tool (--check, --logs, repair)
   status       Couch dashboard and system status monitor
   tweaks       System tweaks & customisation (cec-list, cec-get, cec-set, scale, ...)
-  gui          Interactive TV dialogs (setup, update, power, allapps, tweaks)
+  gui          Interactive TV dialogs (wifi, setup, update, power, allapps, tweaks)
 
 Symlink / Legacy command shortcuts:
   tvpc-cec, tvpc-hdmi-audio, tvpc-session, tvpc-bigscreen, tvpc-bigscreen-theme,
-  tvpc-cameras, tvpc-cameras-gui, tvpc-cameras-tile, tvpc-hyprland, tvpc-hypr-menu,
-  tvpc-hypr-autostart, tvpc-controller, tvpc-doctor, tvpc-repair, tvpc-status,
-  tvpc-tweaks, tvpc-power, tvpc-setup-gui, tvpc-update-gui, tvpc-allapps,
-  tvpc-vacuumtube-scroll, cec-tv-poweron.sh, tvpc-cec-setup, tvpc-update
+  tvpc-cameras, tvpc-cameras-gui, tvpc-cameras-tile, tvpc-wifi, tvpc-hyprland,
+  tvpc-hypr-menu, tvpc-hypr-autostart, tvpc-controller, tvpc-doctor, tvpc-repair,
+  tvpc-status, tvpc-tweaks, tvpc-power, tvpc-setup-gui, tvpc-update-gui,
+  tvpc-allapps, tvpc-vacuumtube-scroll, cec-tv-poweron.sh, tvpc-cec-setup, tvpc-update
 EOF
 }
 
@@ -7005,6 +7056,9 @@ case "$INVOKED_AS" in
     ;;
   tvpc-cameras-tile)
     subcmd_cameras tile "$@"
+    ;;
+  tvpc-wifi)
+    gui_wifi "$@"
     ;;
   tvpc-hyprland)
     subcmd_hyprland "$@"
@@ -7058,6 +7112,7 @@ case "$INVOKED_AS" in
       bigscreen)        subcmd_bigscreen "$@" ;;
       theme)            subcmd_theme "$@" ;;
       cameras|camera)   subcmd_cameras "$@" ;;
+      wifi)             gui_wifi "$@" ;;
       hyprland|hypr)    subcmd_hyprland "$@" ;;
       controller|input) subcmd_controller "$@" ;;
       doctor)           subcmd_doctor "$@" ;;

@@ -206,8 +206,8 @@ Item {
                 Layout.preferredHeight: topBar.height - Kirigami.Units.smallSpacing * 2
                 Layout.preferredWidth: brandRow.implicitWidth + Kirigami.Units.largeSpacing * 2
                 radius: root.theme.pillRadius
-                color: root.theme.pillBackground
-                border.color: root.theme.pillBorder
+                color: brandMouse.containsMouse ? Qt.rgba(1.0, 1.0, 1.0, 0.16) : root.theme.pillBackground
+                border.color: brandMouse.containsMouse ? root.theme.borderFocusColor : root.theme.pillBorder
                 border.width: 1
 
                 RowLayout {
@@ -252,6 +252,57 @@ Item {
                         color: root.theme.accentColor
                     }
                 }
+
+                MouseArea {
+                    id: brandMouse
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: root.resetToTop()
+                }
+            }
+
+            // Quick Return to Home Button
+            Rectangle {
+                id: homeBtn
+                activeFocusOnTab: true
+                Layout.preferredHeight: topBar.height - Kirigami.Units.smallSpacing * 2
+                Layout.preferredWidth: homeBtnRow.implicitWidth + Kirigami.Units.largeSpacing * 1.5
+                radius: root.theme.pillRadius
+                color: homeBtn.activeFocus ? root.theme.pillFocusedBackground : (homeMouse.containsMouse ? Qt.rgba(1.0, 1.0, 1.0, 0.16) : root.theme.pillBackground)
+                border.color: homeBtn.activeFocus ? root.theme.borderFocusColor : root.theme.pillBorder
+                border.width: homeBtn.activeFocus ? 2 : 1
+
+                RowLayout {
+                    id: homeBtnRow
+                    anchors.centerIn: parent
+                    spacing: Kirigami.Units.smallSpacing / 2
+
+                    PlasmaCore.IconItem {
+                        Layout.preferredWidth: Kirigami.Units.iconSizes.small * 0.8
+                        Layout.preferredHeight: width
+                        source: "go-home"
+                    }
+
+                    Controls.Label {
+                        text: i18n("Home")
+                        font.bold: true
+                        font.pixelSize: Kirigami.Units.gridUnit * 0.72
+                        color: root.theme.textColor
+                    }
+                }
+
+                MouseArea {
+                    id: homeMouse
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: root.resetToTop()
+                }
+
+                Keys.onReturnPressed: root.resetToTop()
+                Keys.onSelectPressed: root.resetToTop()
+                KeyNavigation.down: launcher
             }
 
             // Live Category / Section Breadcrumb Tracker (Kodi Estuary Style)
@@ -664,7 +715,14 @@ Item {
     function triggerAltTab() {
         BigScreen.NavigationSoundEffects.playClickedSound();
         if (plasmoid && plasmoid.nativeInterface && typeof plasmoid.nativeInterface.executeCommand === "function") {
-            plasmoid.nativeInterface.executeCommand("qdbus org.kde.kglobalaccel /component/kwin invokeShortcut 'Walk Through Windows'");
+            plasmoid.nativeInterface.executeCommand("qdbus org.kde.kglobalaccel /component/kwin invokeShortcut 'Walk Through Windows' 2>/dev/null || hyprctl dispatch cyclenext 2>/dev/null || true");
+        }
+    }
+
+    function resetToTop() {
+        BigScreen.NavigationSoundEffects.playClickedSound();
+        if (launcher && typeof launcher.activateAppView === "function") {
+            launcher.activateAppView();
         }
     }
 
@@ -841,6 +899,32 @@ Item {
                     }
                     Controls.Label {
                         text: i18n("Select / Launch")
+                        font.pixelSize: Kirigami.Units.gridUnit * 0.72
+                        color: root.theme.textMutedColor
+                    }
+                }
+
+                // Mouse Wheel Scroll Hint
+                RowLayout {
+                    spacing: Kirigami.Units.smallSpacing
+                    Rectangle {
+                        height: Kirigami.Units.gridUnit * 1.15
+                        width: wheelHint.implicitWidth + Kirigami.Units.smallSpacing * 2
+                        radius: root.theme.badgeRadius
+                        color: root.theme.pillBackground
+                        border.color: root.theme.pillBorder
+                        border.width: 1
+                        Controls.Label {
+                            id: wheelHint
+                            anchors.centerIn: parent
+                            text: "🖱 Wheel"
+                            font.bold: true
+                            font.pixelSize: Kirigami.Units.gridUnit * 0.65
+                            color: root.theme.accentColor
+                        }
+                    }
+                    Controls.Label {
+                        text: i18n("Scroll Shelves")
                         font.pixelSize: Kirigami.Units.gridUnit * 0.72
                         color: root.theme.textMutedColor
                     }

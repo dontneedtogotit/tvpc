@@ -140,4 +140,17 @@ AbstractIndicator {
             plasmoid.nativeInterface.executeCommand("plasma-settings -s -m kcm_mediacenter_audiodevice");
         }
     }
+
+    MouseArea {
+        anchors.fill: parent
+        acceptedButtons: Qt.NoButton
+        onWheel: {
+            if (wheel.angleDelta.y > 0) {
+                paIcon.increaseVolume();
+            } else if (wheel.angleDelta.y < 0) {
+                paIcon.decreaseVolume();
+            }
+            wheel.accepted = true;
+        }
+    }
 }

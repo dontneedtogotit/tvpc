@@ -236,7 +236,25 @@ grep -q "startupFeedbackTimeout" "$OVERLAY/contents/ui/launcher/delegates/AppDel
 grep -q "targetKcmId" "$OVERLAY/contents/ui/launcher/delegates/SettingDelegate.qml" || fail "SettingDelegate missing targetKcmId safe launch"
 grep -q "vAppStorageIdRole" "$OVERLAY/contents/ui/launcher/delegates/VoiceAppDelegate.qml" || fail "VoiceAppDelegate missing vAppStorageIdRole safe launch"
 
-echo "Layout, dock, CEC, and background playback tests passed."
+# Mouse wheel and shelf navigation assertions
+grep -q "scrollRows" "$OVERLAY/contents/ui/launcher/LauncherHome.qml" || fail "LauncherHome.qml missing scrollRows"
+grep -q "homeWheelArea" "$OVERLAY/contents/ui/launcher/LauncherHome.qml" || fail "LauncherHome.qml missing homeWheelArea"
+grep -q "onWheel" "$OVERLAY/contents/ui/launcher/delegates/ModernCardDelegate.qml" || fail "ModernCardDelegate missing onWheel"
+grep -q "wheelHint" "$OVERLAY/contents/ui/main.qml" || fail "main.qml missing wheelHint"
+grep -q "homeBtn" "$OVERLAY/contents/ui/main.qml" || fail "main.qml missing homeBtn"
+
+# Wi-Fi settings app assertions
+grep -q "tvpc-wifi" "$ROOT/scripts/tvpc.sh" || fail "tvpc.sh missing tvpc-wifi"
+grep -q "gui_wifi" "$ROOT/scripts/tvpc.sh" || fail "tvpc.sh missing gui_wifi"
+[[ -x "$ROOT/scripts/tvpc-wifi.sh" ]] || fail "scripts/tvpc-wifi.sh is missing or not executable"
+[[ -f "$ROOT/tvpc_wifi_gui.py" ]] || fail "tvpc_wifi_gui.py is missing"
+
+# Alt+Tab window cycling & Home screen selection assertions
+grep -q "ShowDesktopMode=1" "$ROOT/install.sh" || fail "install.sh missing ShowDesktopMode=1"
+grep -q "ShowDesktopMode=1" "$ROOT/scripts/tvpc.sh" || fail "tvpc.sh missing ShowDesktopMode=1"
+grep -q "ALT + Tab" "$ROOT/config/hypr/hyprland.lua" || fail "hyprland.lua missing ALT + Tab"
+
+echo "Layout, dock, CEC, Wi-Fi, mouse wheel, Alt+Tab, and background playback tests passed."
 
 echo "== 5. Hyprland Config Validation =="
 CONFIG="$ROOT/config/hypr/hyprland.lua"

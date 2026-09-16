@@ -15,7 +15,7 @@ import org.kde.plasma.private.nanoshell 2.0 as NanoShell
 AbstractIndicator {
     id: connectionIcon
 
-    icon.name: connectionIconProvider.connectionIcon
+    icon.name: (connectionIconProvider && connectionIconProvider.connectionIcon) ? connectionIconProvider.connectionIcon : "network-wireless-connected"
 
     PlasmaComponents.BusyIndicator {
         id: connectingIndicator
@@ -50,8 +50,8 @@ AbstractIndicator {
                 Math.min(connectionIcon.width, connectionIcon.height)
             );
         } catch(e) {}
-        if (plasmoid && plasmoid.nativeInterface) {
-            plasmoid.nativeInterface.executeCommand("plasma-settings -s -m kcm_mediacenter_wifi");
+        if (plasmoid && plasmoid.nativeInterface && typeof plasmoid.nativeInterface.executeCommand === "function") {
+            plasmoid.nativeInterface.executeCommand("tvpc gui wifi 2>/dev/null || tvpc-wifi 2>/dev/null || plasma-settings -s -m kcm_mediacenter_wifi 2>/dev/null || kcmshell5 kcm_networkmanagement 2>/dev/null || true");
         }
     }
 }

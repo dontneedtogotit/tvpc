@@ -262,6 +262,7 @@ MultiScreenMode=0
 OrderMinimizedMode=0
 ShowDelay=false
 ShowDesktop=true
+ShowDesktopMode=1
 SwitchingMode=0
 EOF
 
@@ -273,7 +274,7 @@ Walk Through Windows (Reverse)=Alt+Shift+Tab,Alt+Shift+Backtab,Walk Through Wind
 Walk Through Windows Alternative=none,,Walk Through Windows Alternative
 Walk Through Windows Alternative (Reverse)=none,,Walk Through Windows Alternative (Reverse)
 Window Close=Alt+F4,Alt+F4,Close Window
-Show Desktop=Meta+D,Meta+D,Show Desktop
+Show Desktop=Meta+D\tAlt+Escape,Meta+D,Show Desktop
 EOF
 
 # --- KWin rules -------------------------------------------------------------

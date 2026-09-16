@@ -349,6 +349,36 @@ Item {
             }
             cardRoot.clicked();
         }
+        onWheel: {
+            if (wheel.angleDelta.x !== 0 || (wheel.modifiers & Qt.ShiftModifier)) {
+                var delta = wheel.angleDelta.x !== 0 ? wheel.angleDelta.x : wheel.angleDelta.y;
+                var fl = cardRoot.findFlickable(cardRoot.parent);
+                if (fl) {
+                    if (delta < 0) {
+                        if (typeof fl.incrementCurrentIndex === "function") fl.incrementCurrentIndex();
+                        else if (typeof fl.currentIndex !== "undefined") fl.currentIndex++;
+                    } else if (delta > 0) {
+                        if (typeof fl.decrementCurrentIndex === "function") fl.decrementCurrentIndex();
+                        else if (typeof fl.currentIndex !== "undefined") fl.currentIndex--;
+                    }
+                }
+                wheel.accepted = true;
+                return;
+            }
+
+            if (wheel.angleDelta.y !== 0) {
+                var p = cardRoot.parent;
+                while (p) {
+                    if (typeof p.scrollRows === "function") {
+                        p.scrollRows(wheel.angleDelta.y < 0 ? 1 : -1);
+                        wheel.accepted = true;
+                        return;
+                    }
+                    p = p.parent;
+                }
+                wheel.accepted = false;
+            }
+        }
     }
 
     Keys.onReturnPressed: {

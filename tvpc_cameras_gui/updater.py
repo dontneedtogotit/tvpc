@@ -192,15 +192,18 @@ def apply_update(remote_version: str, install_dir: Optional[Path] = None) -> boo
         # Update .version file
         (base / ".version").write_text(remote_version.strip() + "\n", encoding="utf-8")
 
-        # Update wrapper and desktop file if in home/.local
-        bin_file = home / ".local/bin/tvpc-cameras-gui"
-        if bin_file.is_file():
-            _ensure_wrapper_script(bin_file, base)
+        # Update wrapper and desktop file if in home/.local (only when not in custom test dir)
+        if install_dir is None:
+            bin_file = home / ".local/bin/tvpc-cameras-gui"
+            if bin_file.is_file():
+                _ensure_wrapper_script(bin_file, base)
 
-        desktop_file = home / ".local/share/applications/tvpc-cameras-gui.desktop"
-        src_desktop = extracted_root / "standalone/tvpc-cameras-gui.desktop"
-        if desktop_file.exists() or src_desktop.is_file():
-            _ensure_desktop_entry(desktop_file)
+            desktop_file = home / ".local/share/applications/tvpc-cameras-gui.desktop"
+            src_desktop = extracted_root / "standalone/tvpc-cameras-gui.desktop"
+            if desktop_file.exists() or src_desktop.is_file():
+                _ensure_desktop_entry(desktop_file)
+        elif (base.parent / "bin/tvpc-cameras-gui").is_file():
+            _ensure_wrapper_script(base.parent / "bin/tvpc-cameras-gui", base)
 
         return True
     except Exception as e:
@@ -211,14 +214,20 @@ def apply_update(remote_version: str, install_dir: Optional[Path] = None) -> boo
 
 
 def _ensure_wrapper_script(bin_path: Path, app_dir: Path) -> None:
-    """Ensure the ~/.local/bin/tvpc-cameras-gui wrapper exports PYTHONPATH."""
+    """Ensure the ~/.local/bin/tvpc-cameras-gui wrapper exports PYTHONPATH and handles fallbacks."""
     wrapper_content = f"""#!/usr/bin/env bash
 # Launcher for tvpc-cameras-gui standalone install.
 set -euo pipefail
 APP_DIR="{app_dir}"
+STANDALONE_DIR="${{HOME}}/.local/share/tvpc-cameras-gui"
+if [ ! -d "${{APP_DIR}}" ] && [ -d "${{STANDALONE_DIR}}" ]; then
+    APP_DIR="${{STANDALONE_DIR}}"
+fi
 export PYTHONPATH="${{APP_DIR}}:${{PYTHONPATH:-}}"
 if [ -x "${{APP_DIR}}/.venv/bin/python" ]; then
     exec "${{APP_DIR}}/.venv/bin/python" -m tvpc_cameras_gui "$@"
+elif [ -x "${{STANDALONE_DIR}}/.venv/bin/python" ]; then
+    exec "${{STANDALONE_DIR}}/.venv/bin/python" -m tvpc_cameras_gui "$@"
 fi
 PYTHON="$(command -v python3 || command -v python)"
 if [ -z "${{PYTHON}}" ]; then
