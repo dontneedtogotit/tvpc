@@ -1,20 +1,21 @@
 """Network scan dialog: progress + results + add-to-config buttons."""
 from __future__ import annotations
 
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
-from PySide6.QtCore import Qt, QThread
+from PySide6.QtCore import Qt, QThread, Signal, QObject
+from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QDialog, QDialogButtonBox, QHBoxLayout, QLabel, QLineEdit, QListWidget,
     QListWidgetItem, QPushButton, QTextEdit, QVBoxLayout, QMessageBox,
-    QCheckBox, QProgressBar, QGroupBox,
+    QCheckBox, QProgressBar, QGroupBox, QMenu,
 )
 
 from .config import Camera
 from .scan import ScanWorker
 from .discover import DiscoveredCamera
 from .settings import load_settings
-from .brand_help import show_brand_help
+from .brand_help import show_brand_help, get_brand_template_url
 
 _SETTINGS = load_settings()
 
@@ -32,10 +33,64 @@ _METHOD_ICONS = {
 }
 
 
+class _SingleProbeWorker(QObject):
+    progress = Signal(str)
+    result = Signal(object, object)  # (QListWidgetItem, DiscoveredCamera or None)
+    finished = Signal()
+
+    def __init__(
+        self,
+        targets: List[Tuple[QListWidgetItem, DiscoveredCamera]],
+        user: str = "",
+        password: str = "",
+    ) -> None:
+        super().__init__()
+        self.targets = targets
+        self.user = user
+        self.password = password
+
+    def run(self) -> None:
+        from .discover import probe_ip_stream_url, quick_probe_all_ports
+        for item, cam in self.targets:
+            host = cam.host
+            if not host:
+                self.result.emit(item, None)
+                continue
+            self.progress.emit(f"Probing {host} on RTSP (554/6554) and ONVIF ports…")
+            res = probe_ip_stream_url(host, user=self.user, password=self.password)
+            if res:
+                url, vendor, model = res
+                cam.url = url
+                cam.method = "rtsp"
+                if vendor and vendor != "Unknown":
+                    cam.vendor = vendor
+                if model:
+                    cam.model = model
+                cam.note = "Verified active stream"
+                self.result.emit(item, cam)
+            else:
+                cams = quick_probe_all_ports(host, user=self.user, password=self.password)
+                active = next((c for c in cams if c.url), None)
+                if active:
+                    cam.url = active.url
+                    cam.method = active.method
+                    if active.vendor:
+                        cam.vendor = active.vendor
+                    if active.model:
+                        cam.model = active.model
+                    cam.note = active.note or "Verified active stream"
+                    self.result.emit(item, cam)
+                else:
+                    self.result.emit(item, None)
+        self.finished.emit()
+
+
 def _result_text(cam: DiscoveredCamera) -> str:
     """One-line summary used in the QListWidget."""
     icon = _METHOD_ICONS.get(cam.method, "📷")
     bits: List[str] = []
+    if not cam.url:
+        bits.append("⚠️ [Needs Local ONVIF/RTSP]")
     if cam.is_dvr and cam.channel:
         dvr_name = cam.dvr_type or (f"{cam.vendor} DVR" if cam.vendor else "DVR")
         ch_label = f"Camera {cam.channel}" + (f"/{cam.total_channels}" if cam.total_channels else "")
@@ -63,6 +118,8 @@ class ScanDialog(QDialog):
         self._results: List[DiscoveredCamera] = []
         self._thread: Optional[QThread] = None
         self._worker: Optional[ScanWorker] = None
+        self._probe_thread: Optional[QThread] = None
+        self._probe_worker: Optional[_SingleProbeWorker] = None
 
         intro = QLabel(
             "This will scan your local network for IP security cameras. "
@@ -124,6 +181,8 @@ class ScanDialog(QDialog):
 
         self._list = QListWidget()
         self._list.setSelectionMode(QListWidget.ExtendedSelection)
+        self._list.setContextMenuPolicy(Qt.CustomContextMenu)
+        self._list.customContextMenuRequested.connect(self._on_list_context_menu)
         self._list.itemSelectionChanged.connect(self._update_selection_states)
         self._list.itemDoubleClicked.connect(self._on_item_double_clicked)
 
@@ -150,6 +209,10 @@ class ScanDialog(QDialog):
         self._stop_btn = QPushButton("⏹ Stop")
         self._stop_btn.setEnabled(False)
         self._stop_btn.clicked.connect(self._stop)
+        self._reprobe_btn = QPushButton("🔄 Re-probe selected")
+        self._reprobe_btn.setToolTip("Quickly test selected camera(s) for active RTSP/ONVIF streams without re-scanning")
+        self._reprobe_btn.setEnabled(False)
+        self._reprobe_btn.clicked.connect(self._reprobe_selected)
         self._guide_btn = QPushButton("💡 Setup Guide")
         self._guide_btn.setToolTip("View brand-specific connection steps and RTSP activation guide")
         self._guide_btn.clicked.connect(self._open_brand_help)
@@ -163,6 +226,7 @@ class ScanDialog(QDialog):
         top_btns = QHBoxLayout()
         top_btns.addWidget(self._start_btn)
         top_btns.addWidget(self._stop_btn)
+        top_btns.addWidget(self._reprobe_btn)
         top_btns.addWidget(self._guide_btn)
         top_btns.addStretch(1)
         top_btns.addWidget(self._add_btn)
@@ -210,6 +274,113 @@ class ScanDialog(QDialog):
         sel = self._list.selectedItems()
         self._add_btn.setEnabled(len(sel) > 0)
         self._add_btn.setText(f"Add selected ({len(sel)}) to config" if sel else "Add selected to config")
+        self._reprobe_btn.setEnabled(len(sel) > 0 and self._probe_thread is None)
+
+    def _on_list_context_menu(self, pos) -> None:
+        item = self._list.itemAt(pos)
+        if item is None:
+            return
+        cam: Optional[DiscoveredCamera] = item.data(Qt.UserRole)
+        if not cam:
+            return
+        self._list.setCurrentItem(item)
+        menu = QMenu(self)
+        menu.addAction("🔄 Re-probe / Test Camera", lambda: self._reprobe_items([item]))
+        menu.addAction("💡 View Setup Guide", self._open_brand_help)
+        menu.addSeparator()
+        menu.addAction("✏️ Configure & Add Manually", lambda: self._manual_configure_item(item))
+        menu.exec(self._list.viewport().mapToGlobal(pos))
+
+    def _reprobe_selected(self) -> None:
+        items = self._list.selectedItems()
+        if not items:
+            return
+        self._reprobe_items(items)
+
+    def _reprobe_items(self, items: List[QListWidgetItem]) -> None:
+        if self._probe_thread is not None:
+            QMessageBox.information(self, "Probing in progress", "A camera probe is already running. Please wait.")
+            return
+        targets = []
+        for it in items:
+            cam: Optional[DiscoveredCamera] = it.data(Qt.UserRole)
+            if cam and cam.host:
+                targets.append((it, cam))
+        if not targets:
+            return
+
+        self._reprobe_btn.setEnabled(False)
+        self._progress.setVisible(True)
+        self._status.setText(f"Probing {len(targets)} camera(s) for local RTSP/ONVIF streams…")
+        self._log.append(f"--- Starting targeted probe of {len(targets)} camera(s) ---")
+
+        self._probe_thread = QThread(self)
+        self._probe_worker = _SingleProbeWorker(
+            targets,
+            user=self._user.text().strip(),
+            password=self._pass.text(),
+        )
+        self._probe_worker.moveToThread(self._probe_thread)
+        self._probe_thread.started.connect(self._probe_worker.run)
+        self._probe_worker.progress.connect(self._log.append)
+        self._probe_worker.result.connect(self._on_reprobe_result)
+        self._probe_worker.finished.connect(self._on_reprobe_finished)
+        self._probe_worker.finished.connect(self._probe_thread.quit)
+        self._probe_thread.finished.connect(self._cleanup_probe_thread)
+        self._probe_thread.start()
+
+    def _cleanup_probe_thread(self) -> None:
+        self._probe_thread = None
+        self._probe_worker = None
+        self._progress.setVisible(False)
+        self._update_selection_states()
+
+    def _on_reprobe_result(self, item: QListWidgetItem, cam: Optional[DiscoveredCamera]) -> None:
+        if cam and cam.url:
+            item.setText(_result_text(cam))
+            item.setData(Qt.UserRole, cam)
+            item.setToolTip(cam.display())
+            item.setForeground(QColor("#81c784"))
+            self._log.append(f"✅ {cam.host}: Local RTSP/ONVIF verified! Stream URL: {cam.url}")
+            self._status.setText(f"✅ Active stream detected on {cam.host}")
+        elif cam:
+            self._log.append(f"❌ {cam.host}: RTSP/ONVIF ports still closed or not responding.")
+            self._status.setText(f"❌ {cam.host}: RTSP/ONVIF still disabled.")
+
+    def _on_reprobe_finished(self) -> None:
+        self._reprobe_btn.setEnabled(True)
+        self._progress.setVisible(False)
+        self._status.setText("Re-probe complete.")
+        self._update_selection_states()
+
+    def _manual_configure_item(self, item: QListWidgetItem) -> None:
+        cam: Optional[DiscoveredCamera] = item.data(Qt.UserRole)
+        if not cam:
+            return
+        from .edit_dialog import CameraEditDialog
+        template_url, suggested_user = get_brand_template_url(
+            cam.vendor or "", cam.host, self._user.text().strip(), self._pass.text()
+        )
+        base = (cam.vendor or "camera").strip().lower().replace(" ", "-")
+        tag = cam.host.replace(".", "-") if cam.host else "cam"
+        temp_cam = Camera(
+            name=f"{base}-{tag}",
+            url=cam.url or template_url,
+            user=self._user.text().strip() or suggested_user,
+            password=self._pass.text(),
+            notes=cam.note or f"discovered via {cam.method}",
+        )
+        dlg = CameraEditDialog(self, camera=temp_cam)
+        if dlg.exec() == QDialog.Accepted:
+            saved_cam = dlg.get_camera()
+            from . import config as cfg
+            cams = cfg.load_cameras()
+            if any(c.name == saved_cam.name for c in cams):
+                QMessageBox.warning(self, "Duplicate", "A camera with that name already exists.")
+                return
+            cams.append(saved_cam)
+            cfg.save_cameras(cams)
+            QMessageBox.information(self, "Camera Added", f"Added '{saved_cam.name}' to configuration.")
 
     def _select_all(self) -> None:
         for i in range(self._list.count()):
@@ -302,7 +473,16 @@ class ScanDialog(QDialog):
         self._results.append(cam)
         item = QListWidgetItem(_result_text(cam))
         item.setData(Qt.UserRole, cam)
-        item.setToolTip(cam.display())
+        if not cam.url:
+            item.setForeground(QColor("#ffa726"))
+            item.setToolTip(
+                f"{cam.display()}\n\n"
+                "⚠️ Local ONVIF/RTSP streaming is disabled on this camera.\n"
+                "Enable ONVIF or PC View in the vendor app (e.g. Grid Connect, Tuya, Smart Life, Tapo), "
+                "then click 'Re-probe selected' or double-click to view the Setup Guide."
+            )
+        else:
+            item.setToolTip(cam.display())
         query = self._filter_edit.text().strip().lower()
         if query:
             match = (query in (cam.host or "").lower() or
@@ -393,13 +573,59 @@ class ScanDialog(QDialog):
             added += 1
         cfg.save_cameras(cams)
         if added and skipped_no_url:
-            QMessageBox.information(
-                self, "Added",
-                f"Added {added} camera(s) to the config.\n"
-                f"Skipped {skipped_no_url} cloud-only entry(ies) — enable "
-                f"ONVIF/RTSP in the vendor app and re-scan to get a URL.",
+            msg = QMessageBox(self)
+            msg.setWindowTitle("Cameras Added")
+            msg.setText(
+                f"Added {added} camera(s) to the config.\n\n"
+                f"{skipped_no_url} camera(s) do not have a local stream URL "
+                f"(local ONVIF/RTSP is disabled in the camera firmware)."
             )
-            self.accept()
+            msg.setInformativeText(
+                "Would you like to view the Setup Guide or add RTSP templates for the skipped cameras?"
+            )
+            btn_guide = msg.addButton("💡 View Setup Guide", QMessageBox.ActionRole)
+            btn_templates = msg.addButton("Add Templates", QMessageBox.AcceptRole)
+            btn_done = msg.addButton("Done", QMessageBox.RejectRole)
+            msg.setDefaultButton(btn_done)
+            msg.exec()
+
+            if msg.clickedButton() == btn_templates:
+                for item in items:
+                    res: DiscoveredCamera = item.data(Qt.UserRole)
+                    if not res.url:
+                        base = (res.vendor or "").strip().lower().replace(" ", "-") if res.vendor else "camera"
+                        tag = res.host.replace(".", "-") if res.host else "cam"
+                        name = f"{base}-{tag}" if base and tag else tag
+                        n = 2
+                        while name in existing:
+                            name = f"{base}-{tag}-{n}"
+                            n += 1
+                        user_val = self._user.text().strip()
+                        pass_val = self._pass.text()
+                        template_url, suggested_user = get_brand_template_url(
+                            res.vendor or "", res.host, user_val, pass_val
+                        )
+                        note_bits = [f"discovered via {res.method}"]
+                        if res.vendor:
+                            note_bits.append(f"vendor: {res.vendor}")
+                        note_bits.append("requires ONVIF/RTSP enabled in vendor app")
+                        cams.append(Camera(
+                            name=name,
+                            url=template_url,
+                            user=user_val or suggested_user,
+                            password=pass_val,
+                            notes="; ".join(note_bits),
+                        ))
+                        existing.add(name)
+                        added += 1
+                cfg.save_cameras(cams)
+                QMessageBox.information(self, "Added", f"Added remaining camera template(s) to the config.")
+                self.accept()
+            elif msg.clickedButton() == btn_guide:
+                self._open_brand_help()
+            else:
+                self.accept()
+            return
         elif added:
             QMessageBox.information(self, "Added", f"Added {added} camera(s) to the config.")
             self.accept()
@@ -413,16 +639,21 @@ class ScanDialog(QDialog):
                 f"(e.g. Grid Connect, Tuya, Smart Life) and re-scan."
             )
             msg.setInformativeText(
-                "Would you like to open the Setup Guide for instructions, "
-                "or add RTSP template entries anyway?"
+                "If you have just enabled ONVIF in the vendor app, click 'Re-probe Camera(s)'.\n"
+                "You can also view the Setup Guide or add RTSP templates."
             )
+            btn_reprobe = msg.addButton("🔄 Re-probe Camera(s)", QMessageBox.ActionRole)
             btn_guide = msg.addButton("💡 View Setup Guide", QMessageBox.ActionRole)
             btn_templates = msg.addButton("Add Templates", QMessageBox.AcceptRole)
             msg.addButton(QMessageBox.Cancel)
-            msg.setDefaultButton(btn_guide)
+            msg.setDefaultButton(btn_reprobe)
             msg.exec()
 
-            if msg.clickedButton() == btn_guide:
+            if msg.clickedButton() == btn_reprobe:
+                no_url_items = [it for it in items if not getattr(it.data(Qt.UserRole), "url", None)]
+                self._reprobe_items(no_url_items)
+                return
+            elif msg.clickedButton() == btn_guide:
                 self._open_brand_help()
                 return
             elif msg.clickedButton() == btn_templates:
@@ -436,7 +667,11 @@ class ScanDialog(QDialog):
                         while name in existing:
                             name = f"{base}-{tag}-{n}"
                             n += 1
-                        template_url = f"rtsp://{res.host}:554/live/ch0"
+                        user_val = self._user.text().strip()
+                        pass_val = self._pass.text()
+                        template_url, suggested_user = get_brand_template_url(
+                            res.vendor or "", res.host, user_val, pass_val
+                        )
                         note_bits = [f"discovered via {res.method}"]
                         if res.vendor:
                             note_bits.append(f"vendor: {res.vendor}")
@@ -444,8 +679,8 @@ class ScanDialog(QDialog):
                         cams.append(Camera(
                             name=name,
                             url=template_url,
-                            user=self._user.text().strip(),
-                            password=self._pass.text(),
+                            user=user_val or suggested_user,
+                            password=pass_val,
                             notes="; ".join(note_bits),
                         ))
                         existing.add(name)

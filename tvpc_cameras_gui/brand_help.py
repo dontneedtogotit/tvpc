@@ -8,7 +8,7 @@ from __future__ import annotations
 import re
 from typing import Dict, List, Optional
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QThread, Signal, QObject
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
     QApplication, QComboBox, QDialog, QDialogButtonBox, QGroupBox,
@@ -257,21 +257,67 @@ def find_brand_guide(search_text: str) -> Optional[str]:
     return None
 
 
+def get_brand_template_url(
+    vendor: str,
+    host: str,
+    user: str = "",
+    password: str = "",
+) -> Tuple[str, str]:
+    """Return the best matching RTSP stream template URL and default username for a given vendor and host.
+
+    Returns (template_url, suggested_user).
+    """
+    brand_key = find_brand_guide(vendor) or "Generic ONVIF / Xiongmai (XM)"
+    data = BRAND_GUIDES.get(brand_key, BRAND_GUIDES["Generic ONVIF / Xiongmai (XM)"])
+    urls = data.get("urls", [])
+    raw_template = urls[0][1] if urls else "rtsp://{USER}:{PASS}@{IP}:554/live/ch0"
+
+    suggested_user = user.strip() if user else "admin"
+    ip = host or "192.168.1.100"
+
+    # Remove template credential tokens so the URL is clean (credentials are stored on Camera object)
+    clean_template = (
+        raw_template
+        .replace("{USER}:{PASS}@", "")
+        .replace("admin:{PASS}@", "")
+        .replace("{IP}", ip)
+    )
+    return clean_template, suggested_user
+
+
+class _BrandProbeWorker(QObject):
+    finished = Signal(object)  # (url, vendor, model) or None
+
+    def __init__(self, host: str, user: str = "", password: str = "") -> None:
+        super().__init__()
+        self.host = host
+        self.user = user
+        self.password = password
+
+    def run(self) -> None:
+        from .discover import probe_ip_stream_url
+        res = probe_ip_stream_url(self.host, user=self.user, password=self.password)
+        self.finished.emit(res)
+
+
 # ---------------------------------------------------------------------------
 # Brand Help Dialog
 # ---------------------------------------------------------------------------
 class BrandHelpDialog(QDialog):
-    """Interactive Brand & Model Setup Guide Dialog."""
+    """Interactive Brand & Model Setup Guide Dialog with live camera probing."""
 
     def __init__(self, parent=None, initial_brand: Optional[str] = None,
                  camera_host: Optional[str] = None) -> None:
         super().__init__(parent)
         self.setWindowTitle("Camera Brand & Model Setup Guide")
-        self.resize(740, 620)
-        self.setMinimumSize(640, 480)
+        self.resize(760, 680)
+        self.setMinimumSize(660, 520)
 
         self._camera_host = camera_host or ""
         self._matched_brand = find_brand_guide(initial_brand or "") or initial_brand
+        self._probe_thread: Optional[QThread] = None
+        self._probe_worker: Optional[_BrandProbeWorker] = None
+        self._verified_stream: Optional[tuple] = None
 
         self._build_ui()
 
@@ -315,6 +361,52 @@ class BrandHelpDialog(QDialog):
         )
         layout.addWidget(self._content_browser, 1)
 
+        # Live Connection Tester Group
+        self._tester_group = QGroupBox("🔍 Test Camera Connection (Verify Local ONVIF/RTSP)")
+        tester_layout = QVBoxLayout(self._tester_group)
+
+        test_row = QHBoxLayout()
+        test_row.addWidget(QLabel("Host / IP:"))
+        self._test_host_edit = QLineEdit(self._camera_host)
+        self._test_host_edit.setPlaceholderText("e.g. 192.168.1.50")
+        test_row.addWidget(self._test_host_edit, 1)
+
+        test_row.addWidget(QLabel("User:"))
+        self._test_user_edit = QLineEdit("admin")
+        self._test_user_edit.setFixedWidth(75)
+        test_row.addWidget(self._test_user_edit)
+
+        test_row.addWidget(QLabel("Pass:"))
+        self._test_pass_edit = QLineEdit()
+        self._test_pass_edit.setEchoMode(QLineEdit.Password)
+        self._test_pass_edit.setPlaceholderText("(ONVIF pass)")
+        self._test_pass_edit.setFixedWidth(95)
+        test_row.addWidget(self._test_pass_edit)
+
+        self._test_probe_btn = QPushButton("🔄 Probe Camera Now")
+        self._test_probe_btn.setStyleSheet("font-weight: bold; padding: 4px 10px;")
+        self._test_probe_btn.clicked.connect(self._start_probe)
+        test_row.addWidget(self._test_probe_btn)
+
+        tester_layout.addLayout(test_row)
+
+        status_row = QHBoxLayout()
+        self._test_status_lbl = QLabel(
+            "After enabling ONVIF/PC View in your vendor mobile app, enter the IP above and click 'Probe Camera Now' to verify."
+        )
+        self._test_status_lbl.setStyleSheet("color: #888888; font-size: 12px;")
+        self._test_status_lbl.setWordWrap(True)
+        status_row.addWidget(self._test_status_lbl, 1)
+
+        self._add_tested_btn = QPushButton("➕ Add Verified Camera to Config")
+        self._add_tested_btn.setStyleSheet("background-color: #2e7d32; color: white; font-weight: bold; padding: 4px 12px;")
+        self._add_tested_btn.setVisible(False)
+        self._add_tested_btn.clicked.connect(self._add_verified_to_config)
+        status_row.addWidget(self._add_tested_btn)
+
+        tester_layout.addLayout(status_row)
+        layout.addWidget(self._tester_group)
+
         # URL Templates Group
         self._url_group = QGroupBox("Stream URL Templates")
         url_layout = QVBoxLayout(self._url_group)
@@ -341,6 +433,81 @@ class BrandHelpDialog(QDialog):
 
         # Load initial brand
         self._on_brand_changed()
+
+    def _start_probe(self) -> None:
+        host = self._test_host_edit.text().strip()
+        if not host:
+            self._test_status_lbl.setText("⚠️ Please enter a valid camera IP or hostname.")
+            self._test_status_lbl.setStyleSheet("color: #ffb74d;")
+            return
+        user = self._test_user_edit.text().strip()
+        pwd = self._test_pass_edit.text()
+
+        self._test_probe_btn.setEnabled(False)
+        self._add_tested_btn.setVisible(False)
+        self._test_status_lbl.setText(f"⏳ Probing {host} for active RTSP (ports 554/6554) and ONVIF streams…")
+        self._test_status_lbl.setStyleSheet("color: #4fc3f7;")
+
+        self._probe_thread = QThread(self)
+        self._probe_worker = _BrandProbeWorker(host, user=user, password=pwd)
+        self._probe_worker.moveToThread(self._probe_thread)
+        self._probe_thread.started.connect(self._probe_worker.run)
+        self._probe_worker.finished.connect(self._on_probe_finished)
+        self._probe_worker.finished.connect(self._probe_thread.quit)
+        self._probe_thread.finished.connect(self._probe_thread.deleteLater)
+        self._probe_thread.start()
+
+    def _on_probe_finished(self, res: Optional[tuple]) -> None:
+        self._test_probe_btn.setEnabled(True)
+        host = self._test_host_edit.text().strip()
+        if res:
+            url, vendor, model = res
+            self._verified_stream = (url, vendor, model)
+            self._test_status_lbl.setStyleSheet("color: #81c784; font-weight: bold;")
+            self._test_status_lbl.setText(f"✅ Active stream detected!\nURL: {url}")
+            self._add_tested_btn.setVisible(True)
+        else:
+            self._verified_stream = None
+            self._test_status_lbl.setStyleSheet("color: #ffb74d;")
+            self._test_status_lbl.setText(
+                f"❌ RTSP / ONVIF not responding on {host}.\n"
+                "Please make sure ONVIF or PC View is toggled ON in the vendor app (instructions above) and re-try."
+            )
+
+    def _add_verified_to_config(self) -> None:
+        if not self._verified_stream:
+            return
+        url, vendor, model = self._verified_stream
+        host = self._test_host_edit.text().strip()
+        user = self._test_user_edit.text().strip()
+        pwd = self._test_pass_edit.text()
+
+        from . import config as cfg
+        from .config import Camera
+        cams = cfg.load_cameras()
+        existing = {c.name for c in cams}
+        brand = self._brand_combo.currentText().split("/")[0].strip().lower().replace(" ", "_")
+        name = f"{brand}-{host.replace('.', '-')}"
+        n = 2
+        while name in existing:
+            name = f"{brand}-{host.replace('.', '-')}-{n}"
+            n += 1
+
+        cam = Camera(
+            name=name,
+            url=url,
+            user=user,
+            password=pwd,
+            notes=f"verified via brand guide ({self._brand_combo.currentText()})",
+        )
+        cams.append(cam)
+        cfg.save_cameras(cams)
+        self._add_tested_btn.setEnabled(False)
+        self._add_tested_btn.setText("✅ Added to Config")
+        QMessageBox.information(
+            self, "Camera Added",
+            f"Successfully added '{name}' to your camera configuration!\nURL: {url}"
+        )
 
     def _on_brand_changed(self) -> None:
         brand = self._brand_combo.currentText()
@@ -405,3 +572,4 @@ def show_brand_help(parent=None, brand_hint: Optional[str] = None, host: Optiona
     """Convenience helper to show the BrandHelpDialog."""
     dlg = BrandHelpDialog(parent=parent, initial_brand=brand_hint, camera_host=host)
     dlg.exec()
+

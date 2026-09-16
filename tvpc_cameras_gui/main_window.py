@@ -547,6 +547,9 @@ class MainWindow(QMainWindow):
         menu.addAction("⏺ Record", self._action_toggle_record)
         menu.addAction("📷 Snapshot", self._action_snapshot)
         menu.addSeparator()
+        menu.addAction("🔄 Test Connection", self._action_test_camera)
+        menu.addAction("💡 Brand Setup Guide", self._action_brand_guide)
+        menu.addSeparator()
         menu.addAction("👁 Toggle enable/disable", self._action_toggle_enable)
         menu.addSeparator()
         menu.addAction("🗑 Remove", self._action_remove)
@@ -599,6 +602,9 @@ class MainWindow(QMainWindow):
         menu.addAction("🎮 PTZ Controls", self._action_ptz)
         menu.addAction("⏺ Record", self._action_toggle_record)
         menu.addAction("📷 Snapshot", self._action_snapshot)
+        menu.addSeparator()
+        menu.addAction("🔄 Test Connection", self._action_test_camera)
+        menu.addAction("💡 Brand Setup Guide", self._action_brand_guide)
         menu.addSeparator()
         menu.addAction("✏️ Edit", self._action_edit)
         menu.addAction("👁 Toggle enable/disable", self._action_toggle_enable)
@@ -750,6 +756,42 @@ class MainWindow(QMainWindow):
             if "://" in cam.url:
                 host = urlparse(cam.url).hostname or ""
         show_brand_help(self, brand_hint=brand_hint, host=host)
+
+    def _action_test_camera(self) -> None:
+        sel = self._selected_camera()
+        if not sel:
+            QMessageBox.information(self, "No selection", "Select a camera first.")
+            return
+        _, cam = sel
+        from .health import _probe_url
+        from .v4l2 import is_v4l2, normalize_v4l2_device, query_v4l2_device
+        if is_v4l2(cam.url):
+            info = query_v4l2_device(normalize_v4l2_device(cam.url))
+            ok = bool(info and info.get("is_capture"))
+        else:
+            ok = _probe_url(cam.url, user=cam.user, password=cam.password, timeout=3.5)
+
+        if ok:
+            QMessageBox.information(
+                self, "Camera Online",
+                f"✅ '{cam.name}' is online and responding!\n\nStream URL: {cam.url}",
+            )
+        else:
+            msg = QMessageBox(self)
+            msg.setWindowTitle("Camera Offline / Unreachable")
+            msg.setIcon(QMessageBox.Warning)
+            msg.setText(f"❌ Could not connect to camera '{cam.name}'.")
+            msg.setInformativeText(
+                f"URL: {cam.url}\n\n"
+                "If this is a smart camera (e.g. Tuya, Grid Connect, Tapo, Reolink), "
+                "ensure local ONVIF or PC View is toggled ON in the vendor app.\n\n"
+                "Would you like to open the Brand Setup Guide for instructions?",
+            )
+            btn_guide = msg.addButton("💡 View Setup Guide", QMessageBox.ActionRole)
+            msg.addButton(QMessageBox.Close)
+            msg.exec()
+            if msg.clickedButton() == btn_guide:
+                self._action_brand_guide()
 
     def _action_readd_last_scan(self) -> None:
         if not self._last_scan_results:
