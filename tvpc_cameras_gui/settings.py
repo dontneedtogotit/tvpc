@@ -38,10 +38,12 @@ def _defaults() -> dict[str, Any]:
         "auto_cleanup": True,
         "background_discovery": True,
         "auto_add_discovered": False,
+        "auto_add_cloud_templates": False,
         "patrol_interval_s": 10,
         "motion_detection_enabled": True,
         "motion_sensitivity": 0.12,
         "motion_auto_snapshot": True,
+        "ui_font_px": 14,
     }
 
 
@@ -299,6 +301,10 @@ class SettingsDialog(QDialog):
         self._auto_add.setChecked(bool(self._settings.get("auto_add_discovered", False)))
         form.addRow("", self._auto_add)
 
+        self._auto_add_cloud_templates = QCheckBox("Auto-add cloud-only cameras as template URLs")
+        self._auto_add_cloud_templates.setChecked(bool(self._settings.get("auto_add_cloud_templates", False)))
+        form.addRow("", self._auto_add_cloud_templates)
+
         self._patrol_interval = QSpinBox()
         self._patrol_interval.setRange(3, 120)
         self._patrol_interval.setSuffix(" s")
@@ -385,6 +391,12 @@ class SettingsDialog(QDialog):
         self._default_layout = QLineEdit(self._settings.get("default_layout", "2x2"))
         form.addRow("Default layout:", self._default_layout)
 
+        self._ui_font_px = QSpinBox()
+        self._ui_font_px.setRange(12, 24)
+        self._ui_font_px.setSuffix(" px")
+        self._ui_font_px.setValue(int(self._settings.get("ui_font_px", 14)))
+        form.addRow("TV font size:", self._ui_font_px)
+
         self._show_method_icons = QCheckBox("Show method icons in scan results")
         self._show_method_icons.setChecked(bool(self._settings.get("show_method_icons", True)))
         form.addRow("", self._show_method_icons)
@@ -394,7 +406,8 @@ class SettingsDialog(QDialog):
         form.addRow("", self._show_status_emoji)
 
         note = QLabel(
-            "Layout: 1x1, 2x2, 3x3, 4x4, or 1+3."
+            "Layout: 1x1, 2x2, 3x3, 4x4, or 1+3.\n"
+            "Increase font size for couch / 10-foot viewing."
         )
         note.setWordWrap(True)
         note.setStyleSheet("color: #888;")
@@ -414,6 +427,7 @@ class SettingsDialog(QDialog):
         self._settings["default_user"] = self._def_user.text().strip()
         self._settings["default_password"] = self._def_pass.text()
         self._settings["default_layout"] = self._default_layout.text().strip()
+        self._settings["ui_font_px"] = int(self._ui_font_px.value())
         self._settings["show_method_icons"] = self._show_method_icons.isChecked()
         self._settings["show_status_emoji"] = self._show_status_emoji.isChecked()
         self._settings["storage_quota_gb"] = self._storage_quota.value()
@@ -426,6 +440,7 @@ class SettingsDialog(QDialog):
         self._settings["ai_target_mode"] = self._ai_target_mode.currentText()
         self._settings["background_discovery"] = self._bg_discovery.isChecked()
         self._settings["auto_add_discovered"] = self._auto_add.isChecked()
+        self._settings["auto_add_cloud_templates"] = self._auto_add_cloud_templates.isChecked()
         self._settings["patrol_interval_s"] = self._patrol_interval.value()
         self._settings["popup_on_motion"] = self._popup_on_motion.isChecked()
         self._settings["popup_duration"] = self._popup_duration.value()

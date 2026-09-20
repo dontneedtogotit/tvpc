@@ -113,7 +113,135 @@ class ScanDialog(QDialog):
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self.setWindowTitle("Scan for cameras")
-        self.setMinimumSize(760, 580)
+        self.setMinimumSize(860, 640)
+        self.setStyleSheet(
+            """
+            QDialog, QWidget {
+                background: #0b0f14;
+                color: #e6e9ee;
+                font-family: "Segoe UI", "Noto Sans", sans-serif;
+            }
+            QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox, QTextEdit {
+                background: #11151b;
+                color: #e6e9ee;
+                border: 1px solid #1f2a36;
+                border-radius: 8px;
+                padding: 8px;
+                font-size: 14px;
+                min-height: 36px;
+            }
+            QLineEdit:focus, QComboBox:focus, QSpinBox:focus, QDoubleSpinBox:focus, QTextEdit:focus {
+                border: 1px solid #4fc3f7;
+            }
+            QPushButton {
+                background: #152233;
+                color: #e6e9ee;
+                border: 1px solid #22405e;
+                border-radius: 8px;
+                padding: 10px 16px;
+                font-size: 14px;
+                min-height: 40px;
+                font-weight: 500;
+            }
+            QPushButton:hover {
+                background: #1b2e45;
+                border-color: #4fc3f7;
+            }
+            QPushButton:pressed {
+                background: #0f1c2e;
+            }
+            QPushButton:focus {
+                outline: 1px solid #4fc3f7;
+            }
+            QPushButton[text*="Start scan"], QPushButton[text*="➕"], QPushButton[text*="Add selected"] {
+                background: #1261a0;
+                color: #ffffff;
+                border-color: #1976d2;
+                font-weight: 600;
+            }
+            QPushButton[text*="Start scan"]:hover, QPushButton[text*="➕"]:hover, QPushButton[text*="Add selected"]:hover {
+                background: #1580d4;
+            }
+            QProgressBar {
+                background: #11151b;
+                border: 1px solid #1f2a36;
+                border-radius: 8px;
+                text-align: center;
+                min-height: 18px;
+                color: #e6e9ee;
+            }
+            QProgressBar::chunk {
+                background: #1261a0;
+                border-radius: 8px;
+            }
+            QListWidget {
+                background: #0f1318;
+                border: 1px solid #1b2530;
+                border-radius: 10px;
+                padding: 10px;
+                font-size: 14px;
+                showFocusIndicator: 0;
+            }
+            QListWidget::item {
+                padding: 12px;
+                border-radius: 8px;
+                margin: 3px 0px;
+            }
+            QListWidget::item:selected {
+                background: #12324d;
+                color: #ffffff;
+                border: 1px solid #4fc3f7;
+            }
+            QListWidget::item:focus {
+                outline: 1px solid #4fc3f7;
+            }
+            QGroupBox {
+                border: 1px solid #1b2530;
+                border-radius: 10px;
+                margin-top: 14px;
+                padding-top: 20px;
+                background: #0f1318;
+            }
+            QGroupBox::title {
+                subcontrol-origin: margin;
+                left: 14px;
+                padding: 0 6px;
+                color: #9aa6b2;
+                font-size: 13px;
+                font-weight: 600;
+            }
+            QTextEdit {
+                background: #0a0d12;
+                color: #cfe3f7;
+                border: 1px solid #1b2530;
+                border-radius: 8px;
+                font-family: "SF Mono", "Consolas", monospace;
+                font-size: 13px;
+            }
+            QCheckBox {
+                spacing: 10px;
+                font-size: 14px;
+                padding: 4px 2px;
+            }
+            QCheckBox::indicator {
+                width: 18px;
+                height: 18px;
+                border-radius: 4px;
+                border: 1px solid #22405e;
+                background: #0b0f14;
+            }
+            QCheckBox::indicator:checked {
+                background: #1261a0;
+                border-color: #1976d2;
+            }
+            QLabel {
+                font-size: 14px;
+            }
+            QDialogButtonBox {
+                background: transparent;
+            }
+            """
+        )
 
         self._results: List[DiscoveredCamera] = []
         self._thread: Optional[QThread] = None
@@ -168,11 +296,11 @@ class ScanDialog(QDialog):
         adv_row = QHBoxLayout(self._adv_group)
         adv_row.addWidget(QLabel("mDNS timeout (s):"))
         self._mdns_timeout = QLineEdit("2.0")
-        self._mdns_timeout.setFixedWidth(45)
+        self._mdns_timeout.setFixedWidth(55)
         adv_row.addWidget(self._mdns_timeout)
         adv_row.addWidget(QLabel("Retries:"))
         self._mdns_retries = QLineEdit("1")
-        self._mdns_retries.setFixedWidth(35)
+        self._mdns_retries.setFixedWidth(45)
         adv_row.addWidget(self._mdns_retries)
         adv_row.addWidget(QLabel("Exclude subnets:"))
         self._exclude_subnets = QLineEdit()
@@ -201,10 +329,9 @@ class ScanDialog(QDialog):
 
         self._log = QTextEdit()
         self._log.setReadOnly(True)
-        self._log.setFixedHeight(120)
+        self._log.setMinimumHeight(110)
 
         self._start_btn = QPushButton("🔍 Start scan")
-        self._start_btn.setStyleSheet("font-weight: bold; padding: 6px 14px;")
         self._start_btn.clicked.connect(self._start)
         self._stop_btn = QPushButton("⏹ Stop")
         self._stop_btn.setEnabled(False)
@@ -242,6 +369,8 @@ class ScanDialog(QDialog):
         buttons.button(QDialogButtonBox.Close).setText("Close")
 
         layout = QVBoxLayout(self)
+        layout.setSpacing(10)
+        layout.setContentsMargins(14, 14, 14, 14)
         layout.addWidget(intro)
         layout.addLayout(cred_row)
         layout.addLayout(range_row)
@@ -424,6 +553,7 @@ class ScanDialog(QDialog):
         self._add_all_btn.setEnabled(False)
         self._progress.setVisible(True)
         self._status.setText("Scanning…")
+        self._status.setStyleSheet("color: #4fc3f7; font-weight: 600;")
 
         try:
             mdns_timeout = float(self._mdns_timeout.text().strip() or "2.0")
@@ -471,6 +601,28 @@ class ScanDialog(QDialog):
 
     def _on_found(self, cam: DiscoveredCamera) -> None:
         self._results.append(cam)
+
+        # If this is a cloud-only camera without a stream URL, optionally
+        # backfill a brand-aware RTSP template so the user can add it directly.
+        if (
+            not cam.url
+            and cam.method == "cloud"
+            and bool(_SETTINGS.get("auto_add_cloud_templates", False))
+        ):
+            try:
+                from .brand_help import get_brand_template_url
+                template_url, _ = get_brand_template_url(
+                    cam.vendor or "", cam.host or "", self._user.text().strip(), self._pass.text()
+                )
+                if template_url:
+                    cam.url = template_url
+                    cam.note = (
+                        (cam.note or "")
+                        + " | Template URL pre-filled; confirm in vendor app after enabling ONVIF/PC View."
+                    )
+            except Exception:
+                pass
+
         item = QListWidgetItem(_result_text(cam))
         item.setData(Qt.UserRole, cam)
         if not cam.url:
@@ -493,6 +645,7 @@ class ScanDialog(QDialog):
                      query in (cam.note or "").lower())
             item.setHidden(not match)
         self._list.addItem(item)
+        self._list.scrollToItem(item)
         self._add_all_btn.setEnabled(len(self._results) > 0)
         self._status.setText(f"Scanning… Discovered {len(self._results)} camera(s)")
 
@@ -505,7 +658,21 @@ class ScanDialog(QDialog):
         self._stop_btn.setEnabled(False)
         self._add_all_btn.setEnabled(len(self._results) > 0)
         self._progress.setVisible(False)
-        self._status.setText(f"Done. Found {len(self._results)} camera(s).")
+        if not self._results:
+            self._status.setText(
+                "No cameras found. Try Quick Scan, entering credentials, "
+                "or checking ONVIF/RTSP is enabled in the vendor app."
+            )
+            self._status.setStyleSheet("color: #ffb74d; font-weight: 600;")
+            self._guide_btn.setEnabled(True)
+            self._guide_btn.setStyleSheet(
+                "background: #1261a0; color: #ffffff; border: 1px solid #1976d2; font-weight: 600;"
+            )
+        else:
+            self._status.setText(f"Done. Found {len(self._results)} camera(s).")
+            self._status.setStyleSheet("color: #81c784; font-weight: 600;")
+            self._guide_btn.setEnabled(False)
+            self._guide_btn.setStyleSheet("")
 
     def _add_selected(self) -> None:
         items = self._list.selectedItems()

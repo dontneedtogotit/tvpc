@@ -81,7 +81,72 @@ class CameraEditDialog(QDialog):
     def __init__(self, parent=None, camera: Optional[Camera] = None) -> None:
         super().__init__(parent)
         self.setWindowTitle("Edit camera" if camera else "Add camera")
-        self.setMinimumWidth(520)
+        self.setMinimumWidth(560)
+        self.setStyleSheet(
+            """
+            QDialog, QWidget {
+                background: #0b0f14;
+                color: #e6e9ee;
+                font-family: "Segoe UI", "Noto Sans", sans-serif;
+            }
+            QLineEdit, QComboBox, QTextEdit {
+                background: #11151b;
+                color: #e6e9ee;
+                border: 1px solid #1f2a36;
+                border-radius: 8px;
+                padding: 8px;
+                font-size: 14px;
+                min-height: 36px;
+            }
+            QLineEdit:focus, QComboBox:focus, QTextEdit:focus {
+                border: 1px solid #4fc3f7;
+            }
+            QPushButton {
+                background: #152233;
+                color: #e6e9ee;
+                border: 1px solid #22405e;
+                border-radius: 8px;
+                padding: 10px 16px;
+                font-size: 14px;
+                min-height: 40px;
+                font-weight: 500;
+            }
+            QPushButton:hover {
+                background: #1b2e45;
+                border-color: #4fc3f7;
+            }
+            QPushButton:focus {
+                outline: 1px solid #4fc3f7;
+            }
+            QPushButton[text="💾 Save"] {
+                background: #1261a0;
+                color: #ffffff;
+                border-color: #1976d2;
+                font-weight: 600;
+            }
+            QPushButton[text="💾 Save"]:hover {
+                background: #1580d4;
+            }
+            QCheckBox {
+                spacing: 10px;
+                font-size: 14px;
+            }
+            QCheckBox::indicator {
+                width: 18px;
+                height: 18px;
+                border-radius: 4px;
+                border: 1px solid #22405e;
+                background: #0b0f14;
+            }
+            QCheckBox::indicator:checked {
+                background: #1261a0;
+                border-color: #1976d2;
+            }
+            QLabel {
+                font-size: 14px;
+            }
+            """
+        )
 
         self._probe_thread: Optional[QThread] = None
         self._probe_worker: Optional[_ProbeWorker] = None

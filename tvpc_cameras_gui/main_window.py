@@ -6,9 +6,9 @@ from pathlib import Path
 from typing import List, Optional
 
 from PySide6.QtCore import Qt, QTimer, Signal
-from PySide6.QtGui import QAction, QKeySequence
+from PySide6.QtGui import QAction, QFont, QKeySequence
 from PySide6.QtWidgets import (
-    QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QListWidget,
+    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QListWidget,
     QListWidgetItem, QPushButton, QToolBar, QStatusBar, QMessageBox,
     QGridLayout, QSizePolicy, QComboBox, QMenu, QFileDialog,
     QDialog, QDialogButtonBox, QFormLayout, QLineEdit, QTextEdit,
@@ -46,52 +46,46 @@ class EmptyStateWidget(QWidget):
         super().__init__(parent)
 
         title = QLabel("No cameras yet")
-        title.setStyleSheet("font-size: 22px; font-weight: bold; color: #4fc3f7;")
+        title.setStyleSheet("font-size: 28px; font-weight: bold; color: #4fc3f7;")
         title.setAlignment(Qt.AlignCenter)
 
         body = QLabel(
-            "You can add cameras in two ways:\n\n"
-            "  1. Scan your network — the app will look for cameras "
-            "automatically.\n"
-            "  2. Add a camera manually if you know its stream URL "
-            "(rtsp:// or http://).\n\n"
-            "Click <b>Scan network</b> to get started."
+            "Add cameras to start your security hub.\n\n"
+            "Use <b>Scan network</b> to auto-discover cameras on your LAN, "
+            "or add a camera manually if you know its stream URL."
         )
         body.setWordWrap(True)
         body.setAlignment(Qt.AlignCenter)
-        body.setStyleSheet("color: #aaa; font-size: 13px;")
+        body.setStyleSheet("color: #bbb;")
 
         scan_btn = QPushButton("🔍  Scan network for cameras")
-        scan_btn.setStyleSheet(
-            "padding: 12px 24px; font-size: 14px; "
-            "background: #2a6ebb; border: none; color: white; border-radius: 6px;"
-        )
+        scan_btn.setMinimumHeight(48)
         scan_btn.clicked.connect(self.scan_requested)
 
         add_btn = QPushButton("➕  Add camera manually")
-        add_btn.setStyleSheet("padding: 10px 18px; border-radius: 6px;")
+        add_btn.setMinimumHeight(42)
         add_btn.clicked.connect(self.add_requested)
 
         self._readd_btn = QPushButton("↩  Re-add from last scan")
-        self._readd_btn.setStyleSheet("padding: 10px 18px; border-radius: 6px;")
+        self._readd_btn.setMinimumHeight(42)
         self._readd_btn.clicked.connect(self.readd_requested)
         self._readd_btn.setVisible(False)
 
         btn_row = QHBoxLayout()
         btn_row.addStretch(1)
         btn_row.addWidget(scan_btn)
-        btn_row.addSpacing(12)
+        btn_row.addSpacing(14)
         btn_row.addWidget(add_btn)
-        btn_row.addSpacing(12)
+        btn_row.addSpacing(14)
         btn_row.addWidget(self._readd_btn)
         btn_row.addStretch(1)
 
         layout = QVBoxLayout(self)
         layout.addStretch(1)
         layout.addWidget(title)
-        layout.addSpacing(16)
+        layout.addSpacing(20)
         layout.addWidget(body)
-        layout.addSpacing(32)
+        layout.addSpacing(40)
         layout.addLayout(btn_row)
         layout.addStretch(1)
 
@@ -102,7 +96,7 @@ class MainWindow(QMainWindow):
     def __init__(self, default_user: str = "", default_pass: str = "") -> None:
         super().__init__()
         self.setWindowTitle("tvpc Cameras")
-        self.resize(1280, 760)
+        self.resize(1360, 760)
 
         self._default_user = default_user
         self._default_pass = default_pass
@@ -173,9 +167,195 @@ class MainWindow(QMainWindow):
         self._reap_timer.timeout.connect(self._on_reap)
         self._reap_timer.start()
 
+        self.setStyleSheet(
+            """
+            QMainWindow, QWidget {
+                background: #0b0f14;
+                color: #e6e9ee;
+                font-family: "Segoe UI", "Noto Sans", sans-serif;
+            }
+            QToolBar {
+                background: #11151b;
+                border: none;
+                spacing: 12px;
+                padding: 12px;
+                icon-size: 22px;
+            }
+            QToolBar QToolButton {
+                color: #e6e9ee;
+                background: transparent;
+                border-radius: 8px;
+                padding: 10px 14px;
+                font-size: 14px;
+                min-height: 40px;
+                min-width: 90px;
+            }
+            QToolBar QToolButton:hover {
+                background: #1b2530;
+            }
+            QToolBar QToolButton:focus {
+                background: #22405e;
+                outline: 1px solid #4fc3f7;
+            }
+            QToolBar::separator {
+                background: #1f2a36;
+                width: 2px;
+                margin: 6px 4px;
+                border-radius: 1px;
+            }
+            QListWidget {
+                background: #0f1318;
+                border: 1px solid #1b2530;
+                border-radius: 10px;
+                padding: 8px;
+                showFocusIndicator: 0;
+            }
+            QListWidget::item {
+                padding: 10px;
+                border-radius: 8px;
+                margin: 2px 0px;
+            }
+            QListWidget::item:selected {
+                background: #12324d;
+                color: #ffffff;
+                border: 1px solid #4fc3f7;
+            }
+            QListWidget::item:focus {
+                outline: 1px solid #4fc3f7;
+            }
+            QListWidget::item:hover {
+                background: #192b3d;
+            }
+            QGroupBox {
+                border: 1px solid #1b2530;
+                border-radius: 10px;
+                margin-top: 12px;
+                padding-top: 18px;
+                background: #0f1318;
+            }
+            QGroupBox::title {
+                subcontrol-origin: margin;
+                left: 14px;
+                padding: 0 6px;
+                color: #9aa6b2;
+                font-weight: 600;
+            }
+            QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox, QTextEdit {
+                background: #11151b;
+                color: #e6e9ee;
+                border: 1px solid #1f2a36;
+                border-radius: 8px;
+                padding: 8px;
+                min-height: 36px;
+            }
+            QLineEdit:focus, QComboBox:focus, QSpinBox:focus, QDoubleSpinBox:focus, QTextEdit:focus {
+                border: 1px solid #4fc3f7;
+            }
+            QPushButton {
+                background: #152233;
+                color: #e6e9ee;
+                border: 1px solid #22405e;
+                border-radius: 8px;
+                padding: 10px 16px;
+                min-height: 40px;
+                font-weight: 500;
+            }
+            QPushButton:hover {
+                background: #1b2e45;
+                border-color: #4fc3f7;
+            }
+            QPushButton:pressed {
+                background: #0f1c2e;
+            }
+            QPushButton:focus {
+                outline: 1px solid #4fc3f7;
+            }
+            QPushButton[text*="Scan network"], QPushButton[text*="Start scan"], QPushButton[text*="Add selected"], QPushButton[text*="➕"] {
+                background: #1261a0;
+                color: #ffffff;
+                border-color: #1976d2;
+                font-weight: 600;
+            }
+            QPushButton[text*="Scan network"]:hover, QPushButton[text*="Start scan"]:hover, QPushButton[text*="Add selected"]:hover, QPushButton[text*="➕"]:hover {
+                background: #1580d4;
+            }
+            QStatusBar {
+                background: #0d1117;
+                color: #9aa6b2;
+                border-top: 1px solid #1b2530;
+                padding: 6px 12px;
+            }
+            QProgressBar {
+                background: #11151b;
+                border: 1px solid #1f2a36;
+                border-radius: 8px;
+                text-align: center;
+                min-height: 18px;
+                color: #e6e9ee;
+            }
+            QProgressBar::chunk {
+                background: #1261a0;
+                border-radius: 8px;
+            }
+            QDialog {
+                background: #0b0f14;
+            }
+            QTabWidget::pane {
+                background: #0f1318;
+                border: 1px solid #1b2530;
+                border-radius: 10px;
+            }
+            QTabBar::tab {
+                background: #11151b;
+                color: #9aa6b2;
+                padding: 10px 18px;
+                margin-right: 6px;
+                border-top-left-radius: 8px;
+                border-top-right-radius: 8px;
+                min-width: 90px;
+            }
+            QTabBar::tab:selected {
+                background: #152233;
+                color: #ffffff;
+                border: 1px solid #22405e;
+                border-bottom: 2px solid #4fc3f7;
+            }
+            QTabBar::tab:hover {
+                background: #1b2530;
+                color: #e6e9ee;
+            }
+            QGroupBox QCheckBox {
+                spacing: 10px;
+            }
+            QGroupBox QCheckBox::indicator {
+                width: 18px;
+                height: 18px;
+                border-radius: 4px;
+                border: 1px solid #22405e;
+                background: #0b0f14;
+            }
+            QGroupBox QCheckBox::indicator:checked {
+                background: #1261a0;
+                border-color: #1976d2;
+            }
+            QLabel {
+                font-weight: 500;
+            }
+            """
+        )
+
         self.reload()
 
     # --- UI construction ---------------------------------------------------
+    def _apply_tv_font_scale(self) -> None:
+        font = self.font()
+        base_px = int(float(self._settings.get("ui_font_px", 14)))
+        if base_px >= 12:
+            font.setPixelSize(base_px)
+            font.setPointSize(-1)
+            QApplication.setFont(font)
+        self._tv_font_px = base_px
+
     def _build_toolbar(self) -> None:
         tb = QToolBar("Main", self)
         tb.setMovable(False)
@@ -286,26 +466,32 @@ class MainWindow(QMainWindow):
     def _build_central(self) -> None:
         central = QWidget(self)
         main_vbox = QVBoxLayout(central)
-        main_vbox.setContentsMargins(8, 8, 8, 8)
-        main_vbox.setSpacing(6)
+        main_vbox.setContentsMargins(12, 12, 12, 12)
+        main_vbox.setSpacing(10)
 
         # Hotplug banner for newly detected cameras
         self._banner = QFrame(central)
         self._banner.setStyleSheet(
-            "background: #1b3a57; border: 1px solid #2a6ebb; border-radius: 6px; padding: 4px 10px;"
+            "background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #1b3a57, stop:1 #142d47);"
+            "border: 1px solid #2a6ebb; border-radius: 10px; padding: 6px 14px;"
         )
         banner_layout = QHBoxLayout(self._banner)
-        banner_layout.setContentsMargins(4, 4, 4, 4)
+        banner_layout.setContentsMargins(12, 10, 12, 10)
+        self._banner.setMaximumHeight(56)
         self._banner_icon = QLabel("✨", self._banner)
+        self._banner_icon.setStyleSheet("font-size: 20px;")
         self._banner_text = QLabel("", self._banner)
-        self._banner_text.setStyleSheet("color: white; font-weight: bold;")
+        self._banner_text.setStyleSheet("color: white; font-weight: 600; font-size: 14px;")
         self._banner_add_btn = QPushButton("➕ Add Camera", self._banner)
         self._banner_add_btn.setStyleSheet(
-            "background: #2a6ebb; color: white; padding: 4px 12px; font-weight: bold; border-radius: 4px;"
+            "background: #2a6ebb; color: white; padding: 6px 16px; font-weight: 600; border-radius: 6px;"
+            "font-size: 13px; min-height: 32px;"
         )
         self._banner_add_btn.clicked.connect(self._on_banner_add_clicked)
         self._banner_dismiss_btn = QPushButton("✕", self._banner)
-        self._banner_dismiss_btn.setFixedWidth(28)
+        self._banner_dismiss_btn.setFixedWidth(32)
+        self._banner_dismiss_btn.setMaximumHeight(32)
+        self._banner_dismiss_btn.setStyleSheet("background: transparent; border: none; font-size: 16px; padding: 4px;")
         self._banner_dismiss_btn.clicked.connect(lambda: self._banner.setVisible(False))
         banner_layout.addWidget(self._banner_icon)
         banner_layout.addWidget(self._banner_text, 1)
@@ -317,18 +503,23 @@ class MainWindow(QMainWindow):
         content_row = QWidget(central)
         outer = QHBoxLayout(content_row)
         outer.setContentsMargins(0, 0, 0, 0)
-        outer.setSpacing(8)
+        outer.setSpacing(10)
         main_vbox.addWidget(content_row, 1)
 
         # Left: list of cameras with group filter and search.
         left = QWidget(content_row)
+        left.setMinimumWidth(260)
+        left.setMaximumWidth(340)
         left_layout = QVBoxLayout(left)
         left_layout.setContentsMargins(0, 0, 0, 0)
+        left_layout.setSpacing(8)
 
         list_header = QHBoxLayout()
+        list_header.setSpacing(8)
         list_header.addWidget(QLabel("<b>Cameras</b>"))
         list_header.addStretch(1)
         self._group_filter = QComboBox()
+        self._group_filter.setMinimumWidth(120)
         self._group_filter.addItem("All groups")
         self._group_filter.currentTextChanged.connect(self._on_group_filter_changed)
         list_header.addWidget(self._group_filter)
@@ -337,13 +528,17 @@ class MainWindow(QMainWindow):
         # Sortable column headers.
         sort_row = QHBoxLayout()
         sort_row.setContentsMargins(0, 0, 0, 0)
+        sort_row.setSpacing(4)
         for label, slot in (
             ("Name", lambda: self._sort_by("name")),
             ("Group", lambda: self._sort_by("group")),
             ("Status", lambda: self._sort_by("status")),
         ):
             btn = QPushButton(label)
-            btn.setStyleSheet("padding: 2px 8px; font-size: 11px; background: transparent; border: none; text-decoration: underline;")
+            btn.setStyleSheet(
+                "padding: 4px 10px; font-size: 12px; background: transparent;"
+                "border: none; text-decoration: underline; color: #9aa6b2; min-height: 28px;"
+            )
             btn.clicked.connect(slot)
             sort_row.addWidget(btn)
         sort_row.addStretch(1)
@@ -351,6 +546,7 @@ class MainWindow(QMainWindow):
 
         self._search = QLineEdit()
         self._search.setPlaceholderText("🔍  Search cameras…")
+        self._search.setMinimumHeight(38)
         self._search.textChanged.connect(self._on_search_changed)
         left_layout.addWidget(self._search)
 
@@ -366,6 +562,8 @@ class MainWindow(QMainWindow):
         self._details = QGroupBox("Camera details")
         self._details.setVisible(False)
         details_layout = QFormLayout()
+        details_layout.setHorizontalSpacing(10)
+        details_layout.setVerticalSpacing(6)
         self._detail_name = QLabel("")
         self._detail_url = QLabel("")
         self._detail_url.setWordWrap(True)
@@ -385,12 +583,14 @@ class MainWindow(QMainWindow):
         left_layout.addWidget(self._details, 0)
 
         list_btns = QHBoxLayout()
+        list_btns.setSpacing(8)
         for text, slot in (
             ("➕ Add", self._action_add),
             ("✏️ Edit", self._action_edit),
             ("🗑 Remove", self._action_remove),
         ):
             b = QPushButton(text, left)
+            b.setMinimumHeight(38)
             b.clicked.connect(slot)
             list_btns.addWidget(b)
         left_layout.addLayout(list_btns)
@@ -401,8 +601,10 @@ class MainWindow(QMainWindow):
         right = QWidget(content_row)
         right_layout = QVBoxLayout(right)
         right_layout.setContentsMargins(0, 0, 0, 0)
+        right_layout.setSpacing(8)
 
         preview_header = QHBoxLayout()
+        preview_header.setSpacing(10)
         preview_header.addWidget(QLabel("<b>Live previews</b>"))
         preview_header.addStretch(1)
         self._layout_label = QLabel("2×2")
@@ -413,7 +615,7 @@ class MainWindow(QMainWindow):
         self._grid_wrap = QWidget(right)
         self._grid = QGridLayout(self._grid_wrap)
         self._grid.setContentsMargins(0, 0, 0, 0)
-        self._grid.setSpacing(8)
+        self._grid.setSpacing(10)
         right_layout.addWidget(self._grid_wrap, 1)
 
         # Empty state overlay.
@@ -426,6 +628,7 @@ class MainWindow(QMainWindow):
 
         # Buttons under the grid.
         grid_btns = QHBoxLayout()
+        grid_btns.setSpacing(8)
         for text, slot in (
             ("📺 Open selected in PiP", self._action_open_pip),
             ("⛶ Fullscreen", self._action_fullscreen),
@@ -433,28 +636,49 @@ class MainWindow(QMainWindow):
             ("📷 Snapshot", self._action_snapshot),
         ):
             b = QPushButton(text, right)
+            b.setMinimumHeight(42)
             b.clicked.connect(slot)
             grid_btns.addWidget(b)
         right_layout.addLayout(grid_btns)
 
-        outer.addWidget(right, 3)
+        outer.addWidget(right, 5)
 
         self.setCentralWidget(central)
+        self._apply_tv_font_scale()
 
     # --- data loading ------------------------------------------------------
+    def _list_display(self, cam: Camera) -> str:
+        parts: List[str] = []
+        if cam.group:
+            parts.append(f"[{cam.group}]")
+        parts.append(cam.name)
+        text = " ".join(parts)
+        if cam.notes:
+            vendor_model = ""
+            note = cam.notes
+            if "vendor:" in note:
+                vendor_model = note.split("vendor:")[-1].split(";")[0].strip()
+            if not vendor_model:
+                tokens = [token.strip() for token in note.replace(";", " ").split() if token.strip()]
+                if tokens:
+                    vendor_model = tokens[0]
+            if vendor_model:
+                text = f"{text}  —  {vendor_model}"
+        return text
+
     def reload(self) -> None:
         cams = cfg.load_cameras()
         self._list.clear()
         for cam in cams:
-            item = QListWidgetItem(cam.display())
+            item = QListWidgetItem(self._list_display(cam))
             item.setData(Qt.UserRole, cam)
             online = self._camera_status.get(cam.name)
             if online is not None:
                 icon_text = "🟢" if online else "🔴"
-                item.setText(f"{icon_text}  {cam.display()}")
+                item.setText(f"{icon_text}  {self._list_display(cam)}")
             if not cam.enabled:
                 item.setForeground(Qt.gray)
-                item.setText("🚫  " + cam.display())
+                item.setText("🚫  " + self._list_display(cam))
             self._list.addItem(item)
         self._rebuild_previews([c for c in cams if c.enabled])
         self._rebuild_group_filter(cams)
@@ -465,7 +689,11 @@ class MainWindow(QMainWindow):
             self._empty_state._readd_btn.setVisible(not has_cams and len(self._last_scan_results) > 0)
         self._grid_wrap.setVisible(has_cams)
 
-        self._set_status_ready(f"Loaded {len(cams)} camera(s) from {cfg.config_path()}")
+        # If no cameras are configured, show a clearer Kodi-like idle message.
+        if not has_cams:
+            self._set_status_ready("No cameras configured — scan your network or add a camera to get started.")
+        else:
+            self._set_status_ready(f"Loaded {len(cams)} camera(s) from {cfg.config_path()}")
 
         self._start_health_monitor(cams)
 
@@ -523,15 +751,15 @@ class MainWindow(QMainWindow):
     def _apply_list_filter(self, cams: List[Camera]) -> None:
         self._list.clear()
         for cam in cams:
-            item = QListWidgetItem(cam.display())
+            item = QListWidgetItem(self._list_display(cam))
             item.setData(Qt.UserRole, cam)
             online = self._camera_status.get(cam.name)
             if online is not None:
                 icon_text = "🟢" if online else "🔴"
-                item.setText(f"{icon_text}  {cam.display()}")
+                item.setText(f"{icon_text}  {self._list_display(cam)}")
             if not cam.enabled:
                 item.setForeground(Qt.gray)
-                item.setText("🚫  " + cam.display())
+                item.setText("🚫  " + self._list_display(cam))
             self._list.addItem(item)
         self._rebuild_previews([c for c in cams if c.enabled])
 
@@ -620,6 +848,8 @@ class MainWindow(QMainWindow):
     def _select_index(self, idx: int) -> None:
         self._selected_index = idx
         cams = cfg.load_cameras()
+        for i, prev in enumerate(self._previews):
+            prev.set_selected(i == idx)
         if 0 <= idx < len(cams):
             self._list.setCurrentRow(idx)
             cam = cams[idx]

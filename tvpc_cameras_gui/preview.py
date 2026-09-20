@@ -30,6 +30,18 @@ _ONLINE_FG = QColor("#4caf50")
 _OFFLINE_FG = QColor("#f44336")
 
 
+def _tv_font_px() -> int:
+    try:
+        return max(12, int(_SETTINGS.get("ui_font_px", 14)))
+    except Exception:
+        return 14
+
+
+def _scaled(value: int) -> int:
+    base = _tv_font_px()
+    return max(value, int(value / 14 * base + 0.5))
+
+
 def _have_ffmpeg() -> bool:
     return shutil.which("ffmpeg") is not None
 
@@ -108,20 +120,21 @@ class PreviewWidget(QWidget):
         self._label.setStyleSheet(
             f"background-color: {PLACEHOLDER_BG.name()};"
             f"color: {PLACEHOLDER_FG.name()};"
-            "border: 1px solid #444; border-radius: 4px;"
+            "border: 1px solid #444; border-radius: 6px;"
         )
-        self._label.setMinimumSize(QSize(320, 180))
+        self._label.setMinimumSize(QSize(_scaled(320), _scaled(180)))
         self._label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self._label.setScaledContents(True)
         self._caption = QLabel("", self)
-        self._caption.setStyleSheet("color: #ddd;")
+        caption_px = _scaled(14)
+        self._caption.setStyleSheet(f"color: #ddd; font-size: {caption_px}px; padding: 2px 4px;")
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(4)
+        layout.setSpacing(_scaled(4))
         layout.addWidget(self._label, 1)
         layout.addWidget(self._caption)
-        self.setMinimumWidth(320)
-        self.setMinimumHeight(210)
+        self.setMinimumWidth(_scaled(320))
+        self.setMinimumHeight(_scaled(210))
         self._proc: Optional[subprocess.Popen] = None
         self._tmpdir: Optional[tempfile.TemporaryDirectory] = None
         self._jpeg_path: Optional[Path] = None
@@ -129,6 +142,7 @@ class PreviewWidget(QWidget):
         self._current_user: str = ""
         self._current_password: str = ""
         self._reconnect_count: int = 0
+        self._selected: bool = False
         self._reconnect_timer = QTimer(self)
         self._reconnect_timer.setSingleShot(True)
         self._reconnect_timer.timeout.connect(self._on_reconnect)
@@ -241,19 +255,29 @@ class PreviewWidget(QWidget):
         self._recording = recording
         self._update_caption_style()
 
+    def set_selected(self, selected: bool) -> None:
+        """Update whether this preview is the active selection."""
+        self._selected = selected
+        if selected:
+            self.setStyleSheet(
+                "outline: 3px solid #4fc3f7; border-radius: 6px; background-color: transparent;"
+            )
+        else:
+            self.setStyleSheet("")
+
     def set_motion(self, active: bool = True) -> None:
         """Update whether motion is actively detected on this camera."""
         self._motion_active = active
         if active:
             self._motion_timer.start(4000)
             self._label.setStyleSheet(
-                "border: 2px solid #ff9800; border-radius: 4px; background-color: #222;"
+                "border: 2px solid #ff9800; border-radius: 6px; background-color: #222;"
             )
         else:
             self._label.setStyleSheet(
                 f"background-color: {PLACEHOLDER_BG.name()};"
                 f"color: {PLACEHOLDER_FG.name()};"
-                "border: 1px solid #444; border-radius: 4px;"
+                "border: 1px solid #444; border-radius: 6px;"
             )
         self._update_caption_style()
         if self._pixmap and not self._pixmap.isNull():
@@ -270,16 +294,18 @@ class PreviewWidget(QWidget):
         painter.setRenderHint(QPainter.Antialiasing)
 
         # Draw motion badge in top-right corner
-        badge_w, badge_h = 96, 24
-        x = overlay_pix.width() - badge_w - 8
-        y = 8
+        scale = max(1.0, _tv_font_px() / 14.0)
+        badge_w, badge_h = int(_scaled(96) * scale), int(_scaled(24) * scale)
+        x = overlay_pix.width() - badge_w - int(8 * scale)
+        y = int(8 * scale)
         painter.setBrush(QColor(230, 81, 0, 220))
         painter.setPen(Qt.NoPen)
-        painter.drawRoundedRect(x, y, badge_w, badge_h, 4, 4)
+        painter.drawRoundedRect(x, y, badge_w, badge_h, int(6 * scale), int(6 * scale))
 
         painter.setPen(QColor("white"))
         font = painter.font()
-        font.setPointSize(9)
+        font.setPixelSize(max(10, int(9 * scale)))
+        font.setPointSize(-1)
         font.setBold(True)
         painter.setFont(font)
         painter.drawText(x, y, badge_w, badge_h, Qt.AlignCenter, "🚨 MOTION")
@@ -310,19 +336,19 @@ class PreviewWidget(QWidget):
     def _show_placeholder(self) -> None:
         pix = QPixmap(self._label.size())
         pix.fill(PLACEHOLDER_BG)
-        self._render_text(pix, "no signal", PLACEHOLDER_FG)
+        self._render_text(pix, "no signal", PLACEHOLDER_FG, sub="")
         self._label.setPixmap(pix)
 
     def _show_loading(self) -> None:
         pix = QPixmap(self._label.size())
         pix.fill(_LOADING_BG)
-        self._render_text(pix, "Connecting…", _LOADING_FG, "waiting for stream")
+        self._render_text(pix, "Connecting…", _LOADING_FG, sub="waiting for stream")
         self._label.setPixmap(pix)
 
     def _show_error(self, msg: str) -> None:
         pix = QPixmap(self._label.size())
         pix.fill(_ERROR_BG)
-        self._render_text(pix, "Stream error", _ERROR_FG, msg[:60])
+        self._render_text(pix, "Stream error", _ERROR_FG, sub=msg[:80])
         self._label.setPixmap(pix)
 
     def _render_text(self, pix: QPixmap, text: str, color: QColor, sub: str = "") -> None:
@@ -332,13 +358,17 @@ class PreviewWidget(QWidget):
         painter.setRenderHint(QPainter.Antialiasing)
         painter.setPen(color)
         font: QFont = painter.font()
-        font.setPointSize(12)
+        base_px = _tv_font_px()
+        font.setPixelSize(max(12, int(base_px * 0.9)))
+        font.setPointSize(-1)
         painter.setFont(font)
         rect = pix.rect()
         painter.drawText(rect, Qt.AlignCenter, text)
         if sub:
-            font.setPointSize(9)
-            painter.setFont(font)
+            sub_font = painter.font()
+            sub_font.setPixelSize(max(10, int(base_px * 0.68)))
+            sub_font.setPointSize(-1)
+            painter.setFont(sub_font)
             sub_rect = rect.adjusted(0, rect.height() // 2, 0, 0)
             painter.drawText(sub_rect, Qt.AlignHCenter | Qt.AlignTop, sub)
         painter.end()
