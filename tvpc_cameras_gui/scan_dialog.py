@@ -180,7 +180,7 @@ class ScanDialog(QDialog):
                 border-radius: 10px;
                 padding: 10px;
                 font-size: 14px;
-                showFocusIndicator: 0;
+                outline: none;
             }
             QListWidget::item {
                 padding: 12px;

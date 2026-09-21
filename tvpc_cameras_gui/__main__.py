@@ -246,6 +246,15 @@ def main(argv: Optional[List[str]] = None) -> int:
     from .main_window import MainWindow
     win = MainWindow(default_user=default_user, default_pass=default_pass)
     win.show()
+    try:
+        screen = QApplication.primaryScreen()
+        if screen is not None:
+            geo = screen.availableGeometry()
+            win.move(geo.center() - win.rect().center())
+        win.raise_()
+        win.activateWindow()
+    except Exception:
+        pass
     return app.exec()
 
 

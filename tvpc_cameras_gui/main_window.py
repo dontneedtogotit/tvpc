@@ -175,68 +175,70 @@ class MainWindow(QMainWindow):
                 font-family: "Segoe UI", "Noto Sans", sans-serif;
             }
             QToolBar {
-                background: #11151b;
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #11161f, stop:1 #0c1018);
                 border: none;
-                spacing: 12px;
-                padding: 12px;
-                icon-size: 22px;
+                spacing: 14px;
+                padding: 14px 18px;
+                icon-size: %dpx;
             }
             QToolBar QToolButton {
                 color: #e6e9ee;
                 background: transparent;
-                border-radius: 8px;
-                padding: 10px 14px;
-                font-size: 14px;
-                min-height: 40px;
-                min-width: 90px;
+                border-radius: 10px;
+                padding: 12px 16px;
+                font-size: %dpx;
+                min-height: 48px;
+                min-width: 104px;
             }
             QToolBar QToolButton:hover {
-                background: #1b2530;
+                background: #162232;
             }
             QToolBar QToolButton:focus {
-                background: #22405e;
-                outline: 1px solid #4fc3f7;
+                background: #1b3050;
+                outline: 2px solid #00d2ff;
             }
             QToolBar::separator {
-                background: #1f2a36;
+                background: #1f2f42;
                 width: 2px;
-                margin: 6px 4px;
+                margin: 8px 6px;
                 border-radius: 1px;
             }
             QListWidget {
                 background: #0f1318;
                 border: 1px solid #1b2530;
-                border-radius: 10px;
-                padding: 8px;
-                showFocusIndicator: 0;
+                border-radius: 12px;
+                padding: 10px;
+                outline: none;
+                font-size: %dpx;
             }
             QListWidget::item {
-                padding: 10px;
-                border-radius: 8px;
-                margin: 2px 0px;
+                padding: 12px;
+                border-radius: 10px;
+                margin: 3px 0px;
             }
             QListWidget::item:selected {
                 background: #12324d;
                 color: #ffffff;
-                border: 1px solid #4fc3f7;
+                border: 1px solid #00d2ff;
             }
             QListWidget::item:focus {
-                outline: 1px solid #4fc3f7;
+                outline: 2px solid #00d2ff;
             }
             QListWidget::item:hover {
-                background: #192b3d;
+                background: #15283c;
             }
             QGroupBox {
                 border: 1px solid #1b2530;
-                border-radius: 10px;
-                margin-top: 12px;
-                padding-top: 18px;
+                border-radius: 12px;
+                margin-top: 14px;
+                padding-top: 20px;
                 background: #0f1318;
+                font-size: %dpx;
             }
             QGroupBox::title {
                 subcontrol-origin: margin;
-                left: 14px;
-                padding: 0 6px;
+                left: 16px;
+                padding: 0 8px;
                 color: #9aa6b2;
                 font-weight: 600;
             }
@@ -244,58 +246,62 @@ class MainWindow(QMainWindow):
                 background: #11151b;
                 color: #e6e9ee;
                 border: 1px solid #1f2a36;
-                border-radius: 8px;
-                padding: 8px;
-                min-height: 36px;
+                border-radius: 10px;
+                padding: 10px;
+                min-height: 40px;
+                font-size: %dpx;
             }
             QLineEdit:focus, QComboBox:focus, QSpinBox:focus, QDoubleSpinBox:focus, QTextEdit:focus {
-                border: 1px solid #4fc3f7;
+                border: 1px solid #00d2ff;
             }
             QPushButton {
                 background: #152233;
                 color: #e6e9ee;
                 border: 1px solid #22405e;
-                border-radius: 8px;
-                padding: 10px 16px;
-                min-height: 40px;
+                border-radius: 10px;
+                padding: 12px 18px;
+                min-height: 46px;
                 font-weight: 500;
+                font-size: %dpx;
             }
             QPushButton:hover {
                 background: #1b2e45;
-                border-color: #4fc3f7;
+                border-color: #00d2ff;
             }
             QPushButton:pressed {
                 background: #0f1c2e;
             }
             QPushButton:focus {
-                outline: 1px solid #4fc3f7;
+                outline: 2px solid #00d2ff;
             }
             QPushButton[text*="Scan network"], QPushButton[text*="Start scan"], QPushButton[text*="Add selected"], QPushButton[text*="➕"] {
-                background: #1261a0;
+                background: #0f5aaa;
                 color: #ffffff;
                 border-color: #1976d2;
                 font-weight: 600;
             }
             QPushButton[text*="Scan network"]:hover, QPushButton[text*="Start scan"]:hover, QPushButton[text*="Add selected"]:hover, QPushButton[text*="➕"]:hover {
-                background: #1580d4;
+                background: #1261c8;
             }
             QStatusBar {
                 background: #0d1117;
                 color: #9aa6b2;
                 border-top: 1px solid #1b2530;
-                padding: 6px 12px;
+                padding: 8px 14px;
+                font-size: %dpx;
             }
             QProgressBar {
                 background: #11151b;
                 border: 1px solid #1f2a36;
-                border-radius: 8px;
+                border-radius: 10px;
                 text-align: center;
-                min-height: 18px;
+                min-height: 20px;
                 color: #e6e9ee;
+                font-size: %dpx;
             }
             QProgressBar::chunk {
                 background: #1261a0;
-                border-radius: 8px;
+                border-radius: 10px;
             }
             QDialog {
                 background: #0b0f14;
@@ -303,34 +309,36 @@ class MainWindow(QMainWindow):
             QTabWidget::pane {
                 background: #0f1318;
                 border: 1px solid #1b2530;
-                border-radius: 10px;
+                border-radius: 12px;
             }
             QTabBar::tab {
                 background: #11151b;
                 color: #9aa6b2;
-                padding: 10px 18px;
-                margin-right: 6px;
-                border-top-left-radius: 8px;
-                border-top-right-radius: 8px;
-                min-width: 90px;
+                padding: 12px 20px;
+                margin-right: 8px;
+                border-top-left-radius: 10px;
+                border-top-right-radius: 10px;
+                min-width: 104px;
+                font-size: %dpx;
             }
             QTabBar::tab:selected {
                 background: #152233;
                 color: #ffffff;
                 border: 1px solid #22405e;
-                border-bottom: 2px solid #4fc3f7;
+                border-bottom: 3px solid #00d2ff;
             }
             QTabBar::tab:hover {
                 background: #1b2530;
                 color: #e6e9ee;
             }
             QGroupBox QCheckBox {
-                spacing: 10px;
+                spacing: 12px;
+                font-size: %dpx;
             }
             QGroupBox QCheckBox::indicator {
-                width: 18px;
-                height: 18px;
-                border-radius: 4px;
+                width: 20px;
+                height: 20px;
+                border-radius: 5px;
                 border: 1px solid #22405e;
                 background: #0b0f14;
             }
@@ -342,6 +350,7 @@ class MainWindow(QMainWindow):
                 font-weight: 500;
             }
             """
+            % tuple([self._tv_font_px] * 12)
         )
 
         self.reload()
@@ -352,7 +361,6 @@ class MainWindow(QMainWindow):
         base_px = int(float(self._settings.get("ui_font_px", 14)))
         if base_px >= 12:
             font.setPixelSize(base_px)
-            font.setPointSize(-1)
             QApplication.setFont(font)
         self._tv_font_px = base_px
 

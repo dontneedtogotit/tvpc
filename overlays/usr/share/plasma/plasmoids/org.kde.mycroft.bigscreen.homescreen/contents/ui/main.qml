@@ -647,10 +647,21 @@ Item {
                         Layout.fillHeight: true
                         implicitWidth: height
                         KeyNavigation.down: launcher
-                        KeyNavigation.right: shutdownIndicator
-                        KeyNavigation.tab: shutdownIndicator
+                        KeyNavigation.right: bluetoothIndicator
+                        KeyNavigation.tab: bluetoothIndicator
                         KeyNavigation.backtab: volumeIndicator
                         KeyNavigation.left: volumeIndicator
+                    }
+
+                    Indicators.Bluetooth {
+                        id: bluetoothIndicator
+                        Layout.fillHeight: true
+                        implicitWidth: height
+                        KeyNavigation.down: launcher
+                        KeyNavigation.right: shutdownIndicator
+                        KeyNavigation.tab: shutdownIndicator
+                        KeyNavigation.backtab: wifiIndicator
+                        KeyNavigation.left: wifiIndicator
                     }
 
                     Indicators.Shutdown {
@@ -660,8 +671,8 @@ Item {
                         KeyNavigation.down: launcher
                         KeyNavigation.right: audioPill
                         KeyNavigation.tab: audioPill
-                        KeyNavigation.backtab: wifiIndicator
-                        KeyNavigation.left: wifiIndicator
+                        KeyNavigation.backtab: bluetoothIndicator
+                        KeyNavigation.left: bluetoothIndicator
                     }
                 }
             }

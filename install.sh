@@ -1683,6 +1683,9 @@ EOF
 # Curate Bigscreen home screen to the core tiles (VacuumTube, Settings, Cameras, All Apps, Chromium, Update, Add Apps)
 "$REPO_ROOT/scripts/tvpc.sh" tweaks curate 2>/dev/null || true
 
+# Ensure Wi-Fi and Bluetooth settings tiles exist on the home screen.
+"$REPO_ROOT/scripts/tvpc.sh" network-tiles 2>/dev/null || true
+
 
 # 8. Hardware, Power, and Audio Extras
 mkdir -p /etc/tlp.d
