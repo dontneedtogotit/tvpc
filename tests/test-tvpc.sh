@@ -223,6 +223,9 @@ grep -q "\-t p" "$ROOT/scripts/tvpc.sh" || fail "tvpc.sh missing cec-client -t p
 grep -q "tvpc-cec.fifo" "$ROOT/scripts/tvpc.sh" || fail "tvpc.sh missing tvpc-cec.fifo active source management"
 grep -q "exec 3<>" "$ROOT/scripts/tvpc.sh" || fail "tvpc.sh missing persistent FIFO descriptor 3"
 grep -q "sleep 0.04" "$ROOT/scripts/tvpc.sh" || fail "tvpc.sh missing 40ms key delay in send_key"
+grep -q "cec_assert_active_source" "$ROOT/scripts/tvpc.sh" || fail "tvpc.sh missing cec_assert_active_source helper"
+grep -q "CEC_WATCHDOG_PID" "$ROOT/scripts/tvpc.sh" || fail "tvpc.sh missing CEC watchdog"
+grep -q "handle_standby" "$ROOT/scripts/tvpc.sh" || fail "tvpc.sh missing standby handshake"
 
 # App launcher delegate reliability assertions
 grep -q "property var modelData: null" "$OVERLAY/contents/ui/launcher/delegates/ModernCardDelegate.qml" || fail "ModernCardDelegate missing modelData declaration"

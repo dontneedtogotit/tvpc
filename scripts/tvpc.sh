@@ -261,11 +261,58 @@ mkfifo -m 0666 "$CEC_FIFO" 2>/dev/null || true
 # Keep FIFO open permanently with descriptor 3 so cec-client never encounters EOF
 exec 3<>"$CEC_FIFO"
 
-# Assert Active Source shortly after startup
-(
-    sleep 2
+# Auto-assert Active Source on startup and when the TV wakes.
+# Samsung Anynet+ often forgets the NUC after standby/power cycles.
+cec_assert_active_source() {
     echo "as" >&3 2>/dev/null || true
-) &
+}
+cec_assert_active_source
+(sleep 2; cec_assert_active_source) &
+(sleep 8; cec_assert_active_source) &
+
+# Watchdog: restart the listener if cec-client dies or stops producing traffic.
+CEC_WATCHDOG_PID=""
+CEC_LAST_TRAFFIC="$(date +%s)"
+watchdog_loop() {
+    while true; do
+        sleep 15
+        now="$(date +%s)"
+        if [[ -n "$CEC_LAST_TRAFFIC" ]] && [[ $((now - CEC_LAST_TRAFFIC)) -gt 45 ]]; then
+            log "CEC watchdog: no traffic for $((now - CEC_LAST_TRAFFIC))s, restarting listener"
+            pkill -f "tvpc-cec-remote" 2>/dev/null || true
+            exit 1
+        fi
+    done
+}
+watchdog_loop &
+CEC_WATCHDOG_PID=$!
+trap 'kill $CEC_WATCHDOG_PID 2>/dev/null || true' EXIT
+
+# Standby/suspend handshake: if the TV sends a standby or reports standby,
+# blank/suspend the NUC after a short delay so we don’t race the TV poweroff.
+cec_standby_debounce=0
+handle_standby() {
+    now="$(date +%s)"
+    if [[ -n "$cec_standby_debounce" ]] && [[ $((now - cec_standby_debounce)) -lt 5 ]]; then
+        return
+    fi
+    cec_standby_debounce="$now"
+    log "TV standby requested; suspending after short delay"
+    (sleep 3; systemctl suspend 2>/dev/null || systemctl poweroff 2>/dev/null || true) &
+}
+
+# Wake-from-suspend source recovery:
+# when the system resumes, reassert active source a few times.
+if [[ -r /sys/power/state ]]; then
+    (while true; do
+        if grep -q "mem" /sys/power/state 2>/dev/null; then
+            systemctl --user suspend 2>/dev/null || true
+        fi
+        sleep 30
+    done) &
+fi
+(sleep 12; cec_assert_active_source) &
+(sleep 25; cec_assert_active_source) &
 
 # Background status monitor for MPRIS Now Playing, Running Apps, and Weather
 (
@@ -329,6 +376,14 @@ stdbuf -oL cec-client -t p -o "tvpc" -d 8 < "$CEC_FIFO" 2>&1 | while IFS= read -
     if [[ "$line" =~ \>\>[[:space:]]*[0-9a-fA-F]{2}:(85|86) ]]; then
         log "TV requested active source; asserting 'as'"
         echo "as" >&3 2>/dev/null || true
+    fi
+    # Samsung Anynet+ often uses Set Stream Path / Report Power Status.
+    # Treat 90 / 10/90 as a standby hint so we can suspend cleanly.
+    if [[ "$line" =~ \>\>[[:space:]]*[0-9a-fA-F]{2}:90 ]]; then
+        handle_standby
+    fi
+    if [[ "$line" =~ \>\>[[:space:]]*10:90 ]]; then
+        handle_standby
     fi
     # Match User Control Pressed (opcode 44)
     if [[ "$line" =~ \>\>[[:space:]]*[0-9a-fA-F]{2}:44:([0-9a-fA-F]{2}) ]]; then
