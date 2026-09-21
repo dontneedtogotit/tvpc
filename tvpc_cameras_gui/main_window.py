@@ -167,6 +167,8 @@ class MainWindow(QMainWindow):
         self._reap_timer.timeout.connect(self._on_reap)
         self._reap_timer.start()
 
+        self._apply_tv_font_scale()
+
         self.setStyleSheet(
             """
             QMainWindow, QWidget {
@@ -350,7 +352,7 @@ class MainWindow(QMainWindow):
                 font-weight: 500;
             }
             """
-            % tuple([self._tv_font_px] * 12)
+            % tuple([self._tv_font_px] * 10)
         )
 
         self.reload()

@@ -25,9 +25,6 @@ require_root() {
 # Module: CEC
 # ---------------------------------------------------------------------------
 subcmd_cec() {
-set -euo pipefail
-
-# shellcheck source=/dev/null
 [[ -r /etc/default/tvpc ]] && . /etc/default/tvpc
 HTPC_USER="${TVPC_USER:-${HTPC_USER:-htpc}}"
 
@@ -3333,6 +3330,7 @@ run_all_checks() {
     check_bigscreen
     check_vacuumtube
     check_network
+    check_bluetooth
     check_sddm
     check_storage
     check_updates
@@ -3503,14 +3501,182 @@ check_vacuumtube() {
 
 check_network() {
     local title="Network"
-    if ip route get 1.1.1.1 >/dev/null 2>&1; then
-        local gw; gw=$(ip route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="via") print $(i+1)}')
-        add_check "network" "$S_OK" "$title" "Connected (gateway ${gw:-?})"
-    else
-        add_check "network" "$S_FAIL" "$title" "No default route." \
-            "sudo nmcli device wifi connect '<SSID>' password '<pw>'" \
-            "Connect Wi-Fi"
+    local detail=""
+    local fix_cmd="" fix_label=""
+    local iface type=""
+    iface="$(ip route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="dev") print $(i+1)}' | head -1)"
+    type="$(cat "/sys/class/net/${iface}/type" 2>/dev/null || echo "")"
+    if [[ -z "${iface:-}" ]]; then
+        add_check "network" "$S_FAIL" "$title" "No active network interface." \
+            "sudo nmcli device wifi connect '<SSID>' password '<pw>'" "Connect Wi-Fi"
+        return
     fi
+    local ip="$(ip -4 addr show dev "$iface" 2>/dev/null | awk '/inet /{print $2}' | head -1)"
+    local gw="$(ip route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="via") print $(i+1)}')"
+    if [[ "$type" == "1" ]]; then
+        detail="Ethernet: $iface | IP: ${ip:-dhcp} | GW: ${gw:-?}"
+    else
+        local ssid="" signal=""
+        ssid="$(nmcli -t -f ACTIVE,SSID dev wifi 2>/dev/null | awk -F: 'NR==1 && $1=="yes"{print $2}')"
+        signal="$(nmcli -t -f ACTIVE,SIGNAL dev wifi 2>/dev/null | awk -F: 'NR==1 && $1=="yes"{print $2}')"
+        detail="Wi-Fi: ${ssid:-Not connected} on $iface | IP: ${ip:-none} | signal: ${signal:-?}% | GW: ${gw:-?}"
+        if [[ -z "$ssid" ]]; then
+            fix_cmd="sudo nmcli device wifi connect '<SSID>' password '<pw>'"
+            fix_label="Connect Wi-Fi"
+        fi
+    fi
+    if [[ -z "$fix_cmd" ]]; then
+        add_check "network" "$S_OK" "$title" "$detail"
+    else
+        add_check "network" "$S_WARN" "$title" "$detail" "$fix_cmd" "$fix_label"
+    fi
+}
+
+check_bluetooth() {
+    local title="Bluetooth"
+    local detail=""
+    local fix_cmd="" fix_label=""
+    if ! have bluetoothctl; then
+        add_check "bluetooth" "$S_WARN" "$title" "bluetoothctl not installed." \
+            "sudo apt-get install bluez" "Install Bluetooth"
+        return
+    fi
+    local powered; powered=$(bluetoothctl show 2>/dev/null | awk -F: '/Powered:/{print $2}' | tr -d ' ')
+    if [[ "$powered" != "yes" ]]; then
+        add_check "bluetooth" "$S_WARN" "$title" "Adapter is powered off." \
+            "sudo bluetoothctl power on" "Power on"
+        return
+    fi
+    local count; count=$(bluetoothctl devices Paired 2>/dev/null | wc -l)
+    detail="Powered | Paired devices: $count"
+    add_check "bluetooth" "$S_OK" "$title" "$detail"
+}
+
+# ---------------------------------------------------------------------------
+# Module: Network
+# ---------------------------------------------------------------------------
+subcmd_network() {
+set -euo pipefail
+
+have() { command -v "$1" >/dev/null 2>&1; }
+log() { echo "tvpc-network: $*"; }
+
+cmd_status() {
+    echo "== Network =="
+    local iface
+    iface="$(ip route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="dev") print $(i+1)}' | head -1)"
+    if [[ -n "${iface:-}" ]]; then
+        local ip; ip="$(ip -4 addr show dev "$iface" 2>/dev/null | awk '/inet /{print $2}' | head -1)"
+        local gw; gw="$(ip route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="via") print $(i+1)}')"
+        echo "Interface: $iface"
+        echo "IP: ${ip:-none}"
+        echo "Gateway: ${gw:-?}"
+        if [[ -f "/sys/class/net/$iface/wireless" ]]; then
+            local ssid; ssid="$(nmcli -t -f ACTIVE,SSID dev wifi 2>/dev/null | awk -F: 'NR==1 && $1=="yes"{print $2}')"
+            local signal; signal="$(nmcli -t -f ACTIVE,SIGNAL dev wifi 2>/dev/null | awk -F: 'NR==1 && $1=="yes"{print $2}')"
+            echo "Type: Wi-Fi"
+            echo "SSID: ${ssid:-Not connected}"
+            echo "Signal: ${signal:-?}%"
+        else
+            echo "Type: Ethernet"
+        fi
+        return 0
+    fi
+    echo "No active network interface."
+    return 1
+}
+
+cmd_speedtest() {
+    echo "== Speed Test =="
+    if have curl && command -v fast.com >/dev/null 2>&1; then
+        fast.com
+        return $?
+    fi
+    if have curl; then
+        echo "fast.com CLI not available, using HTTP download test..."
+        local url="https://speed.hetzner.de/100MB.bin"
+        local start end duration bytes
+        start="$(date +%s%N 2>/dev/null || date +%s)"
+        if curl -sS --max-time 15 -o /dev/null -w "%{speed_download}\n" "$url" > /tmp/tvpc-speed.out 2>/dev/null; then
+            end="$(date +%s%N 2>/dev/null || date +%s)"
+            bytes="$(cat /tmp/tvpc-speed.out 2>/dev/null || echo 0)"
+            duration="$(( (end - start) / 1000000 ))ms"
+            [[ $duration -lt 1000 ]] && duration="$(( duration / 1000 ))s"
+            echo "Download: ${bytes} bytes in ${duration}"
+        else
+            echo "Speed test failed"
+            return 1
+        fi
+        rm -f /tmp/tvpc-speed.out
+        return 0
+    fi
+    echo "curl not installed"
+    return 1
+}
+
+cmd_wifi() {
+    echo "Opening Wi-Fi settings..."
+    if have kcmshell5; then
+        exec kcmshell5 kcm_networkmanagement
+    elif have plasma-settings; then
+        exec plasma-settings -s -m kcm_mediacenter_wifi
+    elif have nmtui && [[ -t 0 ]]; then
+        exec nmtui
+    elif [[ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]]; then
+        local st ssid dev
+        st="$(nmcli -t -f DEVICE,TYPE,STATE,CONNECTION dev 2>/dev/null | grep wifi | head-1 || true)"
+        ssid="$(echo "$st" | cut -d: -f4)"
+        dev="$(echo "$st" | cut -d: -f1)"
+        echo "Wi-Fi Device: ${dev:-None}"
+        echo "Connected to: ${ssid:-Not connected}"
+        return 0
+    else
+        echo "No interactive Wi-Fi tool available"
+        return 1
+    fi
+}
+
+cmd_bluetooth() {
+    echo "Opening Bluetooth settings..."
+    if have kcmshell5; then
+        exec kcmshell5 bluetooth
+    elif have plasma-settings; then
+        exec plasma-settings -s -m bluetooth
+    elif have blueman-manager; then
+        exec blueman-manager
+    elif have bluetoothctl; then
+        echo "Bluetooth adapter status:"
+        bluetoothctl show 2>/dev/null || true
+        echo
+        echo "Paired devices:"
+        bluetoothctl devices Paired 2>/dev/null || true
+        return 0
+    else
+        echo "No Bluetooth tool available"
+        return 1
+    fi
+}
+
+usage() {
+    echo "Usage: $0 {status|speedtest|wifi|bluetooth}"
+    echo
+    echo "Commands:"
+    echo "  status       Show interface, IP, gateway, and Wi-Fi signal"
+    echo "  speedtest    Quick download speed test"
+    echo "  wifi         Open Wi-Fi settings"
+    echo "  bluetooth    Open Bluetooth settings"
+    exit "${1:-1}"
+}
+
+case "${1:-}" in
+    status) shift; cmd_status "$@" ;;
+    speedtest) shift; cmd_speedtest "$@" ;;
+    wifi) shift; cmd_wifi "$@" ;;
+    bluetooth) shift; cmd_bluetooth "$@" ;;
+    -h|--help|help) usage 0 ;;
+    "") usage 0 ;;
+    *) echo "Unknown command: $1 (try: $0 help)" >&2; usage 1 ;;
+esac
 }
 
 check_sddm() {
@@ -6870,6 +7036,7 @@ Commands:
   theme        Bigscreen themes (list, status, set, preview, install, revert)
   cameras      Security camera suite (list, stream, snap, record, gui, tile, pip, alert, grid)
   wifi         Wi-Fi settings & network connection manager (nmcli GUI)
+  network      Network status, speed test, Wi-Fi/Bluetooth launchers
   web-remote   Couch Web Remote & phone keyboard (start, stop, status)
   night-mode   PipeWire Night Mode dialogue boost & dynamic compression
   cast         AirPlay (uxplay) & Bluetooth audio casting (setup, status, start, stop)
@@ -6995,6 +7162,7 @@ case "$INVOKED_AS" in
       theme)            subcmd_theme "$@" ;;
       cameras|camera)   subcmd_cameras "$@" ;;
       wifi)             gui_wifi "$@" ;;
+      network)          subcmd_network "$@" ;;
       web-remote|remote) subcmd_web_remote "$@" ;;
       night-mode|night) subcmd_night_mode "$@" ;;
       cast|airplay)     subcmd_cast "$@" ;;
