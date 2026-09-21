@@ -94,6 +94,7 @@ SYMLINKS=(
   tvpc-allapps
   tvpc-setup-gui
   tvpc-update-gui
+  tvpc-bluetooth
   tvpc-vacuumtube-scroll
   tvpc-update
 )
@@ -1458,6 +1459,74 @@ if [[ $MODE == "check" || $MODE == "update" ]]; then
 fi
 
 # ---------------------------------------------------------------------------
+# Mode: Update / Convergence
+# ---------------------------------------------------------------------------
+if [[ "$MODE" == "update" ]]; then
+  if [[ $EUID -ne 0 ]]; then
+    echo "Run as root: sudo $0 --update" >&2
+    exit 1
+  fi
+
+  install -d /etc/tvpc
+  printf '%s\n' "$REPO_ROOT" >/etc/tvpc/repo.path
+
+  FAIL=0
+  run_fix() {
+    local name="$1"; shift
+    if "$@" >/dev/null 2>&1; then
+      echo "  OK    $name"
+    else
+      echo "  FAIL  $name"
+      FAIL=$((FAIL+1))
+    fi
+  }
+
+  echo "== Converging installed system to repo =="
+  run_fix "config"           check_config;  fix_config
+  run_fix "user"             check_user;    fix_user
+  run_fix "helpers"          check_helpers; fix_helpers
+  run_fix "cameras_gui"      check_cameras_gui; fix_cameras_gui
+  run_fix "overlays"         check_overlays; fix_overlays
+  run_fix "bigscreen"        check_bigscreen; fix_bigscreen || true
+  run_fix "curate_home"      check_curate_home; fix_curate_home
+  run_fix "badfiles"         check_badfiles; fix_badfiles
+  run_fix "graphical_target" check_graphical_target; fix_graphical_target
+  run_fix "autologin"        check_autologin; fix_autologin
+  run_fix "audio_unit"       check_audio_unit; fix_audio_unit
+  run_fix "cec_poweron"      check_cec_poweron; fix_cec_poweron
+  run_fix "cec_remote"       check_cec_remote; fix_cec_remote
+  run_fix "zram"             check_zram; fix_zram
+  run_fix "tlp"              check_tlp; fix_tlp
+  run_fix "flatpak_timer"    check_flatpak_timer; fix_flatpak_timer
+  run_fix "flathub"          check_flathub; fix_flathub
+  run_fix "vacuumtube"       check_vacuumtube; fix_vacuumtube
+  run_fix "user_config"      check_user_config; fix_user_config
+
+  "$REPO_ROOT/scripts/tvpc.sh" network-tiles >/dev/null 2>&1 || true
+
+  if [[ "$DO_PACKAGES" -eq 1 ]]; then
+    echo
+    echo "== Package updates =="
+    if command -v apt >/dev/null 2>&1; then
+      apt-get update -qq || true
+      apt-get upgrade -y -qq || true
+    fi
+    if command -v flatpak >/dev/null 2>&1; then
+      flatpak update --noninteractive --assumeyes || true
+    fi
+  fi
+
+  echo
+  echo "== Reapplying TV UI customization =="
+  do_customize || echo "!! customize reported an error (continuing)"
+
+  echo
+  echo "=== tvpc update finished $(date) ==="
+  [[ $FAIL -eq 0 ]] && echo "All convergence checks passed." || echo "$FAIL convergence item(s) failed — review above."
+  exit $FAIL
+fi
+
+# ---------------------------------------------------------------------------
 # Mode: Full Installation
 # ---------------------------------------------------------------------------
 LOG="/var/log/tvpc-install.log"
@@ -1666,6 +1735,18 @@ Terminal=false
 Icon=view-grid
 Categories=Utility;
 Keywords=tvpc;apps;
+EOF
+
+cat >/usr/share/applications/tvpc-bluetooth.desktop <<'EOF'
+[Desktop Entry]
+Type=Application
+Name=Bluetooth
+Comment=Bluetooth settings and device management
+Exec=/usr/local/bin/tvpc gui bluetooth
+Terminal=false
+Icon=bluetooth
+Categories=Settings;Network;
+Keywords=bluetooth;wireless;devices;settings;
 EOF
 
 cat >/usr/share/applications/tvpc-addapps.desktop <<'EOF'

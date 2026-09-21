@@ -4542,7 +4542,7 @@ vacuum_only() {
 home_preset() {
     echo "Applying full home-screen preset (VacuumTube + Settings + Cameras + All Apps + Chromium + Update)..."
     do_theme "dark"
-    local keep="vacuumtube io.github.vacuumtube.VacuumTube YouTube tvpc-setup tvpc-cameras tvpc-cameras-gui tvpc-allapps chromium chromium-browser org.chromium.Chromium tvpc-update tvpc-power"
+    local keep="vacuumtube io.github.vacuumtube.VacuumTube YouTube tvpc-setup tvpc-cameras tvpc-cameras-gui tvpc-allapps chromium chromium-browser org.chromium.Chromium tvpc-update tvpc-power tvpc-wifi tvpc-bluetooth"
     local id
     while IFS=$'\t' read -r id name; do
         local keepit=0
@@ -4557,6 +4557,7 @@ home_preset() {
     done
     install_home_tiles
     install_addapps_tile
+    add_network_tiles
     apply_wallpaper
     echo "Home preset applied. Log out and back in to see changes."
 }
@@ -5238,11 +5239,12 @@ EOF
 [Desktop Entry]
 Type=Application
 Name=Bluetooth
-Comment=Bluetooth settings
-Exec=kcmshell5 bluetooth
+Comment=Bluetooth settings and device management
+Exec=tvpc gui bluetooth
 Terminal=false
 Icon=bluetooth
 Categories=Settings;Network;
+Keywords=bluetooth;wireless;devices;settings;
 EOF
     if is_root; then
         chown -R "$TVPC_USER:$TVPC_USER" "$tile_dir" 2>/dev/null || true
@@ -5254,6 +5256,9 @@ item_val=()
 item_label=()
 result=""
 readkey=""
+
+# Compatibility: some older callers use $RESULT instead of $result.
+RESULT=""
 
 menu_reset() {
     item_val=()
@@ -5319,10 +5324,12 @@ select_list() {
                 ;;
             "")
                 result="${item_val[$sel]}"
+                RESULT="$result"
                 return 0
                 ;;
             q|Q|$'\e')
                 result=""
+                RESULT=""
                 return 1
                 ;;
             [0-9])
@@ -5330,6 +5337,7 @@ select_list() {
                 if [[ $d -lt $n ]]; then
                     sel=$d
                     result="${item_val[$sel]}"
+                    RESULT="$result"
                     return 0
                 fi
                 ;;
@@ -5693,6 +5701,26 @@ gui_wifi() {
         exec nmtui-connect
     else
         echo "No GUI available for Wi-Fi settings" >&2
+        return 1
+    fi
+}
+
+gui_bluetooth() {
+    # Prefer the KDE Bluetooth module; fall back through common launchers.
+    if command -v plasma-settings >/dev/null 2>&1; then
+        exec plasma-settings -s -m kcm_bluetooth
+    elif command -v kcmshell5 >/dev/null 2>&1; then
+        exec kcmshell5 bluetooth
+    elif command -v blueman-manager >/dev/null 2>&1; then
+        exec blueman-manager
+    elif command -v zenity >/dev/null 2>&1 && [[ -n "${DISPLAY:-}" || -n "${WAYLAND_DISPLAY:-}" ]]; then
+        local st; st="$(bluetoothctl show 2>/dev/null | awk -F': ' '/Powered/{print $2; exit}' || true)"
+        local msg="Bluetooth adapter powered: ${st:-unknown}"
+        zenity --info --title="Bluetooth Settings" --text="$msg" 2>/dev/null || true
+    elif [[ -t 0 ]] && command -v bluetoothctl >/dev/null 2>&1; then
+        exec bluetoothctl
+    else
+        echo "No GUI available for Bluetooth settings" >&2
         return 1
     fi
 }
@@ -6740,6 +6768,10 @@ subcmd_gui() {
       shift
       gui_wifi "$@"
       ;;
+    bluetooth)
+      shift
+      gui_bluetooth "$@"
+      ;;
     setup)
       shift
       gui_setup "$@"
@@ -6757,10 +6789,10 @@ subcmd_gui() {
       gui_allapps "$@"
       ;;
     tweaks|"")
-      subcmd_tweaks ""
+      subcmd_tweaks "$@"
       ;;
     *)
-      echo "Unknown GUI dialog: $dialog (expected: wifi, setup, update, power, allapps, tweaks)" >&2
+      echo "Unknown GUI dialog: $dialog (expected: wifi, bluetooth, setup, update, power, allapps, tweaks)" >&2
       exit 1
       ;;
   esac
